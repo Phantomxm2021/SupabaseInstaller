@@ -38,7 +38,7 @@ func (s *Service) Create(ctx context.Context, draft Draft) (Project, error) {
 	if project.ID == "" {
 		return Project{}, fmt.Errorf("project ID generator returned an empty ID")
 	}
-	if err := s.store.CreateProject(ctx, project); err != nil {
+	if err := s.store.CreateProject(ctx, project, draft.Configuration); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return Project{}, ErrConflict
 		}

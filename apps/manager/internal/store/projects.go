@@ -14,35 +14,51 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
-func (s *Store) CreateProject(ctx context.Context, project contracts.Project) error {
+func (s *Store) CreateProject(ctx context.Context, project contracts.Project, configurations ...contracts.ProjectConfiguration) error {
 	servicesJSON, err := json.Marshal(project.Services)
 	if err != nil {
 		return fmt.Errorf("encode services: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `
+	configuration := contracts.ProjectConfiguration{Revision: 1, General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services}
+	if len(configurations) > 0 {
+		configuration = configurations[0]
+	}
+	configuration.Revision = 1
+	configurationJSON, err := json.Marshal(redactConfiguration(configuration))
+	if err != nil {
+		return fmt.Errorf("encode configuration: %w", err)
+	}
+	err = s.InTx(ctx, func(tx *sql.Tx) error {
+		_, err = tx.ExecContext(ctx, `
 INSERT INTO projects (
   id, name, slug, domain, site_url, status, health, supabase_version,
   preset, services_json, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		project.ID, project.Name, project.Slug, project.Domain, project.SiteURL,
-		project.Status, project.Health, project.SupabaseVersion, project.Preset,
-		string(servicesJSON), formatTime(project.CreatedAt), formatTime(project.UpdatedAt),
-	)
-	if err != nil {
-		return fmt.Errorf("create project: %w", err)
-	}
-	return nil
+			project.ID, project.Name, project.Slug, project.Domain, project.SiteURL,
+			project.Status, project.Health, project.SupabaseVersion, project.Preset,
+			string(servicesJSON), formatTime(project.CreatedAt), formatTime(project.UpdatedAt),
+		)
+		if err != nil {
+			return fmt.Errorf("create project: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO project_configs(project_id, section, revision, config_json, created_at) VALUES (?, 'aggregate', 1, ?, ?)`, project.ID, string(configurationJSON), formatTime(project.CreatedAt)); err != nil {
+			return fmt.Errorf("create initial configuration: %w", err)
+		}
+		return nil
+	})
+	return err
 }
 
 func (s *Store) GetProject(ctx context.Context, id string) (contracts.Project, error) {
 	var project contracts.Project
 	var servicesJSON, createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx, `
-SELECT id, name, slug, domain, site_url, status, health, supabase_version,
+	SELECT id, name, slug, domain, site_url, status, health, supabase_version,
+	       config_revision,
        preset, services_json, created_at, updated_at
 FROM projects WHERE id = ?`, id).Scan(
 		&project.ID, &project.Name, &project.Slug, &project.Domain, &project.SiteURL,
-		&project.Status, &project.Health, &project.SupabaseVersion, &project.Preset,
+		&project.Status, &project.Health, &project.SupabaseVersion, &project.ConfigurationRevision, &project.Preset,
 		&servicesJSON, &createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -148,6 +164,17 @@ FROM project_secrets WHERE project_id = ? AND kind = ?`, projectID, kind).Scan(
 		return secrets.Envelope{}, fmt.Errorf("get encrypted secret: %w", err)
 	}
 	return envelope, nil
+}
+
+func (s *Store) DeleteSecret(ctx context.Context, projectID, kind string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id = ? AND kind = ?`, projectID, kind)
+	if err != nil {
+		return fmt.Errorf("delete encrypted secret: %w", err)
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func formatTime(value time.Time) string {

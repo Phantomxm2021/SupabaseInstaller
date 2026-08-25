@@ -3,6 +3,9 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -50,6 +53,102 @@ func TestStorePersistsOnlyEncryptedSecretEnvelope(t *testing.T) {
 	}
 }
 
+func TestConfigurationRevisionIsOptimisticAndRedacted(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	cfg := configurationFixture()
+	got, err := s.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("GetConfiguration() error = %v", err)
+	}
+	if got.Revision != 1 {
+		t.Fatalf("initial revision = %d, want 1", got.Revision)
+	}
+	cfg.Auth.SMTP.Password = contracts.SecretInput{Action: "replace", Value: "smtp-plaintext"}
+	cfg.Auth.SMTP.PasswordSet = true
+	saved, err := s.SaveConfiguration(context.Background(), project.ID, 1, cfg, time.Now())
+	if err != nil {
+		t.Fatalf("SaveConfiguration() error = %v", err)
+	}
+	if saved.Revision != 2 {
+		t.Fatalf("saved revision = %d, want 2", saved.Revision)
+	}
+	if _, err := s.SaveConfiguration(context.Background(), project.ID, 1, cfg, time.Now()); !errors.Is(err, ErrStaleConfiguration) {
+		t.Fatalf("stale SaveConfiguration() error = %v, want ErrStaleConfiguration", err)
+	}
+	var raw string
+	if err := s.DB().QueryRow(`SELECT config_json FROM project_configs WHERE project_id = ? AND section = 'aggregate' AND revision = 2`, project.ID).Scan(&raw); err != nil {
+		t.Fatalf("read config_json: %v", err)
+	}
+	if bytes.Contains([]byte(raw), []byte("smtp-plaintext")) {
+		t.Fatalf("config_json contains plaintext secret: %s", raw)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("decode config_json: %v", err)
+	}
+}
+
+func TestMigration002AddsLastGoodRevisionAndInitialSnapshot(t *testing.T) {
+	s := openTestStore(t)
+	var migrationCount int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version IN (1, 2)`).Scan(&migrationCount); err != nil {
+		t.Fatalf("read schema migrations: %v", err)
+	}
+	if migrationCount != 2 {
+		t.Fatalf("migration count = %d, want 2", migrationCount)
+	}
+	var lastGood int64
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	if err := s.DB().QueryRow(`SELECT last_good_revision FROM projects WHERE id = ?`, project.ID).Scan(&lastGood); err != nil {
+		t.Fatalf("last_good_revision missing: %v", err)
+	}
+	if lastGood != 1 {
+		t.Fatalf("last_good_revision = %d, want 1", lastGood)
+	}
+}
+
+func TestMigration002UpgradesExistingV1Database(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manager.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := migrationFiles.ReadFile("migrations/001_initial.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(string(initial)); err != nil {
+		t.Fatalf("apply legacy migration: %v", err)
+	}
+	project := projectFixture()
+	servicesJSON, _ := json.Marshal(project.Services)
+	if _, err := legacy.Exec(`INSERT INTO projects(id, name, slug, domain, site_url, status, health, supabase_version, preset, services_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, project.ID, project.Name, project.Slug, project.Domain, project.SiteURL, project.Status, project.Health, project.SupabaseVersion, project.Preset, servicesJSON, formatTime(project.CreatedAt), formatTime(project.UpdatedAt)); err != nil {
+		t.Fatalf("insert legacy project: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() legacy database: %v", err)
+	}
+	defer upgraded.Close()
+	snapshot, err := upgraded.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("GetConfiguration() upgraded database: %v", err)
+	}
+	if snapshot.Revision != 1 || snapshot.Configuration.Services != project.Services {
+		t.Fatalf("upgraded snapshot = %#v", snapshot)
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	s, err := Open(filepath.Join(t.TempDir(), "manager.db"))
@@ -75,5 +174,13 @@ func projectFixture() contracts.Project {
 		Services:        contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true},
 		CreatedAt:       now,
 		UpdatedAt:       now,
+	}
+}
+
+func configurationFixture() contracts.ProjectConfiguration {
+	return contracts.ProjectConfiguration{
+		General:  contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"},
+		Services: contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true},
+		Auth:     contracts.AuthConfig{SMTP: contracts.SMTPConfig{Port: 587}},
 	}
 }
