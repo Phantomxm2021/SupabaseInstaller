@@ -4,6 +4,7 @@ import { apiFetch } from '../api/client'
 import { LoginPage } from '../features/auth/LoginPage'
 import { SetupPage } from '../features/auth/SetupPage'
 import { ProjectsPage } from '../features/projects/ProjectsPage'
+import { NewProjectPage } from '../features/projects/NewProjectPage'
 import { AppShell } from './AppShell'
 
 function EntryGate() {
@@ -29,6 +30,7 @@ export function createAppRouter(_queryClient: QueryClient) {
       element: <AuthenticatedShell />,
       children: [
         { path: '/projects', element: <ProjectsPage /> },
+        { path: '/projects/new', element: <NewProjectPage /> },
         { path: '*', element: <Outlet /> },
       ],
     },
