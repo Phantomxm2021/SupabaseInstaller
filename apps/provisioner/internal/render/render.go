@@ -59,6 +59,7 @@ func Lightweight(input Input) (OutputFiles, error) {
 				return OutputFiles{}, err
 			}
 		}
+		delete(service, "container_name")
 		pruneDependencies(service, selected)
 		if name == "api-gw" || name == "envoy" || (name == "kong" && services["api-gw"] == nil && services["envoy"] == nil) {
 			service["ports"] = []string{fmt.Sprintf("127.0.0.1:%d:8000", input.APIPort)}
@@ -126,7 +127,7 @@ func pruneDependencies(service map[string]any, selected map[string]bool) {
 }
 
 func renderEnv(input Input) string {
-	values := map[string]string{
+	overrides := map[string]string{
 		"ANON_KEY":            input.Secrets.AnonKey,
 		"API_EXTERNAL_URL":    "https://" + input.Domain + "/auth/v1",
 		"DASHBOARD_PASSWORD":  input.Secrets.DashboardPassword,
@@ -137,18 +138,33 @@ func renderEnv(input Input) string {
 		"SITE_URL":            input.SiteURL,
 		"SUPABASE_PUBLIC_URL": "https://" + input.Domain,
 		"VAULT_ENC_KEY":       input.Secrets.VaultEncryptionKey,
+		"PG_META_CRYPTO_KEY":  input.Secrets.SecretKeyBase,
 	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
+	seen := make(map[string]bool, len(overrides))
 	var output strings.Builder
-	for _, key := range keys {
-		output.WriteString(key)
-		output.WriteByte('=')
-		output.WriteString(values[key])
+	for _, line := range strings.Split(string(templates.EnvExample()), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			if key, _, ok := strings.Cut(line, "="); ok {
+				key = strings.TrimSpace(key)
+				if value, replace := overrides[key]; replace {
+					line = key + "=" + value
+					seen[key] = true
+				}
+			}
+		}
+		output.WriteString(line)
 		output.WriteByte('\n')
+	}
+	missing := make([]string, 0)
+	for key := range overrides {
+		if !seen[key] {
+			missing = append(missing, key)
+		}
+	}
+	sort.Strings(missing)
+	for _, key := range missing {
+		output.WriteString(key + "=" + overrides[key] + "\n")
 	}
 	return output.String()
 }

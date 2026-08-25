@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,7 +44,7 @@ func (generator CryptoGenerator) Generate() (contracts.ProjectSecrets, error) {
 	if err != nil {
 		return contracts.ProjectSecrets{}, err
 	}
-	vaultKey, err := generatedValue(random, 32)
+	vaultKey, err := generatedHex(random, 16)
 	if err != nil {
 		return contracts.ProjectSecrets{}, err
 	}
@@ -59,6 +60,14 @@ func (generator CryptoGenerator) Generate() (contracts.ProjectSecrets, error) {
 		DatabasePassword: database, JWTSecret: jwtSecret, AnonKey: anon, ServiceRoleKey: serviceRole,
 		DashboardPassword: dashboard, SecretKeyBase: secretKeyBase, VaultEncryptionKey: vaultKey,
 	}, nil
+}
+
+func generatedHex(random io.Reader, size int) (string, error) {
+	value := make([]byte, size)
+	if _, err := io.ReadFull(random, value); err != nil {
+		return "", fmt.Errorf("generate runtime secret: %w", err)
+	}
+	return hex.EncodeToString(value), nil
 }
 
 func generatedValue(random io.Reader, size int) (string, error) {

@@ -13,7 +13,7 @@ func TestRunnerUsesArgumentVectorAndFixedProjectDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpDatabase() error = %v", err)
 	}
-	want := []string{"compose", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "up", "-d", "--wait", "db"}
+	want := []string{"compose", "--file", "/projects/bee/docker-compose.yml", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "up", "-d", "--wait", "db"}
 	if executor.command != "docker" || !reflect.DeepEqual(executor.args, want) {
 		t.Fatalf("command = %q %#v, want docker %#v", executor.command, executor.args, want)
 	}

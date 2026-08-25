@@ -41,7 +41,32 @@ func RegisterProjectRoutes(mux *http.ServeMux, options ProjectOptions) {
 	mux.HandleFunc("POST /api/projects/{id}/start", handlers.lifecycle(lifecycle.ActionStart))
 	mux.HandleFunc("POST /api/projects/{id}/stop", handlers.lifecycle(lifecycle.ActionStop))
 	mux.HandleFunc("POST /api/projects/{id}/restart", handlers.lifecycle(lifecycle.ActionRestart))
+	mux.HandleFunc("POST /api/projects/{id}/retry", handlers.retry)
+	mux.HandleFunc("POST /api/projects/{id}/rollback", handlers.lifecycle(lifecycle.ActionDeleteRuntime))
 	mux.HandleFunc("DELETE /api/projects/{id}", handlers.delete)
+}
+
+func (handlers projectHandlers) retry(response http.ResponseWriter, request *http.Request) {
+	found, err := handlers.options.Projects.Get(request.Context(), request.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
+		return
+	}
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read project")
+		return
+	}
+	retryOperation, err := handlers.options.Installer.CreateOperation(request.Context(), found.ID)
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, "OPERATION_CREATE_FAILED", "Unable to create retry operation")
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+		defer cancel()
+		_, _ = handlers.options.Installer.Run(ctx, found, retryOperation)
+	}()
+	writeJSON(response, http.StatusAccepted, map[string]string{"projectId": found.ID, "operationId": retryOperation.ID})
 }
 
 func (handlers projectHandlers) lifecycle(action lifecycle.Action) http.HandlerFunc {

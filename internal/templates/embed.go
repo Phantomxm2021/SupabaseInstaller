@@ -16,6 +16,14 @@ func DockerCompose() []byte {
 	return data
 }
 
+func EnvExample() []byte {
+	data, err := runtime.ReadFile("self-hosted-v0.8.0/.env.example")
+	if err != nil {
+		panic(fmt.Sprintf("embedded official Supabase environment is unavailable: %v", err))
+	}
+	return data
+}
+
 func Files() embed.FS {
 	return runtime
 }

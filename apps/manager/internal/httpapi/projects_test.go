@@ -65,9 +65,28 @@ func TestLifecycleEndpointReturnsDurableOperation(t *testing.T) {
 	}
 }
 
-type fakeInstaller struct{}
+func TestRetryEndpointCreatesNewInstallationOperation(t *testing.T) {
+	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	defer database.Close()
+	projects := project.NewService(database, func() string { return "project-1" }, time.Now)
+	created, _ := projects.Create(context.Background(), contracts.ProjectDraft{Name: "Bee", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0", Preset: contracts.PresetLightweight, Services: contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true}})
+	installer := &fakeInstaller{}
+	mux := http.NewServeMux()
+	RegisterProjectRoutes(mux, ProjectOptions{Projects: projects, Installer: installer, Lifecycle: &fakeLifecycle{}})
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/"+created.ID+"/retry", nil)
+	response := httptest.NewRecorder()
 
-func (*fakeInstaller) CreateOperation(context.Context, string) (operation.Operation, error) {
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), "operation-1") || installer.projectID != created.ID {
+		t.Fatalf("status=%d body=%s installer project=%s", response.Code, response.Body.String(), installer.projectID)
+	}
+}
+
+type fakeInstaller struct{ projectID string }
+
+func (fake *fakeInstaller) CreateOperation(_ context.Context, projectID string) (operation.Operation, error) {
+	fake.projectID = projectID
 	return operation.Operation{ID: "operation-1", Status: operation.Queued}, nil
 }
 

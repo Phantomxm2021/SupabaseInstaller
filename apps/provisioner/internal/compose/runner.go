@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 type ProjectRef struct {
@@ -77,12 +78,12 @@ func (r *Runner) Logs(ctx context.Context, project ProjectRef, service string, l
 	if service != "" {
 		args = append(args, service)
 	}
-	return r.executor.Run(ctx, "docker", args, []string{"COMPOSE_FILE=docker-compose.yml"})
+	return r.executor.Run(ctx, "docker", args, nil)
 }
 
 func (r *Runner) run(ctx context.Context, project ProjectRef, action ...string) error {
 	args := append(r.baseArgs(project), action...)
-	output, err := r.executor.Run(ctx, "docker", args, []string{"COMPOSE_FILE=docker-compose.yml"})
+	output, err := r.executor.Run(ctx, "docker", args, nil)
 	if err != nil {
 		return fmt.Errorf("compose action failed: %w; output length=%d", err, len(output))
 	}
@@ -90,5 +91,5 @@ func (r *Runner) run(ctx context.Context, project ProjectRef, action ...string) 
 }
 
 func (r *Runner) baseArgs(project ProjectRef) []string {
-	return []string{"compose", "--project-directory", project.Dir, "--project-name", "supabase-manager-" + project.Slug}
+	return []string{"compose", "--file", filepath.Join(project.Dir, "docker-compose.yml"), "--project-directory", project.Dir, "--project-name", "supabase-manager-" + project.Slug}
 }

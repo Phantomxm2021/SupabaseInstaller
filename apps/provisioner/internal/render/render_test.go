@@ -1,6 +1,7 @@
 package render
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -92,6 +93,21 @@ func TestEmbeddedOfficialTemplateRendersOnlyLightweightServices(t *testing.T) {
 	for _, disabled := range []string{"realtime", "storage", "imgproxy", "functions", "supavisor"} {
 		if _, ok := document.Services[disabled]; ok {
 			t.Fatalf("embedded Lightweight Compose contains %s", disabled)
+		}
+	}
+	if strings.Contains(output.Compose, "container_name:") {
+		t.Fatal("rendered Compose retains global container names that break project isolation")
+	}
+	envKeys := map[string]bool{}
+	for _, line := range strings.Split(output.Env, "\n") {
+		if key, _, ok := strings.Cut(line, "="); ok && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			envKeys[strings.TrimSpace(key)] = true
+		}
+	}
+	requiredVariable := regexp.MustCompile(`\$\{([A-Z0-9_]+)\}`)
+	for _, match := range requiredVariable.FindAllStringSubmatch(output.Compose, -1) {
+		if !envKeys[match[1]] {
+			t.Fatalf("rendered .env does not define required Compose variable %s", match[1])
 		}
 	}
 }
