@@ -149,4 +149,16 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash [sha256.Size]byte) 
 	return nil
 }
 
+func (s *Store) UpdateSessionCSRF(ctx context.Context, tokenHash, csrfHash [sha256.Size]byte) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET csrf_hash = ? WHERE id_hash = ?`, csrfHash[:], tokenHash[:])
+	if err != nil {
+		return fmt.Errorf("update session csrf: %w", err)
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 var ErrConflict = errors.New("conflict")

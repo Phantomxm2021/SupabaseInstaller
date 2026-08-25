@@ -54,6 +54,30 @@ func TestLoginSetsSecureHttpOnlyStrictCookie(t *testing.T) {
 	}
 }
 
+func TestSessionRefreshReturnsUsableCSRFToken(t *testing.T) {
+	handler, service := newAuthHandler(t)
+	_, _ = service.Bootstrap(context.Background(), "admin", "correct horse battery staple")
+	login, _ := service.Login(context.Background(), "admin", "correct horse battery staple")
+	request := httptest.NewRequest(http.MethodGet, "https://manager.example.com/api/session", nil)
+	request.AddCookie(&http.Cookie{Name: SessionCookieName, Value: login.Token})
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || payload.CSRFToken == "" {
+		t.Fatalf("response = %s, error = %v, want csrfToken", response.Body.String(), err)
+	}
+	if err := service.ValidateCSRF(context.Background(), login.Token, payload.CSRFToken); err != nil {
+		t.Fatalf("refreshed CSRF token is unusable: %v", err)
+	}
+}
+
 func TestMutationRejectsCrossOriginRequest(t *testing.T) {
 	handler, _ := newAuthHandler(t)
 	request := httptest.NewRequest(http.MethodPost, "https://manager.example.com/api/setup", bytes.NewBufferString(`{}`))

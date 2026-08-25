@@ -168,6 +168,20 @@ func (s *Service) ValidateCSRF(ctx context.Context, token, csrf string) error {
 	return nil
 }
 
+func (s *Service) RefreshCSRF(ctx context.Context, token string) (string, error) {
+	if _, err := s.Authenticate(ctx, token); err != nil {
+		return "", err
+	}
+	csrf, err := s.randomToken(32)
+	if err != nil {
+		return "", err
+	}
+	if err := s.store.UpdateSessionCSRF(ctx, sha256.Sum256([]byte(token)), sha256.Sum256([]byte(csrf))); err != nil {
+		return "", err
+	}
+	return csrf, nil
+}
+
 func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.store.DeleteSession(ctx, sha256.Sum256([]byte(token)))
 }

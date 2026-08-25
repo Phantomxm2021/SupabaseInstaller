@@ -1,6 +1,8 @@
 .worktrees/
 node_modules/
 dist/
+!apps/manager/webdist/dist/
+!apps/manager/webdist/dist/.keep
 coverage/
 *.tsbuildinfo
 apps/web/vite.config.js

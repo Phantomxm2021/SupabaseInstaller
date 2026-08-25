@@ -90,7 +90,12 @@ func (h authHandlers) session(response http.ResponseWriter, request *http.Reques
 		writeError(response, http.StatusUnauthorized, "UNAUTHENTICATED", "Authentication is required")
 		return
 	}
-	writeJSON(response, http.StatusOK, contracts.SessionResponse{Username: identity.Username, MustChangePassword: identity.MustChangePassword})
+	csrf, err := h.options.Service.RefreshCSRF(request.Context(), token)
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, "SESSION_FAILED", "Unable to refresh session")
+		return
+	}
+	writeJSON(response, http.StatusOK, contracts.SessionResponse{Username: identity.Username, MustChangePassword: identity.MustChangePassword, CSRFToken: csrf})
 }
 
 func (h authHandlers) logout(response http.ResponseWriter, request *http.Request) {
