@@ -50,9 +50,11 @@ type EmailAuthConfig struct {
 }
 
 type PhoneAuthConfig struct {
-	Enabled  bool              `json:"enabled"`
-	Provider string            `json:"provider,omitempty"`
-	Fields   map[string]string `json:"fields,omitempty"`
+	Enabled   bool              `json:"enabled"`
+	Provider  string            `json:"provider,omitempty"`
+	SecretSet bool              `json:"secretSet"`
+	Secret    SecretInput       `json:"secret,omitempty"`
+	Fields    map[string]string `json:"fields,omitempty"` // provider-specific non-secret fields only
 }
 
 type SMTPConfig struct {

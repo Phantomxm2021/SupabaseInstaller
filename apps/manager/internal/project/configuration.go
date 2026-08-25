@@ -155,15 +155,8 @@ func validateServicesConfiguration(services contracts.Services, validation *Vali
 
 func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 	validateSecretInput(auth.SMTP.Password, "auth.smtp.password", validation)
-	if auth.Phone.Enabled {
-		if auth.Phone.Provider != "twilio" && auth.Phone.Provider != "messagebird" && auth.Phone.Provider != "textlocal" {
-			validation.add("auth.phone.provider", "must be twilio, messagebird, or textlocal")
-		}
-		for field := range auth.Phone.Fields {
-			if !phoneFieldAllowed(auth.Phone.Provider, field) {
-				validation.add("auth.phone.fields."+field, "is not supported for this provider")
-			}
-		}
+	validatePhone(auth.Phone, validation)
+	if auth.SMTP.Enabled {
 	}
 	if auth.SMTP.Enabled {
 		if strings.TrimSpace(auth.SMTP.Host) == "" {
@@ -243,6 +236,37 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 	}
 }
 
+func validatePhone(phone contracts.PhoneAuthConfig, validation *ValidationError) {
+	if !phone.Enabled && phone.Provider == "" && len(phone.Fields) == 0 && !phone.SecretSet && phone.Secret.Action == "" {
+		return
+	}
+	if phone.Provider != "twilio" && phone.Provider != "messagebird" && phone.Provider != "textlocal" {
+		validation.add("auth.phone.provider", "must be twilio, messagebird, or textlocal")
+	}
+	for field := range phone.Fields {
+		if !phoneFieldAllowed(phone.Provider, field) {
+			validation.add("auth.phone.fields."+field, "is not supported for this provider")
+		}
+	}
+	if phone.Enabled {
+		for _, required := range phoneRequiredFields(phone.Provider) {
+			if strings.TrimSpace(phone.Fields[required]) == "" {
+				validation.add("auth.phone.fields."+required, "is required for this provider")
+			}
+		}
+		if !phone.SecretSet && phone.Secret.Action != "replace" {
+			validation.add("auth.phone.secret", "must retain an existing secret or replace it")
+		}
+		if phone.SecretSet && phone.Secret.Action != "retain" && phone.Secret.Action != "replace" {
+			validation.add("auth.phone.secret", "an existing secret must use retain or replace")
+		}
+		if phone.Secret.Action == "remove" {
+			validation.add("auth.phone.secret", "cannot be removed while Phone Auth is enabled")
+		}
+	}
+	validateSecretInput(phone.Secret, "auth.phone.secret", validation)
+}
+
 func oauthRequiredFields(provider string) []string {
 	switch provider {
 	case "azure":
@@ -271,11 +295,26 @@ func providerFieldAllowed(provider, field string) bool {
 func phoneFieldAllowed(provider, field string) bool {
 	switch provider {
 	case "twilio":
-		return field == "accountSid" || field == "authToken" || field == "messageServiceSid" || field == "verifySid"
-	case "messagebird", "textlocal":
-		return field == "accessKey"
+		return field == "accountSid" || field == "messageServiceSid" || field == "verifySid"
+	case "messagebird":
+		return field == "originator"
+	case "textlocal":
+		return field == "sender"
 	default:
 		return false
+	}
+}
+
+func phoneRequiredFields(provider string) []string {
+	switch provider {
+	case "twilio":
+		return []string{"accountSid", "messageServiceSid"}
+	case "messagebird":
+		return []string{"originator"}
+	case "textlocal":
+		return []string{"sender"}
+	default:
+		return nil
 	}
 }
 

@@ -1,6 +1,7 @@
 package project
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -50,6 +51,27 @@ func TestNormalizeDraftConfigurationTakesPrecedenceOverLegacyProjection(t *testi
 	normalized := NormalizeDraft(draft)
 	if normalized.Domain != "typed.example.com" || normalized.SiteURL != "https://typed.example.com" || normalized.Services.Storage != true {
 		t.Fatalf("NormalizeDraft() did not project typed configuration: %#v", normalized)
+	}
+}
+
+func TestProjectJSONDoesNotExposeConfigurationSecrets(t *testing.T) {
+	draft := validDraft()
+	draft.Configuration = DefaultConfiguration(contracts.PresetLightweight)
+	draft.Configuration.General = contracts.GeneralConfig{Domain: draft.Domain, SiteURL: draft.SiteURL, SupabaseVersion: draft.SupabaseVersion}
+	draft.Configuration.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", Port: 587, Username: "bee", PasswordSet: false, Password: contracts.SecretInput{Action: "replace", Value: "smtp-plaintext"}, SenderEmail: "bee@example.com", SenderName: "Bee"}
+	draft.Configuration.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true, ClientID: "client", Secret: contracts.SecretInput{Action: "replace", Value: "oauth-plaintext"}}}
+	draft.Configuration.Storage = contracts.StorageConfig{Backend: contracts.StorageBackendS3, Bucket: "bucket", Region: "us-east-1", Endpoint: "https://s3.example.com", AccessKeyID: "access-key", SecretAccessKey: contracts.SecretInput{Action: "replace", Value: "s3-plaintext"}}
+	draft.Configuration.Functions.Variables = []contracts.FunctionVariable{{Name: "BEE_SECRET", Value: contracts.SecretInput{Action: "replace", Value: "function-plaintext"}}}
+	draft.Configuration.Auth.Phone = contracts.PhoneAuthConfig{Enabled: true, Provider: "messagebird", Secret: contracts.SecretInput{Action: "replace", Value: "phone-plaintext"}, Fields: map[string]string{"originator": "Bee"}}
+	project := contracts.Project{Domain: draft.Configuration.General.Domain, SiteURL: draft.Configuration.General.SiteURL, SupabaseVersion: draft.Configuration.General.SupabaseVersion, Services: draft.Configuration.Services}
+	payload, err := json.Marshal(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"smtp-plaintext", "oauth-plaintext", "s3-plaintext", "function-plaintext", "phone-plaintext", "access-key"} {
+		if strings.Contains(string(payload), secret) {
+			t.Fatalf("Project JSON leaked %q: %s", secret, payload)
+		}
 	}
 }
 

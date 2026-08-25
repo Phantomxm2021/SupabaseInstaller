@@ -25,6 +25,49 @@ func TestOAuthProviderRegistryIsStable(t *testing.T) {
 	}
 }
 
+func TestPhoneValidationRejectsDisabledUnknownConfiguration(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.Phone = contracts.PhoneAuthConfig{Provider: "bogus", Fields: map[string]string{"authToken": "plaintext"}}
+	err := ValidateConfiguration(cfg)
+	var validation *ValidationError
+	if !errors.As(err, &validation) || validation.Fields["auth.phone.provider"] == "" || validation.Fields["auth.phone.fields.authToken"] == "" {
+		t.Fatalf("expected disabled Phone provider and field errors, got %v", err)
+	}
+}
+
+func TestPhoneProvidersRequireTypedFieldsAndSecret(t *testing.T) {
+	cases := []struct {
+		provider string
+		field    string
+	}{
+		{"twilio", "accountSid"},
+		{"messagebird", "originator"},
+		{"textlocal", "sender"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			cfg := DefaultConfiguration(contracts.PresetLightweight)
+			cfg.Auth.Phone = contracts.PhoneAuthConfig{Enabled: true, Provider: tc.provider}
+			err := ValidateConfiguration(cfg)
+			var validation *ValidationError
+			if !errors.As(err, &validation) || validation.Fields["auth.phone.fields."+tc.field] == "" || validation.Fields["auth.phone.secret"] == "" {
+				t.Fatalf("expected required Phone fields and secret, got %v", err)
+			}
+		})
+	}
+}
+
+func TestPhoneSecretUsesSecretInput(t *testing.T) {
+	phone := contracts.PhoneAuthConfig{Enabled: true, Provider: "messagebird", SecretSet: true, Secret: contracts.SecretInput{Action: "retain"}, Fields: map[string]string{"originator": "Bee"}}
+	payload, err := json.Marshal(phone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), "authToken") || strings.Contains(string(payload), "accessKey") {
+		t.Fatalf("Phone JSON contains credential field: %s", payload)
+	}
+}
+
 func TestConfigurationPatchOmitsFullConfigurationForSectionPatch(t *testing.T) {
 	payload, err := json.Marshal(contracts.ConfigurationPatch{ExpectedRevision: 2, General: &contracts.GeneralConfig{Domain: "bee.example.com"}})
 	if err != nil {

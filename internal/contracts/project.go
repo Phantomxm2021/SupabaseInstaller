@@ -65,18 +65,17 @@ type ProjectDraft struct {
 }
 
 type Project struct {
-	ID                    string               `json:"id"`
-	Name                  string               `json:"name"`
-	Slug                  string               `json:"slug"`
-	Domain                string               `json:"domain"`
-	SiteURL               string               `json:"siteUrl"`
-	Status                ProjectStatus        `json:"status"`
-	Health                HealthStatus         `json:"health"`
-	SupabaseVersion       string               `json:"supabaseVersion"`
-	Preset                Preset               `json:"preset"`
-	ConfigurationRevision int64                `json:"configurationRevision"`
-	Configuration         ProjectConfiguration `json:"configuration"`
-	Services              Services             `json:"services"`
-	CreatedAt             time.Time            `json:"createdAt"`
-	UpdatedAt             time.Time            `json:"updatedAt"`
+	ID                    string        `json:"id"`
+	Name                  string        `json:"name"`
+	Slug                  string        `json:"slug"`
+	Domain                string        `json:"domain"`
+	SiteURL               string        `json:"siteUrl"`
+	Status                ProjectStatus `json:"status"`
+	Health                HealthStatus  `json:"health"`
+	SupabaseVersion       string        `json:"supabaseVersion"`
+	Preset                Preset        `json:"preset"`
+	ConfigurationRevision int64         `json:"configurationRevision"`
+	Services              Services      `json:"services"`
+	CreatedAt             time.Time     `json:"createdAt"`
+	UpdatedAt             time.Time     `json:"updatedAt"`
 }

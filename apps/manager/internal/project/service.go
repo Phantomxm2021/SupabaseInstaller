@@ -32,7 +32,7 @@ func (s *Service) Create(ctx context.Context, draft Draft) (Project, error) {
 	project := contracts.Project{
 		ID: s.id(), Name: strings.TrimSpace(draft.Name), Slug: draft.Slug, Domain: draft.Domain,
 		SiteURL: draft.SiteURL, Status: contracts.ProjectStatusDraft, Health: contracts.HealthUnknown,
-		SupabaseVersion: draft.SupabaseVersion, Preset: draft.Preset, Configuration: draft.Configuration, Services: draft.Configuration.Services,
+		SupabaseVersion: draft.SupabaseVersion, Preset: draft.Preset, Services: draft.Configuration.Services,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if project.ID == "" {
