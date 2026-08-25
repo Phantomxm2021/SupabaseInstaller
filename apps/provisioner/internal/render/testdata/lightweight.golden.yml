@@ -1,0 +1,22 @@
+name: supabase-manager-bee
+services:
+  api-gw:
+    image: envoyproxy/envoy:v1.39.0
+    ports:
+      - 127.0.0.1:18001:8000
+  auth:
+    image: supabase/gotrue:v2.177.0
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: supabase/postgres:17.6.1.136
+  meta:
+    image: supabase/postgres-meta:v0.91.0
+  rest:
+    image: postgrest/postgrest:v13.0.4
+  studio:
+    image: supabase/studio:2026.04.27-sha-5f60601
+    depends_on:
+      meta:
+        condition: service_healthy
