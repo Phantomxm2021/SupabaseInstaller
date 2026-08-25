@@ -1,0 +1,15 @@
+{
+  "name": "supabase-manager",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@11.17.0",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "test": "npm run test --workspace apps/web --if-present",
+    "build": "npm run build --workspace apps/web --if-present",
+    "lint": "npm run lint --workspace apps/web --if-present",
+    "test:e2e": "playwright test"
+  }
+}

@@ -1,0 +1,35 @@
+package config
+
+import (
+	"encoding/base64"
+	"strings"
+	"testing"
+)
+
+func TestLoadRejectsMissingManagerSecrets(t *testing.T) {
+	t.Setenv("MASTER_ENCRYPTION_KEY", "")
+	t.Setenv("PROVISIONER_TOKEN", "")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "MASTER_ENCRYPTION_KEY") {
+		t.Fatalf("Load() error = %v, want MASTER_ENCRYPTION_KEY validation", err)
+	}
+}
+
+func TestLoadReturnsValidatedManagerConfiguration(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	t.Setenv("MASTER_ENCRYPTION_KEY", key)
+	t.Setenv("PROVISIONER_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("MANAGER_LISTEN_ADDR", "127.0.0.1:8181")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ListenAddr != "127.0.0.1:8181" {
+		t.Fatalf("ListenAddr = %q, want 127.0.0.1:8181", cfg.ListenAddr)
+	}
+	if len(cfg.MasterEncryptionKey) != 32 {
+		t.Fatalf("MasterEncryptionKey length = %d, want 32", len(cfg.MasterEncryptionKey))
+	}
+}
