@@ -18,15 +18,16 @@ import (
 var ErrStaleConfiguration = store.ErrStaleConfiguration
 
 // ConfigurationService is the boundary between typed project configuration
-// and durable configuration/secret state. The optional coordinator is reserved
-// for callers that serialize configuration changes with an operation runner.
+// and durable configuration/secret state. Store transactions provide the
+// operation boundary; callers can compose this service with an operation
+// coordinator explicitly when they need lifecycle events.
 type ConfigurationService struct {
 	store  *store.Store
 	cipher *managersecrets.Cipher
 	now    func() time.Time
 }
 
-func NewConfigurationService(database *store.Store, cipher *managersecrets.Cipher, now func() time.Time, _ ...any) *ConfigurationService {
+func NewConfigurationService(database *store.Store, cipher *managersecrets.Cipher, now func() time.Time) *ConfigurationService {
 	if now == nil {
 		now = time.Now
 	}

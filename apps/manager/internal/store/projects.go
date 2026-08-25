@@ -15,13 +15,43 @@ import (
 var ErrNotFound = errors.New("not found")
 
 func (s *Store) CreateProject(ctx context.Context, project contracts.Project, configurations ...contracts.ProjectConfiguration) error {
-	servicesJSON, err := json.Marshal(project.Services)
-	if err != nil {
-		return fmt.Errorf("encode services: %w", err)
+	configuration := firstConfiguration(project, configurations...)
+	if configurationHasReplacement(configuration) {
+		return errors.New("secret cipher is required for replacement values")
 	}
+	return s.CreateProjectWithSecrets(ctx, project, configuration, nil)
+}
+
+func configurationHasReplacement(cfg contracts.ProjectConfiguration) bool {
+	if cfg.Auth.SMTP.Password.Action == "replace" || cfg.Auth.Phone.Secret.Action == "replace" || cfg.Storage.SecretAccessKey.Action == "replace" {
+		return true
+	}
+	for _, oauth := range cfg.Auth.OAuth {
+		if oauth.Secret.Action == "replace" {
+			return true
+		}
+	}
+	for _, variable := range cfg.Functions.Variables {
+		if variable.Value.Action == "replace" {
+			return true
+		}
+	}
+	return false
+}
+
+func firstConfiguration(project contracts.Project, configurations ...contracts.ProjectConfiguration) contracts.ProjectConfiguration {
 	configuration := contracts.ProjectConfiguration{Revision: 1, General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services}
 	if len(configurations) > 0 {
 		configuration = configurations[0]
+	}
+	configuration.Revision = 1
+	return configuration
+}
+
+func (s *Store) CreateProjectWithSecrets(ctx context.Context, project contracts.Project, configuration contracts.ProjectConfiguration, mutations []SecretMutation) error {
+	servicesJSON, err := json.Marshal(project.Services)
+	if err != nil {
+		return fmt.Errorf("encode services: %w", err)
 	}
 	configuration.Revision = 1
 	configurationJSON, err := json.Marshal(redactConfiguration(configuration))
@@ -43,6 +73,17 @@ INSERT INTO projects (
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO project_configs(project_id, section, revision, config_json, created_at) VALUES (?, 'aggregate', 1, ?, ?)`, project.ID, string(configurationJSON), formatTime(project.CreatedAt)); err != nil {
 			return fmt.Errorf("create initial configuration: %w", err)
+		}
+		for _, mutation := range mutations {
+			if mutation.Delete {
+				continue
+			}
+			if mutation.Kind == "" {
+				return errors.New("encrypted secret kind is required")
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id, kind, envelope_version, nonce, ciphertext, updated_at) VALUES (?, ?, ?, ?, ?, ?)`, project.ID, mutation.Kind, mutation.Envelope.Version, mutation.Envelope.Nonce, mutation.Envelope.Ciphertext, formatTime(project.CreatedAt)); err != nil {
+				return fmt.Errorf("create encrypted secret %s: %w", mutation.Kind, err)
+			}
 		}
 		return nil
 	})

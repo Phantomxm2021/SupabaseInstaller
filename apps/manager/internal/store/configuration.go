@@ -46,6 +46,7 @@ WHERE p.id = ?`, projectID).Scan(&snapshot.ProjectID, &snapshot.Revision, &snaps
 	if err := json.Unmarshal([]byte(raw), &snapshot.Configuration); err != nil {
 		return ConfigurationSnapshot{}, fmt.Errorf("decode configuration: %w", err)
 	}
+	snapshot.Configuration = redactConfiguration(snapshot.Configuration)
 	snapshot.Configuration.Revision = snapshot.Revision
 	return snapshot, nil
 }
@@ -122,23 +123,63 @@ ON CONFLICT(project_id, kind) DO UPDATE SET envelope_version = excluded.envelope
 }
 
 func (s *Store) MarkConfigurationGood(ctx context.Context, projectID string, revision int64) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE projects SET last_good_revision = ? WHERE id = ? AND config_revision >= ?`, revision, projectID, revision)
-	if err != nil {
-		return fmt.Errorf("mark configuration good: %w", err)
-	}
-	count, _ := result.RowsAffected()
-	if count == 0 {
-		var exists string
-		if err := s.db.QueryRowContext(ctx, `SELECT id FROM projects WHERE id = ?`, projectID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+	if revision <= 0 {
 		return ErrStaleConfiguration
 	}
-	return nil
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var current, lastGood int64
+		if err := tx.QueryRowContext(ctx, `SELECT config_revision, last_good_revision FROM projects WHERE id = ?`, projectID).Scan(&current, &lastGood); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("read configuration revision: %w", err)
+		}
+		if revision != current {
+			return fmt.Errorf("%w: expected current revision %d, got %d", ErrStaleConfiguration, current, revision)
+		}
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_configs WHERE project_id = ? AND section = 'aggregate' AND revision = ?`, projectID, revision).Scan(&exists); err != nil {
+			return fmt.Errorf("verify configuration snapshot: %w", err)
+		}
+		if exists != 1 {
+			return fmt.Errorf("%w: aggregate revision %d does not exist", ErrStaleConfiguration, revision)
+		}
+		if revision < lastGood {
+			return fmt.Errorf("%w: last good revision is %d", ErrStaleConfiguration, lastGood)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE projects SET last_good_revision = ? WHERE id = ?`, revision, projectID); err != nil {
+			return fmt.Errorf("mark configuration good: %w", err)
+		}
+		return nil
+	})
 }
 
 func redactConfiguration(cfg contracts.ProjectConfiguration) contracts.ProjectConfiguration {
-	cfg.Revision = cfg.Revision
+	// Clone every reference-bearing field before removing secrets. This keeps
+	// persistence and read-boundary redaction from mutating caller-owned maps or
+	// slices.
+	if cfg.Auth.RedirectURLs != nil {
+		cfg.Auth.RedirectURLs = append([]string(nil), cfg.Auth.RedirectURLs...)
+	}
+	if cfg.Auth.Phone.Fields != nil {
+		cfg.Auth.Phone.Fields = cloneStringMap(cfg.Auth.Phone.Fields)
+	}
+	if cfg.Auth.OAuth != nil {
+		oauthCopy := make(map[string]contracts.OAuthProviderConfig, len(cfg.Auth.OAuth))
+		for provider, oauth := range cfg.Auth.OAuth {
+			if oauth.Fields != nil {
+				oauth.Fields = cloneStringMap(oauth.Fields)
+			}
+			oauthCopy[provider] = oauth
+		}
+		cfg.Auth.OAuth = oauthCopy
+	}
+	if cfg.Functions.Variables != nil {
+		cfg.Functions.Variables = append([]contracts.FunctionVariable(nil), cfg.Functions.Variables...)
+	}
+	if cfg.Database.Extensions != nil {
+		cfg.Database.Extensions = append([]string(nil), cfg.Database.Extensions...)
+	}
 	cfg.Auth.SMTP.Password = contracts.SecretInput{}
 	cfg.Auth.Phone.Secret = contracts.SecretInput{}
 	for provider, oauth := range cfg.Auth.OAuth {
@@ -150,4 +191,12 @@ func redactConfiguration(cfg contracts.ProjectConfiguration) contracts.ProjectCo
 		cfg.Functions.Variables[index].Value = contracts.SecretInput{}
 	}
 	return cfg
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	output := make(map[string]string, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
 }

@@ -48,7 +48,7 @@ func main() {
 	now := time.Now
 	adminAuth := auth.NewService(database, auth.NewPasswordHasher(auth.DefaultParams), rand.Reader, now)
 	operations := operation.NewService(database, randomID, now)
-	projects := project.NewService(database, randomID, now)
+	projects := project.NewServiceWithCipher(database, randomID, now, cipher)
 	provisionerHTTP := &http.Client{Timeout: 45 * time.Minute}
 	provisionerClient := provisioner.NewClient(cfg.ProvisionerURL, cfg.ProvisionerToken, provisionerHTTP)
 	allocator := ports.NewAllocator(database, cfg.PortRangeStart, cfg.PortRangeEnd, ports.NetworkProbe{})

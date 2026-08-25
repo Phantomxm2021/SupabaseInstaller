@@ -21,6 +21,33 @@ type Store struct {
 	db *sql.DB
 }
 
+type migrationSpec struct {
+	name    string
+	version int
+}
+
+func parseMigrationNames(names []string) ([]migrationSpec, error) {
+	migrations := make([]migrationSpec, 0, len(names))
+	seen := make(map[int]string, len(names))
+	for _, name := range names {
+		parts := strings.SplitN(name, "_", 2)
+		if len(parts) != 2 || !strings.HasSuffix(name, ".sql") {
+			return nil, fmt.Errorf("migration %q has no numeric prefix", name)
+		}
+		version, err := strconv.Atoi(parts[0])
+		if err != nil || version < 1 {
+			return nil, fmt.Errorf("migration %q has invalid version", name)
+		}
+		if previous, exists := seen[version]; exists {
+			return nil, fmt.Errorf("duplicate migration version %d in %q and %q", version, previous, name)
+		}
+		seen[version] = name
+		migrations = append(migrations, migrationSpec{name: name, version: version})
+	}
+	sort.Slice(migrations, func(i, j int) bool { return migrations[i].version < migrations[j].version })
+	return migrations, nil
+}
+
 func Open(path string) (*Store, error) {
 	if path == "" {
 		return nil, fmt.Errorf("database path is required")
@@ -55,23 +82,19 @@ func applyMigrations(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	paths := make([]string, 0, len(entries))
+	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-			paths = append(paths, entry.Name())
+			names = append(names, entry.Name())
 		}
 	}
-	sort.Strings(paths)
-	for _, name := range paths {
-		parts := strings.SplitN(name, "_", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("migration %q has no numeric prefix", name)
-		}
-		version, err := strconv.Atoi(parts[0])
-		if err != nil {
-			return fmt.Errorf("migration %q has invalid version: %w", name, err)
-		}
-		migration, err := migrationFiles.ReadFile("migrations/" + name)
+	migrations, err := parseMigrationNames(names)
+	if err != nil {
+		return err
+	}
+	for _, migration := range migrations {
+		name, version := migration.name, migration.version
+		migrationSQL, err := migrationFiles.ReadFile("migrations/" + name)
 		if err != nil {
 			return err
 		}
@@ -91,7 +114,7 @@ func applyMigrations(db *sql.DB) error {
 			applied = 0
 		}
 		if applied == 0 {
-			if _, err := tx.Exec(string(migration)); err != nil {
+			if _, err := tx.Exec(string(migrationSQL)); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("migration %s: %w", name, err)
 			}
