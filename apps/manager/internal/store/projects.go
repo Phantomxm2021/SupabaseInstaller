@@ -105,6 +105,18 @@ func (s *Store) UpdateProjectStatus(ctx context.Context, id string, status contr
 	return nil
 }
 
+func (s *Store) DeleteProject(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete project metadata: %w", err)
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) PutSecret(ctx context.Context, projectID, kind string, envelope secrets.Envelope) error {
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO project_secrets(project_id, kind, envelope_version, nonce, ciphertext, updated_at)

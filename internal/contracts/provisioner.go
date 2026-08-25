@@ -3,12 +3,27 @@ package contracts
 import "time"
 
 type PrepareProjectRequest struct {
-	OperationID      string `json:"operationId"`
-	IdempotencyKey   string `json:"idempotencyKey"`
-	ProjectID        string `json:"projectId"`
-	Slug             string `json:"slug"`
-	ExpectedRevision int64  `json:"expectedRevision"`
-	NextRevision     int64  `json:"nextRevision"`
+	OperationID      string         `json:"operationId"`
+	IdempotencyKey   string         `json:"idempotencyKey"`
+	ProjectID        string         `json:"projectId"`
+	ProjectName      string         `json:"projectName"`
+	Slug             string         `json:"slug"`
+	ExpectedRevision int64          `json:"expectedRevision"`
+	NextRevision     int64          `json:"nextRevision"`
+	Domain           string         `json:"domain"`
+	SiteURL          string         `json:"siteUrl"`
+	APIPort          int            `json:"apiPort"`
+	Secrets          ProjectSecrets `json:"secrets"`
+}
+
+type ProjectSecrets struct {
+	DatabasePassword   string `json:"databasePassword"`
+	JWTSecret          string `json:"jwtSecret"`
+	AnonKey            string `json:"anonKey"`
+	ServiceRoleKey     string `json:"serviceRoleKey"`
+	DashboardPassword  string `json:"dashboardPassword"`
+	SecretKeyBase      string `json:"secretKeyBase"`
+	VaultEncryptionKey string `json:"vaultEncryptionKey"`
 }
 
 type PrepareProjectResponse struct {
@@ -31,11 +46,12 @@ const (
 )
 
 type LifecycleRequest struct {
-	OperationID    string          `json:"operationId"`
-	IdempotencyKey string          `json:"idempotencyKey"`
-	ProjectID      string          `json:"projectId"`
-	Slug           string          `json:"slug"`
-	Action         LifecycleAction `json:"action"`
+	OperationID        string          `json:"operationId"`
+	IdempotencyKey     string          `json:"idempotencyKey"`
+	ProjectID          string          `json:"projectId"`
+	Slug               string          `json:"slug"`
+	Action             LifecycleAction `json:"action"`
+	ConfirmProjectName string          `json:"confirmProjectName,omitempty"`
 }
 
 type InspectProjectRequest struct {

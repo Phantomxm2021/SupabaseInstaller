@@ -51,7 +51,17 @@ func (backend *Backend) Lifecycle(ctx context.Context, request contracts.Lifecyc
 	case contracts.LifecycleDeleteRuntime:
 		return backend.runner.DownRuntime(ctx, project)
 	case contracts.LifecycleDeleteData:
-		return fmt.Errorf("data deletion requires a separate confirmed operation")
+		metadata, err := backend.projectFS.Metadata(request.Slug)
+		if err != nil {
+			return err
+		}
+		if request.ConfirmProjectName == "" || request.ConfirmProjectName != metadata.ProjectName {
+			return fmt.Errorf("exact project name confirmation is required")
+		}
+		if err := backend.runner.DownRuntime(ctx, project); err != nil {
+			return err
+		}
+		return backend.projectFS.DeleteProjectData(request.Slug)
 	default:
 		return fmt.Errorf("unsupported lifecycle action %q", request.Action)
 	}

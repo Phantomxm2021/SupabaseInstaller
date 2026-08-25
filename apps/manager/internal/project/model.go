@@ -10,8 +10,10 @@ type ProjectStatus = contracts.ProjectStatus
 type HealthStatus = contracts.HealthStatus
 
 const (
-	PresetLightweight = contracts.PresetLightweight
-	PresetStandard    = contracts.PresetStandard
-	PresetFull        = contracts.PresetFull
-	PresetCustom      = contracts.PresetCustom
+	PresetLightweight  = contracts.PresetLightweight
+	PresetStandard     = contracts.PresetStandard
+	PresetFull         = contracts.PresetFull
+	PresetCustom       = contracts.PresetCustom
+	ProjectStatusDraft = contracts.ProjectStatusDraft
+	HealthUnknown      = contracts.HealthUnknown
 )

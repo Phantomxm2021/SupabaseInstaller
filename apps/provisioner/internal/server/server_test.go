@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -26,12 +28,12 @@ func TestProvisionerRejectsMissingServiceToken(t *testing.T) {
 
 func TestProvisionerRejectsStaleConfigRevision(t *testing.T) {
 	handler := newTestServer(t)
-	first := contracts.PrepareProjectRequest{OperationID: "op-1", IdempotencyKey: "key-1", ProjectID: "project-1", Slug: "bee", ExpectedRevision: 0, NextRevision: 4}
+	first := prepareRequest("op-1", "key-1", 0, 4)
 	response := authenticatedJSON(t, handler, "/internal/v1/projects/prepare", first)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("first prepare status = %d, body = %s", response.Code, response.Body.String())
 	}
-	stale := contracts.PrepareProjectRequest{OperationID: "op-2", IdempotencyKey: "key-2", ProjectID: "project-1", Slug: "bee", ExpectedRevision: 3, NextRevision: 5}
+	stale := prepareRequest("op-2", "key-2", 3, 5)
 	response = authenticatedJSON(t, handler, "/internal/v1/projects/prepare", stale)
 	if response.Code != http.StatusConflict {
 		t.Fatalf("stale prepare status = %d, want 409", response.Code)
@@ -40,11 +42,37 @@ func TestProvisionerRejectsStaleConfigRevision(t *testing.T) {
 
 func TestProvisionerReturnsStoredResponseForIdempotencyKey(t *testing.T) {
 	handler := newTestServer(t)
-	request := contracts.PrepareProjectRequest{OperationID: "op-1", IdempotencyKey: "same-key", ProjectID: "project-1", Slug: "bee", ExpectedRevision: 0, NextRevision: 1}
+	request := prepareRequest("op-1", "same-key", 0, 1)
 	first := authenticatedJSON(t, handler, "/internal/v1/projects/prepare", request)
 	second := authenticatedJSON(t, handler, "/internal/v1/projects/prepare", request)
 	if first.Body.String() != second.Body.String() || second.Code != http.StatusCreated {
 		t.Fatalf("idempotent responses differ: first=%s second=%s", first.Body.String(), second.Body.String())
+	}
+}
+
+func TestPrepareWritesGeneratedComposeAndSecretEnv(t *testing.T) {
+	base := t.TempDir()
+	root, _ := projectfs.New(base)
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/prepare", prepareRequest("op-1", "key-1", 0, 1))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("prepare status = %d, body = %s", response.Code, response.Body.String())
+	}
+	compose, err := os.ReadFile(filepath.Join(base, "bee", "docker-compose.yml"))
+	if err != nil || strings.Contains(string(compose), "realtime:") {
+		t.Fatalf("generated Compose error = %v, content includes disabled realtime", err)
+	}
+	env, err := os.ReadFile(filepath.Join(base, "bee", ".env"))
+	if err != nil || !strings.Contains(string(env), "POSTGRES_PASSWORD=database-secret") {
+		t.Fatalf("generated env error = %v, content = %s", err, env)
+	}
+}
+
+func prepareRequest(operationID, key string, expected, next int64) contracts.PrepareProjectRequest {
+	return contracts.PrepareProjectRequest{
+		OperationID: operationID, IdempotencyKey: key, ProjectID: "project-1", Slug: "bee",
+		ExpectedRevision: expected, NextRevision: next, Domain: "bee.example.com", SiteURL: "https://example.com", APIPort: 18001,
+		Secrets: contracts.ProjectSecrets{DatabasePassword: "database-secret", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-secret", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"},
 	}
 }
 

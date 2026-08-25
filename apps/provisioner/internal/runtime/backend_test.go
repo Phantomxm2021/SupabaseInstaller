@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,10 +29,32 @@ func TestStartRunsDatabaseBeforeDependentServices(t *testing.T) {
 
 func TestDeleteDataIsRejectedWithoutManagerConfirmedPath(t *testing.T) {
 	root, _ := projectfs.New(t.TempDir())
+	_, _ = root.UpdateMetadata("bee", func(metadata *projectfs.Metadata) error { metadata.ProjectName = "Bee"; return nil })
 	backend := NewBackend(root, &recordingRunner{}, staticInspector{})
-	err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{Slug: "bee", Action: contracts.LifecycleDeleteData})
-	if err == nil || !strings.Contains(err.Error(), "separate confirmed") {
+	err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{Slug: "bee", Action: contracts.LifecycleDeleteData, ConfirmProjectName: "bee"})
+	if err == nil || !strings.Contains(err.Error(), "exact project name") {
 		t.Fatalf("Lifecycle() error = %v, want destructive-operation rejection", err)
+	}
+}
+
+func TestDeleteDataRemovesOnlyConfirmedContainedProject(t *testing.T) {
+	base := t.TempDir()
+	root, _ := projectfs.New(base)
+	_, _ = root.UpdateMetadata("bee", func(metadata *projectfs.Metadata) error { metadata.ProjectName = "Bee"; return nil })
+	if err := os.WriteFile(filepath.Join(base, "bee", "data.marker"), []byte("data"), 0o600); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	backend := NewBackend(root, &recordingRunner{}, staticInspector{})
+
+	err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{Slug: "bee", Action: contracts.LifecycleDeleteData, ConfirmProjectName: "Bee"})
+	if err != nil {
+		t.Fatalf("Lifecycle() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "bee")); !os.IsNotExist(err) {
+		t.Fatalf("project directory still exists or stat failed: %v", err)
+	}
+	if _, err := os.Stat(base); err != nil {
+		t.Fatalf("project root was removed: %v", err)
 	}
 }
 

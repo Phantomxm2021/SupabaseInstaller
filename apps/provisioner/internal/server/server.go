@@ -8,6 +8,7 @@ import (
 
 	provisionerauth "supabase-manager/apps/provisioner/internal/auth"
 	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/apps/provisioner/internal/render"
 	"supabase-manager/internal/contracts"
 )
 
@@ -53,6 +54,16 @@ func (s *server) prepare(response http.ResponseWriter, request *http.Request) {
 		if metadata.Revision != input.ExpectedRevision {
 			return errStaleRevision
 		}
+		rendered, err := render.Lightweight(render.Input{
+			ProjectID: input.ProjectID, Slug: input.Slug, Domain: input.Domain, SiteURL: input.SiteURL,
+			APIPort: input.APIPort, Secrets: input.Secrets,
+		})
+		if err != nil {
+			return err
+		}
+		if err := s.projectFS.WriteRuntimeFiles(input.Slug, []byte(rendered.Compose), []byte(rendered.Env)); err != nil {
+			return err
+		}
 		projectDir, err := s.projectFS.ProjectPath(input.Slug)
 		if err != nil {
 			return err
@@ -63,6 +74,7 @@ func (s *server) prepare(response http.ResponseWriter, request *http.Request) {
 		}
 		encoded, _ := json.Marshal(prepared)
 		metadata.ProjectID = input.ProjectID
+		metadata.ProjectName = input.ProjectName
 		metadata.Revision = input.NextRevision
 		metadata.Idempotency[input.IdempotencyKey] = encoded
 		return nil

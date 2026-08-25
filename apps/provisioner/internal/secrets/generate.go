@@ -9,49 +9,43 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"supabase-manager/internal/contracts"
 )
 
-type ProjectSecrets struct {
-	DatabasePassword   string
-	JWTSecret          string
-	AnonKey            string
-	ServiceRoleKey     string
-	DashboardPassword  string
-	SecretKeyBase      string
-	VaultEncryptionKey string
-}
+type ProjectSecrets = contracts.ProjectSecrets
 
-func Generate(random io.Reader) (ProjectSecrets, error) {
+func Generate(random io.Reader) (contracts.ProjectSecrets, error) {
 	databasePassword, err := randomString(random, 32)
 	if err != nil {
-		return ProjectSecrets{}, err
+		return contracts.ProjectSecrets{}, err
 	}
 	jwtSecret, err := randomString(random, 32)
 	if err != nil {
-		return ProjectSecrets{}, err
+		return contracts.ProjectSecrets{}, err
 	}
 	dashboardPassword, err := randomString(random, 24)
 	if err != nil {
-		return ProjectSecrets{}, err
+		return contracts.ProjectSecrets{}, err
 	}
 	secretKeyBase, err := randomString(random, 48)
 	if err != nil {
-		return ProjectSecrets{}, err
+		return contracts.ProjectSecrets{}, err
 	}
 	vaultKey, err := randomString(random, 32)
 	if err != nil {
-		return ProjectSecrets{}, err
+		return contracts.ProjectSecrets{}, err
 	}
 	now := time.Now().UTC()
 	anon, err := signAPIKey(jwtSecret, "anon", now)
 	if err != nil {
-		return ProjectSecrets{}, err
+		return contracts.ProjectSecrets{}, err
 	}
 	serviceRole, err := signAPIKey(jwtSecret, "service_role", now)
 	if err != nil {
-		return ProjectSecrets{}, err
+		return contracts.ProjectSecrets{}, err
 	}
-	return ProjectSecrets{
+	return contracts.ProjectSecrets{
 		DatabasePassword:   databasePassword,
 		JWTSecret:          jwtSecret,
 		AnonKey:            anon,

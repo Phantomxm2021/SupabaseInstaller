@@ -67,6 +67,22 @@ func TestMutationRejectsCrossOriginRequest(t *testing.T) {
 	}
 }
 
+func TestProtectedMutationRejectsCrossOriginBeforeSessionProcessing(t *testing.T) {
+	_, service := newAuthHandler(t)
+	protected := ProtectAPI(AuthOptions{Service: service, PublicOrigin: "https://manager.example.com", SecureCookies: true}, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodPost, "https://manager.example.com/api/projects", bytes.NewBufferString(`{}`))
+	request.Header.Set("Origin", "https://evil.example")
+	response := httptest.NewRecorder()
+
+	protected.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", response.Code)
+	}
+}
+
 func newAuthHandler(t *testing.T) (http.Handler, *auth.Service) {
 	t.Helper()
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))

@@ -44,6 +44,25 @@ func RequireSession(service *auth.Service, next http.Handler) http.Handler {
 	})
 }
 
+func ProtectAPI(options AuthOptions, next http.Handler) http.Handler {
+	authenticated := RequireSession(options.Service, next)
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet && request.Method != http.MethodHead && request.Method != http.MethodOptions {
+			origin := request.Header.Get("Origin")
+			if origin == "" || !sameOrigin(origin, options.PublicOrigin) {
+				writeError(response, http.StatusForbidden, "INVALID_ORIGIN", "Request origin is not allowed")
+				return
+			}
+			token, ok := sessionToken(request)
+			if !ok || options.Service.ValidateCSRF(request.Context(), token, request.Header.Get("X-CSRF-Token")) != nil {
+				writeError(response, http.StatusForbidden, "INVALID_CSRF", "CSRF validation failed")
+				return
+			}
+		}
+		authenticated.ServeHTTP(response, request)
+	})
+}
+
 func IdentityFromContext(ctx context.Context) (auth.Identity, bool) {
 	identity, ok := ctx.Value(identityContextKey{}).(auth.Identity)
 	return identity, ok

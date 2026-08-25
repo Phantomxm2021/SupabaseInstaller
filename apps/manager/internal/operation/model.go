@@ -9,6 +9,10 @@ type Event = contracts.OperationEvent
 
 const (
 	TypeCreate  = contracts.OperationCreate
+	TypeStart   = contracts.OperationStart
+	TypeStop    = contracts.OperationStop
+	TypeRestart = contracts.OperationRestart
+	TypeDelete  = contracts.OperationDelete
 	Queued      = contracts.OperationQueued
 	Running     = contracts.OperationRunning
 	Succeeded   = contracts.OperationSucceeded
