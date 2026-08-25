@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"supabase-manager/internal/contracts"
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -40,6 +42,14 @@ func ValidateDraft(draft Draft) error {
 	errServices := validateServices(draft.Services)
 	if errServices != nil {
 		errs = append(errs, errServices)
+	}
+	// During the compatibility window older clients submit Services while new
+	// clients submit the complete typed aggregate. Validate the aggregate when
+	// present without making the legacy draft shape invalid.
+	if draft.Configuration.Revision != 0 || draft.Configuration.General != (contracts.GeneralConfig{}) || draft.Configuration.Services != (contracts.Services{}) {
+		if errConfiguration := ValidateConfiguration(draft.Configuration); errConfiguration != nil {
+			errs = append(errs, errConfiguration)
+		}
 	}
 	return errors.Join(errs...)
 }

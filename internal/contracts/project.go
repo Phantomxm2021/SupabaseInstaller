@@ -52,26 +52,30 @@ type Services struct {
 }
 
 type ProjectDraft struct {
-	Name            string   `json:"name"`
-	Slug            string   `json:"slug"`
-	Domain          string   `json:"domain"`
-	SiteURL         string   `json:"siteUrl"`
-	SupabaseVersion string   `json:"supabaseVersion"`
-	Preset          Preset   `json:"preset"`
-	Services        Services `json:"services"`
+	Name            string               `json:"name"`
+	Slug            string               `json:"slug"`
+	Domain          string               `json:"domain"`
+	SiteURL         string               `json:"siteUrl"`
+	SupabaseVersion string               `json:"supabaseVersion"`
+	Preset          Preset               `json:"preset"`
+	Configuration   ProjectConfiguration `json:"configuration"`
+	// Services is retained as a compatibility projection while clients migrate
+	// to the authoritative Configuration aggregate.
+	Services Services `json:"services"`
 }
 
 type Project struct {
-	ID              string        `json:"id"`
-	Name            string        `json:"name"`
-	Slug            string        `json:"slug"`
-	Domain          string        `json:"domain"`
-	SiteURL         string        `json:"siteUrl"`
-	Status          ProjectStatus `json:"status"`
-	Health          HealthStatus  `json:"health"`
-	SupabaseVersion string        `json:"supabaseVersion"`
-	Preset          Preset        `json:"preset"`
-	Services        Services      `json:"services"`
-	CreatedAt       time.Time     `json:"createdAt"`
-	UpdatedAt       time.Time     `json:"updatedAt"`
+	ID                    string        `json:"id"`
+	Name                  string        `json:"name"`
+	Slug                  string        `json:"slug"`
+	Domain                string        `json:"domain"`
+	SiteURL               string        `json:"siteUrl"`
+	Status                ProjectStatus `json:"status"`
+	Health                HealthStatus  `json:"health"`
+	SupabaseVersion       string        `json:"supabaseVersion"`
+	Preset                Preset        `json:"preset"`
+	ConfigurationRevision int64         `json:"configurationRevision"`
+	Services              Services      `json:"services"`
+	CreatedAt             time.Time     `json:"createdAt"`
+	UpdatedAt             time.Time     `json:"updatedAt"`
 }

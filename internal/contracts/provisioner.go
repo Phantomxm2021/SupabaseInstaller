@@ -16,6 +16,29 @@ type PrepareProjectRequest struct {
 	Secrets          ProjectSecrets `json:"secrets"`
 }
 
+type ReconcileProjectRequest struct {
+	OperationID      string               `json:"operationId"`
+	IdempotencyKey   string               `json:"idempotencyKey"`
+	ProjectID        string               `json:"projectId"`
+	ProjectName      string               `json:"projectName"`
+	Slug             string               `json:"slug"`
+	ExpectedRevision int64                `json:"expectedRevision"`
+	NextRevision     int64                `json:"nextRevision"`
+	APIPort          int                  `json:"apiPort"`
+	Configuration    ProjectConfiguration `json:"configuration"`
+	Secrets          ProjectSecrets       `json:"secrets"`
+	RuntimeSecrets   map[string]string    `json:"runtimeSecrets,omitempty"`
+}
+
+type ReconcileProjectResponse struct {
+	OperationID       string   `json:"operationId"`
+	ProjectID         string   `json:"projectId"`
+	Revision          int64    `json:"revision"`
+	EnabledServices   []string `json:"enabledServices"`
+	RecreatedServices []string `json:"recreatedServices"`
+	RolledBack        bool     `json:"rolledBack"`
+}
+
 type ProjectSecrets struct {
 	DatabasePassword   string `json:"databasePassword"`
 	JWTSecret          string `json:"jwtSecret"`
