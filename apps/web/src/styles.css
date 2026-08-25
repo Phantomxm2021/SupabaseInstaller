@@ -38,6 +38,7 @@ label { display: grid; gap: 8px; margin: 16px 0 0; color: #c8ceca; font-size: 13
 input { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 7px; outline: none; color: var(--text); background: #111412; transition: border-color .15s, box-shadow .15s; }
 input:focus { border-color: var(--green-strong); box-shadow: 0 0 0 3px rgba(62,207,142,.12); }
 .field-error { display: block; margin-top: 5px; color: #ff8b8b; font-size: 12px; }
+.field-hint { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
 .button { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; border: 1px solid transparent; border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 650; transition: transform .12s, background .12s; }
 .button:hover { transform: translateY(-1px); }
 .button:disabled { opacity: .55; cursor: wait; transform: none; }

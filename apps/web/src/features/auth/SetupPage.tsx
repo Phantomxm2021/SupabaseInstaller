@@ -8,7 +8,7 @@ import { apiFetch } from '../../api/client'
 
 const schema = z.object({
   username: z.string().min(3).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]+$/),
-  password: z.string().min(12),
+  password: z.string().min(12, 'Password must contain at least 12 characters'),
   confirmPassword: z.string(),
 }).refine((value) => value.password === value.confirmPassword, { message: 'Passwords do not match', path: ['confirmPassword'] })
 
@@ -53,7 +53,8 @@ export function SetupPage() {
         <form onSubmit={form.handleSubmit((values) => setup.mutate(values))}>
           <label>Username<input autoComplete="username" {...form.register('username')} /></label>
           <FieldError message={form.formState.errors.username?.message} />
-          <label>Password<input type="password" autoComplete="new-password" {...form.register('password')} /></label>
+          <label>Password<input type="password" autoComplete="new-password" minLength={12} aria-describedby="password-hint" {...form.register('password')} /></label>
+          <span className="field-hint" id="password-hint">Use 12 or more characters.</span>
           <FieldError message={form.formState.errors.password?.message} />
           <label>Confirm password<input type="password" autoComplete="new-password" {...form.register('confirmPassword')} /></label>
           <FieldError message={form.formState.errors.confirmPassword?.message} />
