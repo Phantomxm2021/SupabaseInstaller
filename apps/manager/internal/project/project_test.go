@@ -3,11 +3,53 @@ package project
 import (
 	"strings"
 	"testing"
+
+	"supabase-manager/internal/contracts"
 )
 
 func TestNormalizeSlugProducesDNSCompatibleIdentifier(t *testing.T) {
 	if got := NormalizeSlug("  My Bee 2!  "); got != "my-bee-2" {
 		t.Fatalf("NormalizeSlug() = %q, want my-bee-2", got)
+	}
+}
+
+func TestConfigurationPresetsApplyDependencyClosure(t *testing.T) {
+	cases := []struct {
+		preset contracts.Preset
+		check  func(contracts.ProjectConfiguration) bool
+	}{
+		{contracts.PresetLightweight, func(c contracts.ProjectConfiguration) bool {
+			return !c.Services.Storage && !c.Services.Logs && !c.Services.Vector
+		}},
+		{contracts.PresetStandard, func(c contracts.ProjectConfiguration) bool {
+			return c.Services.Realtime && c.Services.Storage && c.Services.Functions && c.Services.Supavisor && c.Pooler.PoolSize > 0 && c.Pooler.MaxClientConnections > 0
+		}},
+		{contracts.PresetFull, func(c contracts.ProjectConfiguration) bool {
+			return c.Services.Imgproxy && c.Services.Storage && c.Services.Logs && c.Services.Vector && c.Pooler.PoolSize > 0 && c.Pooler.MaxClientConnections > 0
+		}},
+	}
+	for _, tc := range cases {
+		got := ApplyConfigurationPreset(tc.preset)
+		if !tc.check(got) {
+			t.Fatalf("ApplyConfigurationPreset(%s) = %#v", tc.preset, got)
+		}
+	}
+}
+
+func TestNormalizeDraftConfigurationTakesPrecedenceOverLegacyProjection(t *testing.T) {
+	draft := validDraft()
+	draft.Domain = "legacy.example.com"
+	draft.SiteURL = "https://legacy.example.com"
+	draft.SupabaseVersion = "self-hosted/v0.8.0"
+	draft.Services = contracts.Services{Database: true}
+	draft.Configuration = DefaultConfiguration(contracts.PresetLightweight)
+	draft.Configuration.General = contracts.GeneralConfig{Domain: "typed.example.com", SiteURL: "https://typed.example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	draft.Configuration.Services = ApplyPreset(PresetLightweight)
+	draft.Configuration.Services.Storage = true
+
+	normalized := NormalizeDraft(draft)
+	if normalized.Domain != "typed.example.com" || normalized.SiteURL != "https://typed.example.com" || normalized.Services.Storage != true {
+		t.Fatalf("NormalizeDraft() did not project typed configuration: %#v", normalized)
 	}
 }
 

@@ -17,17 +17,17 @@ type ProjectConfiguration struct {
 }
 
 type ConfigurationPatch struct {
-	ExpectedRevision int64                `json:"expectedRevision"`
-	Configuration    ProjectConfiguration `json:"configuration,omitempty"`
-	General          *GeneralConfig       `json:"general,omitempty"`
-	Services         *Services            `json:"services,omitempty"`
-	Auth             *AuthConfig          `json:"auth,omitempty"`
-	Storage          *StorageConfig       `json:"storage,omitempty"`
-	Realtime         *RealtimeConfig      `json:"realtime,omitempty"`
-	Functions        *FunctionsConfig     `json:"functions,omitempty"`
-	Database         *DatabaseConfig      `json:"database,omitempty"`
-	Pooler           *PoolerConfig        `json:"pooler,omitempty"`
-	Network          *NetworkConfig       `json:"network,omitempty"`
+	ExpectedRevision int64                 `json:"expectedRevision"`
+	Configuration    *ProjectConfiguration `json:"configuration,omitempty"`
+	General          *GeneralConfig        `json:"general,omitempty"`
+	Services         *Services             `json:"services,omitempty"`
+	Auth             *AuthConfig           `json:"auth,omitempty"`
+	Storage          *StorageConfig        `json:"storage,omitempty"`
+	Realtime         *RealtimeConfig       `json:"realtime,omitempty"`
+	Functions        *FunctionsConfig      `json:"functions,omitempty"`
+	Database         *DatabaseConfig       `json:"database,omitempty"`
+	Pooler           *PoolerConfig         `json:"pooler,omitempty"`
+	Network          *NetworkConfig        `json:"network,omitempty"`
 }
 
 type SecretInput struct {
@@ -119,10 +119,9 @@ const (
 )
 
 type RealtimeConfig struct {
-	MaximumConnections int      `json:"maximumConnections"`
-	MaxConnections     int      `json:"maxConnections,omitempty"`
-	DatabasePoolSize   int      `json:"databasePoolSize"`
-	LogLevel           LogLevel `json:"logLevel"`
+	MaxConnections   int      `json:"maxConnections"`
+	DatabasePoolSize int      `json:"databasePoolSize"`
+	LogLevel         LogLevel `json:"logLevel"`
 }
 
 type FunctionVariable struct {
@@ -138,22 +137,19 @@ type FunctionsConfig struct {
 }
 
 type DatabaseConfig struct {
-	Version            string   `json:"version"`
-	DirectPort         bool     `json:"directPort"`
-	DirectPortNumber   int      `json:"directPortNumber"`
-	MaximumConnections int      `json:"maximumConnections"`
-	MaxConnections     int      `json:"maxConnections,omitempty"`
-	SharedBuffers      string   `json:"sharedBuffers"`
-	Extensions         []string `json:"extensions,omitempty"`
+	Version          string   `json:"version"`
+	DirectPort       bool     `json:"directPort"`
+	DirectPortNumber int      `json:"directPortNumber"`
+	MaxConnections   int      `json:"maxConnections"`
+	SharedBuffers    string   `json:"sharedBuffers"`
+	Extensions       []string `json:"extensions,omitempty"`
 }
 
 type PoolerConfig struct {
 	TransactionPort      int `json:"transactionPort"`
 	SessionPort          int `json:"sessionPort"`
 	PoolSize             int `json:"poolSize"`
-	MaximumClients       int `json:"maximumClients"`
-	MaxClients           int `json:"maxClients,omitempty"`
-	MaxClientConnections int `json:"maxClientConnections,omitempty"`
+	MaxClientConnections int `json:"maxClientConnections"`
 }
 
 type Gateway string

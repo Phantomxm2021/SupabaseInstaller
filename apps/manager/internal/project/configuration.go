@@ -3,6 +3,8 @@ package project
 import (
 	"fmt"
 	"net/mail"
+	"net/url"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -51,11 +53,35 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 			SMTP:    contracts.SMTPConfig{Port: 587},
 		},
 		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
-		Realtime:  contracts.RealtimeConfig{MaximumConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
+		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true, Directory: "./functions"},
-		Database:  contracts.DatabaseConfig{Version: "15", MaximumConnections: 100},
+		Database:  contracts.DatabaseConfig{Version: "15", MaxConnections: 100},
+		Pooler:    contracts.PoolerConfig{TransactionPort: 6543, SessionPort: 6544, PoolSize: 20, MaxClientConnections: 100},
 		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},
 	}
+}
+
+func configurationSupplied(cfg contracts.ProjectConfiguration) bool {
+	return !reflect.DeepEqual(cfg, contracts.ProjectConfiguration{})
+}
+
+// NormalizeDraft resolves the migration boundary once. A supplied typed
+// aggregate wins for all overlapping fields; legacy fields are projected only
+// when no aggregate was supplied. The returned draft always carries a complete
+// aggregate, making it safe for persistence and Provisioner handoff.
+func NormalizeDraft(draft Draft) Draft {
+	if configurationSupplied(draft.Configuration) {
+		draft.Domain = draft.Configuration.General.Domain
+		draft.SiteURL = draft.Configuration.General.SiteURL
+		draft.SupabaseVersion = draft.Configuration.General.SupabaseVersion
+		draft.Services = draft.Configuration.Services
+		return draft
+	}
+	cfg := DefaultConfiguration(draft.Preset)
+	cfg.General = contracts.GeneralConfig{Domain: draft.Domain, SiteURL: draft.SiteURL, SupabaseVersion: draft.SupabaseVersion}
+	cfg.Services = draft.Services
+	draft.Configuration = cfg
+	return draft
 }
 
 // ApplyConfigurationPreset builds the aggregate and applies all service
@@ -92,8 +118,8 @@ func ValidateConfiguration(cfg contracts.ProjectConfiguration) error {
 	if strings.TrimSpace(cfg.General.SiteURL) != "" && !validAbsoluteHTTPURL(cfg.General.SiteURL) {
 		validation.add("general.siteUrl", "must be an absolute http or https URL")
 	}
-	if cfg.General.SupabaseVersion == "" || strings.EqualFold(cfg.General.SupabaseVersion, "latest") || strings.EqualFold(cfg.General.SupabaseVersion, "master") {
-		validation.add("general.supabaseVersion", "must be a pinned supported version")
+	if cfg.General.SupabaseVersion != "self-hosted/v0.8.0" {
+		validation.add("general.supabaseVersion", "must be self-hosted/v0.8.0")
 	}
 	validateServicesConfiguration(cfg.Services, validation)
 	validateAuth(cfg.Auth, validation)
@@ -129,9 +155,31 @@ func validateServicesConfiguration(services contracts.Services, validation *Vali
 
 func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 	validateSecretInput(auth.SMTP.Password, "auth.smtp.password", validation)
+	if auth.Phone.Enabled {
+		if auth.Phone.Provider != "twilio" && auth.Phone.Provider != "messagebird" && auth.Phone.Provider != "textlocal" {
+			validation.add("auth.phone.provider", "must be twilio, messagebird, or textlocal")
+		}
+		for field := range auth.Phone.Fields {
+			if !phoneFieldAllowed(auth.Phone.Provider, field) {
+				validation.add("auth.phone.fields."+field, "is not supported for this provider")
+			}
+		}
+	}
 	if auth.SMTP.Enabled {
 		if strings.TrimSpace(auth.SMTP.Host) == "" {
 			validation.add("auth.smtp.host", "is required when SMTP is enabled")
+		}
+		if strings.TrimSpace(auth.SMTP.Username) == "" {
+			validation.add("auth.smtp.username", "is required when SMTP is enabled")
+		}
+		if !auth.SMTP.PasswordSet && auth.SMTP.Password.Action != "replace" {
+			validation.add("auth.smtp.password", "must retain an existing password or replace it")
+		}
+		if auth.SMTP.PasswordSet && auth.SMTP.Password.Action != "retain" && auth.SMTP.Password.Action != "replace" {
+			validation.add("auth.smtp.password", "an existing password must use retain or replace")
+		}
+		if auth.SMTP.Password.Action == "remove" {
+			validation.add("auth.smtp.password", "cannot be removed while SMTP is enabled")
 		}
 		validatePort(auth.SMTP.Port, "auth.smtp.port", validation)
 		if _, err := mail.ParseAddress(auth.SMTP.SenderEmail); err != nil || strings.TrimSpace(auth.SMTP.SenderEmail) == "" {
@@ -156,16 +204,40 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 			validation.add(field, "is not a supported OAuth provider")
 			continue
 		}
+		for key := range config.Fields {
+			if !providerFieldAllowed(provider, key) {
+				validation.add(field+".fields."+key, "is not supported for this provider")
+			}
+		}
 		if !config.Enabled {
 			continue
 		}
 		if strings.TrimSpace(config.ClientID) == "" {
 			validation.add(field+".clientId", "is required when provider is enabled")
 		}
+		if !config.SecretSet && config.Secret.Action != "replace" {
+			validation.add(field+".secret", "must retain an existing secret or replace it")
+		}
+		if config.SecretSet && config.Secret.Action != "retain" && config.Secret.Action != "replace" {
+			validation.add(field+".secret", "an existing secret must use retain or replace")
+		}
+		if config.Secret.Action == "remove" {
+			validation.add(field+".secret", "cannot be removed while provider is enabled")
+		}
 		validateSecretInput(config.Secret, field+".secret", validation)
 		for _, required := range oauthRequiredFields(provider) {
 			if strings.TrimSpace(config.Fields[required]) == "" {
 				validation.add(field+".fields."+required, "is required for this provider")
+			}
+			if value := strings.TrimSpace(config.Fields[required]); value != "" {
+				if _, err := url.ParseRequestURI(value); err != nil || !validAbsoluteHTTPURL(value) {
+					validation.add(field+".fields."+required, "must be an absolute http or https URL")
+				}
+			}
+		}
+		for key, value := range config.Fields {
+			if strings.HasSuffix(key, "Url") && strings.TrimSpace(value) != "" && !validAbsoluteHTTPURL(value) {
+				validation.add(field+".fields."+key, "must be an absolute http or https URL")
 			}
 		}
 	}
@@ -181,15 +253,62 @@ func oauthRequiredFields(provider string) []string {
 	return nil
 }
 
+func providerFieldAllowed(provider, field string) bool {
+	switch provider {
+	case "azure":
+		return field == "tenantUrl"
+	case "github":
+		return field == "enterpriseUrl"
+	case "gitlab":
+		return field == "selfHostedUrl"
+	case "keycloak":
+		return field == "realmUrl"
+	default:
+		return false
+	}
+}
+
+func phoneFieldAllowed(provider, field string) bool {
+	switch provider {
+	case "twilio":
+		return field == "accountSid" || field == "authToken" || field == "messageServiceSid" || field == "verifySid"
+	case "messagebird", "textlocal":
+		return field == "accessKey"
+	default:
+		return false
+	}
+}
+
 func validateStorage(storage contracts.StorageConfig, validation *ValidationError) {
 	switch storage.Backend {
 	case contracts.StorageBackendLocal:
+		if storage.Bucket != "" || storage.Region != "" || storage.Endpoint != "" || storage.AccountID != "" || storage.AccessKeyID != "" || storage.SecretAccessKeySet || storage.SecretAccessKey.Action != "" {
+			validation.add("storage.backend", "local storage cannot include object-storage credentials")
+		}
 	case contracts.StorageBackendS3, contracts.StorageBackendAWSS3, contracts.StorageBackendR2:
 		if strings.TrimSpace(storage.Bucket) == "" {
 			validation.add("storage.bucket", "is required for an object storage backend")
 		}
 		if storage.Backend != contracts.StorageBackendR2 && strings.TrimSpace(storage.Region) == "" {
 			validation.add("storage.region", "is required for this object storage backend")
+		}
+		if strings.TrimSpace(storage.AccessKeyID) == "" {
+			validation.add("storage.accessKeyId", "is required for an object storage backend")
+		}
+		if !storage.SecretAccessKeySet && storage.SecretAccessKey.Action != "replace" {
+			validation.add("storage.secretAccessKey", "must retain an existing secret or replace it")
+		}
+		if storage.SecretAccessKey.Action == "remove" {
+			validation.add("storage.secretAccessKey", "cannot be removed for an enabled object storage backend")
+		}
+		if storage.Backend == contracts.StorageBackendS3 && strings.TrimSpace(storage.Endpoint) == "" {
+			validation.add("storage.endpoint", "is required for generic S3")
+		}
+		if storage.Backend == contracts.StorageBackendR2 && strings.TrimSpace(storage.AccountID) == "" {
+			validation.add("storage.accountId", "is required for Cloudflare R2")
+		}
+		if storage.Backend == contracts.StorageBackendR2 && storage.Endpoint != "" {
+			validation.add("storage.endpoint", "R2 endpoint is derived from accountId")
 		}
 		if storage.Endpoint != "" && !validAbsoluteHTTPURL(storage.Endpoint) {
 			validation.add("storage.endpoint", "must be an absolute http or https URL")
@@ -201,16 +320,13 @@ func validateStorage(storage contracts.StorageConfig, validation *ValidationErro
 }
 
 func validateRealtime(realtime contracts.RealtimeConfig, validation *ValidationError) {
-	if realtime.MaximumConnections < 0 || realtime.MaximumConnections > 100000 {
-		validation.add("realtime.maximumConnections", "must be between 0 and 100000")
+	if realtime.MaxConnections < 1 || realtime.MaxConnections > 100000 {
+		validation.add("realtime.maxConnections", "must be between 1 and 100000")
 	}
-	if realtime.MaxConnections < 0 || realtime.MaxConnections > 100000 {
-		validation.add("realtime.maxConnections", "must be between 0 and 100000")
+	if realtime.DatabasePoolSize < 1 || realtime.DatabasePoolSize > 10000 {
+		validation.add("realtime.databasePoolSize", "must be between 1 and 10000")
 	}
-	if realtime.DatabasePoolSize < 0 || realtime.DatabasePoolSize > 10000 {
-		validation.add("realtime.databasePoolSize", "must be between 0 and 10000")
-	}
-	if realtime.LogLevel != "" && realtime.LogLevel != contracts.LogLevelDebug && realtime.LogLevel != contracts.LogLevelInfo && realtime.LogLevel != contracts.LogLevelWarn && realtime.LogLevel != contracts.LogLevelError {
+	if realtime.LogLevel != contracts.LogLevelDebug && realtime.LogLevel != contracts.LogLevelInfo && realtime.LogLevel != contracts.LogLevelWarn && realtime.LogLevel != contracts.LogLevelError {
 		validation.add("realtime.logLevel", "must be debug, info, warn, or error")
 	}
 }
@@ -229,11 +345,8 @@ func validateFunctions(functions contracts.FunctionsConfig, validation *Validati
 }
 
 func validateDatabase(database contracts.DatabaseConfig, validation *ValidationError) {
-	if database.MaximumConnections < 0 || database.MaximumConnections > 100000 {
-		validation.add("database.maximumConnections", "must be between 0 and 100000")
-	}
-	if database.MaxConnections < 0 || database.MaxConnections > 100000 {
-		validation.add("database.maxConnections", "must be between 0 and 100000")
+	if database.MaxConnections < 1 || database.MaxConnections > 100000 {
+		validation.add("database.maxConnections", "must be between 1 and 100000")
 	}
 	if database.DirectPortNumber != 0 {
 		validatePort(database.DirectPortNumber, "database.directPortNumber", validation)
@@ -247,25 +360,19 @@ func validatePooler(pooler contracts.PoolerConfig, validation *ValidationError) 
 	if pooler.SessionPort != 0 {
 		validatePort(pooler.SessionPort, "pooler.sessionPort", validation)
 	}
-	if pooler.PoolSize < 0 || pooler.PoolSize > 100000 {
-		validation.add("pooler.poolSize", "must be between 0 and 100000")
+	if pooler.PoolSize < 1 || pooler.PoolSize > 100000 {
+		validation.add("pooler.poolSize", "must be between 1 and 100000")
 	}
-	if pooler.MaximumClients < 0 || pooler.MaximumClients > 100000 {
-		validation.add("pooler.maximumClients", "must be between 0 and 100000")
-	}
-	if pooler.MaxClients < 0 || pooler.MaxClients > 100000 {
-		validation.add("pooler.maxClients", "must be between 0 and 100000")
-	}
-	if pooler.MaxClientConnections < 0 || pooler.MaxClientConnections > 100000 {
-		validation.add("pooler.maxClientConnections", "must be between 0 and 100000")
+	if pooler.MaxClientConnections < 1 || pooler.MaxClientConnections > 100000 {
+		validation.add("pooler.maxClientConnections", "must be between 1 and 100000")
 	}
 }
 
 func validateNetwork(network contracts.NetworkConfig, validation *ValidationError) {
-	if network.Gateway != "" && network.Gateway != contracts.GatewayEnvoy && network.Gateway != contracts.GatewayKong {
+	if network.Gateway != contracts.GatewayEnvoy && network.Gateway != contracts.GatewayKong {
 		validation.add("network.gateway", "must be envoy or kong")
 	}
-	if network.HTTPSMode != "" && network.HTTPSMode != contracts.HTTPSModeExternal && network.HTTPSMode != contracts.HTTPSModeCaddy && network.HTTPSMode != contracts.HTTPSModeManual {
+	if network.HTTPSMode != contracts.HTTPSModeExternal && network.HTTPSMode != contracts.HTTPSModeCaddy && network.HTTPSMode != contracts.HTTPSModeManual {
 		validation.add("network.httpsMode", "must be external, caddy, or manual")
 	}
 	for field, port := range map[string]int{"apiPort": network.APIPort, "studioPort": network.StudioPort, "directDatabasePort": network.DirectDatabasePort, "poolerPort": network.PoolerPort} {

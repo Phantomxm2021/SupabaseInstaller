@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-
-	"supabase-manager/internal/contracts"
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -23,6 +21,7 @@ func (e FieldError) Error() string {
 }
 
 func ValidateDraft(draft Draft) error {
+	draft = NormalizeDraft(draft)
 	var errs []error
 	if name := strings.TrimSpace(draft.Name); name == "" || len(name) > 80 {
 		errs = append(errs, FieldError{Field: "name", Message: "must contain 1 to 80 characters"})
@@ -43,13 +42,8 @@ func ValidateDraft(draft Draft) error {
 	if errServices != nil {
 		errs = append(errs, errServices)
 	}
-	// During the compatibility window older clients submit Services while new
-	// clients submit the complete typed aggregate. Validate the aggregate when
-	// present without making the legacy draft shape invalid.
-	if draft.Configuration.Revision != 0 || draft.Configuration.General != (contracts.GeneralConfig{}) || draft.Configuration.Services != (contracts.Services{}) {
-		if errConfiguration := ValidateConfiguration(draft.Configuration); errConfiguration != nil {
-			errs = append(errs, errConfiguration)
-		}
+	if errConfiguration := ValidateConfiguration(draft.Configuration); errConfiguration != nil {
+		errs = append(errs, errConfiguration)
 	}
 	return errors.Join(errs...)
 }
