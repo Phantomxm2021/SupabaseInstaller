@@ -1,7 +1,7 @@
 # Supabase Self-hosted Web Installer & Manager V1 Design
 
 **Date:** 2026-08-26
-**Status:** Draft for review
+**Status:** Approved
 **Source:** `Docs/Supabase Self-hosted Web Installer & Manager PRD.md`
 
 ## 1. Goal
