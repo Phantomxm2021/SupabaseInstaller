@@ -5,6 +5,8 @@ import { LoginPage } from '../features/auth/LoginPage'
 import { SetupPage } from '../features/auth/SetupPage'
 import { ProjectsPage } from '../features/projects/ProjectsPage'
 import { NewProjectPage } from '../features/projects/NewProjectPage'
+import { OverviewPage } from '../features/project/OverviewPage'
+import { ComingSoonPage, ProjectLayout } from '../features/project/ProjectLayout'
 import { AppShell } from './AppShell'
 
 function EntryGate() {
@@ -31,6 +33,15 @@ export function createAppRouter(_queryClient: QueryClient) {
       children: [
         { path: '/projects', element: <ProjectsPage /> },
         { path: '/projects/new', element: <NewProjectPage /> },
+        {
+          path: '/projects/:projectId',
+          element: <ProjectLayout />,
+          children: [
+            { index: true, element: <Navigate to="overview" replace /> },
+            { path: 'overview', element: <OverviewPage /> },
+            { path: '*', element: <ComingSoonPage /> },
+          ],
+        },
         { path: '*', element: <Outlet /> },
       ],
     },

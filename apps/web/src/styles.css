@@ -148,6 +148,35 @@ input:focus { border-color: var(--green-strong); box-shadow: 0 0 0 3px rgba(62,2
 .current-step strong { font-size: 13px; }
 .operation-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .button.danger { border-color: rgba(239,106,106,.3); color: #ff9d9d; background: rgba(239,106,106,.08); }
+.project-shell { min-height: calc(100vh - 55px); display: grid; grid-template-columns: 190px minmax(0, 1fr); }
+.project-nav { padding: 24px 12px; border-right: 1px solid var(--border); background: rgba(18,21,19,.58); }
+.project-nav-title { display: flex; align-items: center; gap: 8px; margin: 0 8px 13px; color: #6f7773; font-size: 10px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
+.project-nav a { min-height: 34px; display: flex; align-items: center; gap: 9px; padding: 0 9px; margin-bottom: 2px; border-radius: 6px; color: var(--muted); font-size: 11px; }
+.project-nav a:hover, .project-nav a.active { color: var(--text); background: var(--surface-2); }
+.project-nav a.active { box-shadow: inset 2px 0 var(--green); }
+.project-content { min-width: 0; }
+.project-page { max-width: 1060px; }
+.project-metrics { display: grid; grid-template-columns: 1.4fr 1fr .8fr; gap: 12px; margin-bottom: 18px; }
+.metric-value { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px !important; }
+.metric-card a { display: inline-flex; align-items: center; gap: 4px; color: var(--green); }
+.lifecycle-wrap { display: grid; justify-items: end; gap: 9px; }
+.lifecycle-actions { display: flex; gap: 8px; }
+.action-status { color: var(--green); font-size: 11px; }
+.service-table { display: grid; grid-template-columns: 1fr 1fr; }
+.service-row { min-height: 45px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.service-row:nth-child(odd) { border-right: 1px solid var(--border); }
+.service-enabled, .service-disabled { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; }
+.service-enabled { color: var(--green); }
+.service-disabled { color: #68716c; }
+.dialog-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.66); backdrop-filter: blur(4px); }
+.dialog { width: min(470px, 100%); padding: 24px; border: 1px solid var(--border-strong); border-radius: 11px; background: var(--surface); box-shadow: 0 30px 100px rgba(0,0,0,.5); }
+.dialog > h2 { font-size: 19px; }
+.delete-options { display: grid; gap: 8px; padding: 0; margin: 20px 0; border: 0; }
+.delete-options label { min-height: 42px; display: flex; grid-template-columns: auto 1fr; align-items: center; gap: 9px; padding: 0 12px; margin: 0; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; background: #121513; }
+.delete-options input { width: 15px; height: 15px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 @media (max-width: 700px) { .form-grid, .preset-grid, .review-layout { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .project-shell { grid-template-columns: 58px minmax(0, 1fr); } .project-nav a { justify-content: center; font-size: 0; } .project-nav-title { justify-content: center; font-size: 0; } .project-metrics { grid-template-columns: 1fr; } }
 @media (max-width: 820px) { .app-shell { grid-template-columns: 72px 1fr; } .sidebar { padding-inline: 10px; } .sidebar .brand-row span:last-child, .sidebar nav a:not(.active) { font-size: 0; } .sidebar nav a, .sidebar nav button { justify-content: center; } .sidebar-status, .sidebar-bottom { display: none !important; } .host-grid { grid-template-columns: 1fr; } .project-row { grid-template-columns: 38px 1fr auto 20px; } .project-row .version { display: none; } }
+@media (max-width: 700px) { .service-table { grid-template-columns: 1fr; } .service-row:nth-child(odd) { border-right: 0; } .lifecycle-actions { flex-wrap: wrap; justify-content: flex-end; } }
 @media (max-width: 560px) { .page { padding: 30px 18px 60px; } .page-heading { display: grid; } .auth-card { padding: 26px 20px; } .recovery-grid { grid-template-columns: 1fr; } }
