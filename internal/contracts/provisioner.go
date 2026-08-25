@@ -39,8 +39,9 @@ type LifecycleRequest struct {
 }
 
 type InspectProjectRequest struct {
-	ProjectID string `json:"projectId"`
-	Slug      string `json:"slug"`
+	ProjectID       string   `json:"projectId"`
+	Slug            string   `json:"slug"`
+	EnabledServices []string `json:"enabledServices"`
 }
 
 type ServiceState struct {

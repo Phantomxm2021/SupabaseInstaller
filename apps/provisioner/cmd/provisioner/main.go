@@ -10,7 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"supabase-manager/apps/provisioner/internal/compose"
 	provisionerconfig "supabase-manager/apps/provisioner/internal/config"
+	"supabase-manager/apps/provisioner/internal/health"
+	"supabase-manager/apps/provisioner/internal/projectfs"
+	provisionerruntime "supabase-manager/apps/provisioner/internal/runtime"
+	provisionerserver "supabase-manager/apps/provisioner/internal/server"
 )
 
 func main() {
@@ -20,13 +25,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
+	root, err := projectfs.New(cfg.ProjectRoot)
+	if err != nil {
+		slog.Error("initialize project root", "error", err)
+		os.Exit(1)
+	}
+	dockerSource, err := health.NewDockerSource(cfg.DockerHost)
+	if err != nil {
+		slog.Error("initialize Docker client", "error", err)
+		os.Exit(1)
+	}
+	backend := provisionerruntime.NewBackend(root, compose.NewRunner(compose.OSExecutor{}), health.NewInspector(dockerSource))
+	handler := provisionerserver.New(provisionerserver.Options{ManagerToken: cfg.ManagerToken, ProjectFS: root, Backend: backend})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}

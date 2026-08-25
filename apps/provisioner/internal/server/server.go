@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,8 +12,8 @@ import (
 )
 
 type Backend interface {
-	Lifecycle(request contracts.LifecycleRequest) error
-	Inspect(request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error)
+	Lifecycle(ctx context.Context, request contracts.LifecycleRequest) error
+	Inspect(ctx context.Context, request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error)
 }
 
 type Options struct {
@@ -88,7 +89,7 @@ func (s *server) lifecycle(response http.ResponseWriter, request *http.Request) 
 		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed lifecycle request is required")
 		return
 	}
-	if err := s.backend.Lifecycle(input); err != nil {
+	if err := s.backend.Lifecycle(request.Context(), input); err != nil {
 		writeError(response, http.StatusUnprocessableEntity, "LIFECYCLE_FAILED", err.Error())
 		return
 	}
@@ -105,7 +106,7 @@ func (s *server) inspect(response http.ResponseWriter, request *http.Request) {
 		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed inspect request is required")
 		return
 	}
-	result, err := s.backend.Inspect(input)
+	result, err := s.backend.Inspect(request.Context(), input)
 	if err != nil {
 		writeError(response, http.StatusUnprocessableEntity, "INSPECT_FAILED", err.Error())
 		return
