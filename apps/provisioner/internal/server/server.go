@@ -1,0 +1,132 @@
+package server
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+
+	provisionerauth "supabase-manager/apps/provisioner/internal/auth"
+	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/internal/contracts"
+)
+
+type Backend interface {
+	Lifecycle(request contracts.LifecycleRequest) error
+	Inspect(request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error)
+}
+
+type Options struct {
+	ManagerToken string
+	ProjectFS    *projectfs.Root
+	Backend      Backend
+}
+
+type server struct {
+	projectFS *projectfs.Root
+	backend   Backend
+}
+
+func New(options Options) http.Handler {
+	service := &server{projectFS: options.ProjectFS, backend: options.Backend}
+	private := http.NewServeMux()
+	private.HandleFunc("POST /internal/v1/projects/prepare", service.prepare)
+	private.HandleFunc("POST /internal/v1/projects/lifecycle", service.lifecycle)
+	private.HandleFunc("POST /internal/v1/projects/inspect", service.inspect)
+	root := http.NewServeMux()
+	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
+	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
+	return root
+}
+
+func (s *server) prepare(response http.ResponseWriter, request *http.Request) {
+	var input contracts.PrepareProjectRequest
+	if err := decodeJSON(response, request, &input); err != nil || input.OperationID == "" || input.IdempotencyKey == "" || input.ProjectID == "" {
+		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed prepare request is required")
+		return
+	}
+	var prepared contracts.PrepareProjectResponse
+	metadata, err := s.projectFS.UpdateMetadata(input.Slug, func(metadata *projectfs.Metadata) error {
+		if stored, ok := metadata.Idempotency[input.IdempotencyKey]; ok {
+			return json.Unmarshal(stored, &prepared)
+		}
+		if metadata.Revision != input.ExpectedRevision {
+			return errStaleRevision
+		}
+		projectDir, err := s.projectFS.ProjectPath(input.Slug)
+		if err != nil {
+			return err
+		}
+		prepared = contracts.PrepareProjectResponse{
+			OperationID: input.OperationID, IdempotencyKey: input.IdempotencyKey, ProjectID: input.ProjectID,
+			Slug: input.Slug, ProjectDir: projectDir, Revision: input.NextRevision,
+		}
+		encoded, _ := json.Marshal(prepared)
+		metadata.ProjectID = input.ProjectID
+		metadata.Revision = input.NextRevision
+		metadata.Idempotency[input.IdempotencyKey] = encoded
+		return nil
+	})
+	if errors.Is(err, errStaleRevision) {
+		writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
+		return
+	}
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, "PREPARE_FAILED", err.Error())
+		return
+	}
+	prepared.Revision = metadata.Revision
+	writeJSON(response, http.StatusCreated, prepared)
+}
+
+func (s *server) lifecycle(response http.ResponseWriter, request *http.Request) {
+	if s.backend == nil {
+		writeError(response, http.StatusServiceUnavailable, "BACKEND_UNAVAILABLE", "Provisioner lifecycle backend is unavailable")
+		return
+	}
+	var input contracts.LifecycleRequest
+	if err := decodeJSON(response, request, &input); err != nil {
+		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed lifecycle request is required")
+		return
+	}
+	if err := s.backend.Lifecycle(input); err != nil {
+		writeError(response, http.StatusUnprocessableEntity, "LIFECYCLE_FAILED", err.Error())
+		return
+	}
+	response.WriteHeader(http.StatusAccepted)
+}
+
+func (s *server) inspect(response http.ResponseWriter, request *http.Request) {
+	if s.backend == nil {
+		writeError(response, http.StatusServiceUnavailable, "BACKEND_UNAVAILABLE", "Provisioner inspection backend is unavailable")
+		return
+	}
+	var input contracts.InspectProjectRequest
+	if err := decodeJSON(response, request, &input); err != nil {
+		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed inspect request is required")
+		return
+	}
+	result, err := s.backend.Inspect(input)
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, "INSPECT_FAILED", err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
+}
+
+var errStaleRevision = errors.New("stale config revision")
+
+func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(target)
+}
+
+func writeJSON(response http.ResponseWriter, status int, payload any) {
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(status)
+	_ = json.NewEncoder(response).Encode(payload)
+}
+
+func writeError(response http.ResponseWriter, status int, code, message string) {
+	writeJSON(response, status, contracts.ErrorEnvelope{Error: contracts.APIError{Code: code, Message: message}})
+}
