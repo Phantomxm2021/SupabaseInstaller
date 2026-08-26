@@ -30,6 +30,13 @@ recovery codes once. `MASTER_ENCRYPTION_KEY` and `PROVISIONER_TOKEN` are
 required; the master key must decode to exactly 32 bytes and the token must
 contain at least 32 bytes. The checked-in placeholders are rejected at startup.
 
+For a disposable end-to-end run, set the administrator credentials in the
+environment and execute `SUPABASE_MANAGER_E2E_USERNAME=...`
+`SUPABASE_MANAGER_E2E_PASSWORD=... scripts/run-acceptance.sh`. It starts an
+isolated Compose project on port 18081, creates a complete Custom project with
+SMTP and Functions, exercises OAuth and Functions updates, and removes only
+that disposable project on exit. It never prints generated secrets.
+
 ## Security boundary
 
 The browser receives redacted configuration and opaque session cookies. Secret

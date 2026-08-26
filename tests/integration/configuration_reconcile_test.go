@@ -10,9 +10,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"supabase-manager/internal/contracts"
 )
 
 func TestConfigurationReconcile(t *testing.T) {
@@ -21,9 +24,6 @@ func TestConfigurationReconcile(t *testing.T) {
 		t.Fatal("SUPABASE_MANAGER_E2E_URL is required")
 	}
 	username, password, projectID := os.Getenv("SUPABASE_MANAGER_E2E_USERNAME"), os.Getenv("SUPABASE_MANAGER_E2E_PASSWORD"), os.Getenv("SUPABASE_MANAGER_E2E_PROJECT_ID")
-	if projectID == "" {
-		t.Fatal("SUPABASE_MANAGER_E2E_PROJECT_ID is required")
-	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	csrf, cookie := "", ""
 	if username != "" && password != "" {
@@ -35,11 +35,24 @@ func TestConfigurationReconcile(t *testing.T) {
 			t.Fatal("set credentials or SUPABASE_MANAGER_E2E_COOKIE and SUPABASE_MANAGER_E2E_CSRF")
 		}
 	}
+	if projectID == "" {
+		if username == "" || password == "" {
+			t.Fatal("SUPABASE_MANAGER_E2E_PROJECT_ID or administrator credentials are required")
+		}
+		created := createCustomSMTPFunctionsProject(t, client, baseURL, cookie, csrf)
+		projectID = created["projectId"].(string)
+		waitOperation(t, client, baseURL, created["operationId"].(string), cookie, csrf)
+	}
 	config := getJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration", cookie, csrf)
 	revision := int64(config["revision"].(float64))
+	composeProject := os.Getenv("SUPABASE_MANAGER_E2E_COMPOSE_PROJECT")
+	before := inspectContainerIDs(t, composeProject)
 	google := map[string]any{"enabled": true, "clientId": "acceptance-client", "secretSet": true, "secret": map[string]any{"action": "replace", "value": acceptanceValue()}, "fields": map[string]any{}}
 	op := patchJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration/oauth/google", map[string]any{"expectedRevision": revision, "value": google}, cookie, csrf)
 	waitOperation(t, client, baseURL, op["operationId"].(string), cookie, csrf)
+	afterOAuth := inspectContainerIDs(t, composeProject)
+	assertServiceChange(t, before, afterOAuth, "auth", true)
+	assertServiceChange(t, before, afterOAuth, "functions", false)
 	config = getJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration", cookie, csrf)
 	canonical, ok := config["configuration"].(map[string]any)
 	if !ok {
@@ -52,6 +65,9 @@ func TestConfigurationReconcile(t *testing.T) {
 	functions["variables"] = []any{map[string]any{"name": "TASK10_ACCEPTANCE_SECRET", "valueSet": true, "value": map[string]any{"action": "replace", "value": acceptanceValue()}}}
 	op = patchJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration/functions", map[string]any{"expectedRevision": int64(config["revision"].(float64)), "value": functions}, cookie, csrf)
 	waitOperation(t, client, baseURL, op["operationId"].(string), cookie, csrf)
+	afterFunctions := inspectContainerIDs(t, composeProject)
+	assertServiceChange(t, afterOAuth, afterFunctions, "auth", false)
+	assertServiceChange(t, afterOAuth, afterFunctions, "functions", true)
 	supabaseURL := strings.TrimRight(os.Getenv("SUPABASE_MANAGER_E2E_SUPABASE_URL"), "/")
 	if supabaseURL == "" {
 		t.Fatal("SUPABASE_MANAGER_E2E_SUPABASE_URL is required")
@@ -61,6 +77,10 @@ func TestConfigurationReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	anonKey := os.Getenv("SUPABASE_MANAGER_E2E_ANON_KEY")
+	if anonKey == "" && password != "" {
+		anonKeyResponse := requestJSON(t, client, http.MethodPost, baseURL+"/api/projects/"+projectID+"/secrets/anonKey/reveal", map[string]any{"password": password}, cookie, csrf)
+		anonKey, _ = anonKeyResponse["value"].(string)
+	}
 	if anonKey == "" {
 		t.Fatal("SUPABASE_MANAGER_E2E_ANON_KEY is required for authenticated settings acceptance")
 	}
@@ -73,6 +93,69 @@ func TestConfigurationReconcile(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		t.Fatalf("GET /auth/v1/settings status=%d", response.StatusCode)
+	}
+}
+
+func createCustomSMTPFunctionsProject(t *testing.T, client *http.Client, baseURL, cookie, csrf string) map[string]any {
+	t.Helper()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	cfg := contracts.ProjectConfiguration{
+		General:   contracts.GeneralConfig{SupabaseVersion: "self-hosted/v0.8.0"},
+		Services:  contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true, Functions: true},
+		Auth:      contracts.AuthConfig{Enabled: true, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}, SMTP: contracts.SMTPConfig{Port: 587}},
+		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
+		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
+		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true, Directory: "./functions"},
+		Database:  contracts.DatabaseConfig{Version: "15", MaxConnections: 100},
+		Pooler:    contracts.PoolerConfig{PoolSize: 20, MaxClientConnections: 100},
+		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},
+	}
+	cfg.General.Domain = "task10-" + suffix + ".example.test"
+	cfg.General.SiteURL = "https://" + cfg.General.Domain
+	cfg.Services.Functions = true
+	cfg.Auth.SMTP.Enabled = true
+	cfg.Auth.SMTP.Host = "smtp.example.test"
+	cfg.Auth.SMTP.Username = "acceptance"
+	cfg.Auth.SMTP.Password = contracts.SecretInput{Action: "replace", Value: acceptanceValue()}
+	cfg.Auth.SMTP.SenderEmail = "acceptance@example.test"
+	cfg.Auth.SMTP.SenderName = "Task10 Acceptance"
+	draft := contracts.ProjectDraft{Name: "Task10 Acceptance " + suffix, Slug: "task10-" + suffix, Preset: contracts.PresetCustom, Configuration: cfg}
+	raw, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	return requestJSON(t, client, http.MethodPost, baseURL+"/api/projects", payload, cookie, csrf)
+}
+
+func inspectContainerIDs(t *testing.T, composeProject string) map[string]string {
+	t.Helper()
+	ids := make(map[string]string)
+	if composeProject == "" {
+		return ids
+	}
+	for _, service := range []string{"auth", "functions"} {
+		command := exec.Command("docker", "ps", "-aq", "--filter", "label=com.docker.compose.project="+composeProject, "--filter", "label=com.docker.compose.service="+service)
+		output, err := command.Output()
+		if err != nil {
+			t.Fatalf("inspect %s container: %v", service, err)
+		}
+		ids[service] = strings.TrimSpace(string(output))
+		t.Logf("acceptance container %s id=%s", service, ids[service])
+	}
+	return ids
+}
+
+func assertServiceChange(t *testing.T, before, after map[string]string, service string, changed bool) {
+	t.Helper()
+	if len(before) == 0 {
+		return
+	}
+	if (before[service] != after[service]) != changed {
+		t.Fatalf("%s container changed=%v, want %v (before=%q after=%q)", service, before[service] != after[service], changed, before[service], after[service])
 	}
 }
 
