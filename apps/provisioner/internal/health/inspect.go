@@ -38,17 +38,21 @@ type Inspector struct {
 	now    func() time.Time
 }
 
+const projectProbeTimeout = 10 * time.Second
+
 func NewInspector(source Source) *Inspector {
 	return &Inspector{source: source, now: time.Now}
 }
 
 func (i *Inspector) Project(ctx context.Context, project ProjectRef) (Report, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, projectProbeTimeout)
+	defer cancel()
 	var containers []Container
 	var err error
 	if filtered, ok := i.source.(serviceSource); ok {
-		containers, err = filtered.ContainersForServices(ctx, "supabase-manager-"+project.Slug, project.Enabled)
+		containers, err = filtered.ContainersForServices(probeCtx, "supabase-manager-"+project.Slug, project.Enabled)
 	} else {
-		containers, err = i.source.Containers(ctx, "supabase-manager-"+project.Slug)
+		containers, err = i.source.Containers(probeCtx, "supabase-manager-"+project.Slug)
 	}
 	if err != nil {
 		return Report{}, fmt.Errorf("list project containers: %w", err)
