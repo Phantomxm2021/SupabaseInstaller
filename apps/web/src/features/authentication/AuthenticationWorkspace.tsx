@@ -1,8 +1,9 @@
 import { Outlet } from 'react-router-dom'
+import { AuthenticationNavigation } from './navigation'
 
 export function AuthenticationWorkspace() {
   return <section className="authentication-workspace">
-    <nav aria-label="Authentication navigation" className="authentication-navigation">Authentication</nav>
+    <AuthenticationNavigation />
     <div className="authentication-content"><Outlet /></div>
   </section>
 }

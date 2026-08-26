@@ -1,7 +1,7 @@
 import type { RedactedProjectConfiguration } from './wire'
 import type { Services } from '../../../api/types'
 
-export const CONFIGURATION_SECTIONS = ['general', 'services', 'auth', 'smtp', 'oauth', 'storage', 'realtime', 'functions', 'database', 'pooler', 'network', 'secrets'] as const
+export const CONFIGURATION_SECTIONS = ['general', 'services', 'storage', 'realtime', 'functions', 'database', 'pooler', 'network', 'secrets'] as const
 export type ConfigurationSection = typeof CONFIGURATION_SECTIONS[number]
 
 export type ConfigurationSnapshot = {
@@ -11,8 +11,10 @@ export type ConfigurationSnapshot = {
   configuration: RedactedProjectConfiguration
 }
 
+type AuthenticationConfigurationSection = 'auth' | 'smtp' | 'oauth'
+
 export type PendingConfigurationSave = {
-  section: ConfigurationSection
+  section: ConfigurationSection | AuthenticationConfigurationSection
   provider?: string
   value: unknown
   labels: string[]
@@ -21,13 +23,13 @@ export type PendingConfigurationSave = {
   setError?: (name: string, message: string) => void
 }
 
-export const SECTION_LABELS: Record<ConfigurationSection, string> = {
+export const SECTION_LABELS: Record<ConfigurationSection | AuthenticationConfigurationSection, string> = {
   general: 'General', services: 'Services', auth: 'Authentication', smtp: 'Email & SMTP', oauth: 'OAuth Providers',
   storage: 'Storage', realtime: 'Realtime', functions: 'Functions', database: 'Database', pooler: 'Connection Pooler',
   network: 'Gateway & Network', secrets: 'API & Secrets',
 }
 
-export function sectionLabel(section: ConfigurationSection) { return SECTION_LABELS[section] }
+export function sectionLabel(section: PendingConfigurationSave['section']) { return SECTION_LABELS[section] }
 
 /** Go omitempty fields are intentionally optional on redacted responses. Keep
  * every section form on a total DTO before it calls watch/join/index methods. */
@@ -41,11 +43,11 @@ export function normalizeRedactedConfiguration(config: RedactedProjectConfigurat
   }
 }
 
-export function sectionEndpoint(section: ConfigurationSection, provider?: string) {
+export function sectionEndpoint(section: PendingConfigurationSave['section'], provider?: string) {
   return provider && section === 'oauth' ? `oauth/${encodeURIComponent(provider)}` : section
 }
 
-export function sectionImpact(section: ConfigurationSection, value: unknown, services?: Services, previous?: unknown): PendingConfigurationSave['impact'] {
+export function sectionImpact(section: PendingConfigurationSave['section'], value: unknown, services?: Services, previous?: unknown): PendingConfigurationSave['impact'] {
   if ((section === 'smtp' || section === 'oauth' || section === 'auth') && value && typeof value === 'object' && 'enabled' in value && (value as { enabled?: unknown }).enabled === false) {
     return previous && typeof previous === 'object' && (previous as { enabled?: unknown }).enabled === true ? 'recreate' : 'none'
   }
@@ -63,13 +65,13 @@ export function sectionImpact(section: ConfigurationSection, value: unknown, ser
   return 'none'
 }
 
-export function affectedServices(section: ConfigurationSection, dirty: unknown, value?: unknown, services?: Services): string[] {
+export function affectedServices(section: PendingConfigurationSave['section'], dirty: unknown, value?: unknown, services?: Services): string[] {
   if (section === 'services' && value && typeof value === 'object') {
     const names: Record<string, string> = { auth: 'Auth', rest: 'PostgREST', studio: 'Studio', postgresMeta: 'postgres-meta', realtime: 'Realtime', storage: 'Storage', imgproxy: 'imgproxy', functions: 'Edge Functions', supavisor: 'Supavisor', logs: 'Logflare', vector: 'Vector', directDb: 'PostgreSQL' }
     const before = (services ?? {}) as unknown as Record<string, boolean>
     return Object.entries(value).filter(([name, current]) => typeof current === 'boolean' && before[name] !== current).map(([name]) => names[name] ?? name)
   }
-  const defaults: Record<ConfigurationSection, string[]> = { general: ['Gateway', 'Auth', 'Studio'], services: [], auth: ['Auth'], smtp: ['Auth'], oauth: ['Auth'], storage: ['Storage'], realtime: ['Realtime'], functions: ['Edge Functions'], database: ['PostgreSQL'], pooler: ['Supavisor'], network: ['Gateway'], secrets: [] }
+  const defaults: Record<PendingConfigurationSave['section'], string[]> = { general: ['Gateway', 'Auth', 'Studio'], services: [], auth: ['Auth'], smtp: ['Auth'], oauth: ['Auth'], storage: ['Storage'], realtime: ['Realtime'], functions: ['Edge Functions'], database: ['PostgreSQL'], pooler: ['Supavisor'], network: ['Gateway'], secrets: [] }
   const result = defaults[section]
   if (!services) return result
   return result.filter((name) => {

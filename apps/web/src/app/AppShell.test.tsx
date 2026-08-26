@@ -72,7 +72,7 @@ it('renders project navigation in the single global Sidebar on project routes', 
   const projectNavigation = screen.getByRole('navigation', { name: /project navigation/i })
   const expectedLinks = [
     ['Overview', '/projects/bee/overview'], ['General', '/projects/bee/configuration?section=general'], ['Services', '/projects/bee/configuration?section=services'],
-    ['Authentication', '/projects/bee/configuration?section=auth'], ['Email & SMTP', '/projects/bee/configuration?section=smtp'], ['OAuth Providers', '/projects/bee/configuration?section=oauth'],
+    ['Authentication', '/projects/bee/authentication/sign-in-providers'],
     ['Storage', '/projects/bee/configuration?section=storage'], ['Realtime', '/projects/bee/configuration?section=realtime'], ['Functions', '/projects/bee/configuration?section=functions'],
     ['Database', '/projects/bee/configuration?section=database'], ['Connection Pool', '/projects/bee/configuration?section=pooler'], ['Gateway & Network', '/projects/bee/configuration?section=network'], ['API & Secrets', '/projects/bee/configuration?section=secrets'],
   ] as const
@@ -112,7 +112,7 @@ it.each([
   ['/projects', 'Projects'],
   ['/projects/bee/overview', 'Overview'],
   ['/projects/bee/configuration', 'General'],
-  ['/projects/bee/configuration?section=oauth', 'OAuth Providers'],
+  ['/projects/bee/authentication/emails', 'Authentication'],
   ['/projects/bee/logs', 'Logs'],
   ['/projects/bee/backups', 'Backups'],
 ] as const)('marks only the canonical active link for %s', (path, activeLabel) => {
@@ -135,7 +135,7 @@ it.each(['/projects', '/projects/new', '/settings'])('does not render project na
 it.each([
   ['/projects/bee/configuration', 'General'],
   ['/projects/bee/configuration?section=unknown', 'General'],
-  ['/projects/bee/configuration?section=oauth', 'OAuth Providers'],
+  ['/projects/bee/authentication/sign-in-providers', 'Authentication'],
 ] as const)('highlights the canonical configuration section for %s', (path, activeLabel) => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))

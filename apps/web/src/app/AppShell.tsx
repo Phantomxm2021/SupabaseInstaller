@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Activity, Boxes, Braces, Database, FileClock, Globe2, HardDrive, KeyRound, LayoutDashboard, LockKeyhole, LogOut, Mail, Network, Radio, ScrollText, ServerCog, Settings, ShieldCheck, UserCircle, Waypoints } from 'lucide-react'
+import { Activity, Boxes, Braces, Database, FileClock, HardDrive, KeyRound, LayoutDashboard, LockKeyhole, LogOut, Network, Radio, ScrollText, ServerCog, Settings, ShieldCheck, UserCircle, Waypoints } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { apiFetch, setCSRFToken } from '../api/client'
 import {
@@ -28,8 +28,7 @@ import { Badge } from '../components/ui/badge'
 import { CONFIGURATION_SECTIONS } from '../features/project/configuration/types'
 
 const projectNavigation = [
-  ['configuration?section=general', 'General', Settings], ['configuration?section=services', 'Services', Activity], ['configuration?section=auth', 'Authentication', ShieldCheck], ['configuration?section=smtp', 'Email & SMTP', Mail],
-  ['configuration?section=oauth', 'OAuth Providers', Globe2], ['configuration?section=storage', 'Storage', HardDrive], ['configuration?section=realtime', 'Realtime', Radio], ['configuration?section=functions', 'Functions', Braces],
+  ['configuration?section=general', 'General', Settings], ['configuration?section=services', 'Services', Activity], ['authentication/sign-in-providers', 'Authentication', ShieldCheck], ['configuration?section=storage', 'Storage', HardDrive], ['configuration?section=realtime', 'Realtime', Radio], ['configuration?section=functions', 'Functions', Braces],
   ['configuration?section=database', 'Database', Database], ['configuration?section=pooler', 'Connection Pool', Waypoints], ['configuration?section=network', 'Gateway & Network', Network], ['configuration?section=secrets', 'API & Secrets', KeyRound],
 ] as const
 
@@ -37,6 +36,7 @@ const runtimeNavigation = [['logs', 'Logs', ScrollText], ['backups', 'Backups', 
 
 function isActiveProjectLink(location: ReturnType<typeof useLocation>, path: string) {
   const [pathname, query] = path.split('?')
+  if (pathname === 'authentication/sign-in-providers') return location.pathname.includes('/authentication')
   if (pathname !== 'configuration') return location.pathname.endsWith(`/${pathname}`)
   if (!location.pathname.endsWith('/configuration')) return false
   const requested = new URLSearchParams(location.search).get('section') ?? 'general'

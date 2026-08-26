@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ConfigurationPage } from './ConfigurationPage'
 import { defaultConfiguration } from '../projects/projectSchema'
+import { AuthenticationWorkspace, EmailsRoute, SignInProvidersRoute } from '../authentication/AuthenticationWorkspace'
 
 it('renders the installed project configuration workspace from the redacted snapshot', async () => {
   const configuration = defaultConfiguration('LIGHTWEIGHT')
@@ -12,9 +13,7 @@ it('renders the installed project configuration workspace from the redacted snap
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/configuration?section=database']}><Routes><Route path="/projects/:projectId/configuration" element={<ConfigurationPage />} /></Routes></MemoryRouter></QueryClientProvider>)
   expect(await screen.findByText('Database', { selector: '[data-slot="card-title"]' })).toBeVisible()
   expect(screen.getByLabelText('Maximum connections')).toBeVisible()
-  expect(screen.getByRole('tab', { name: 'API & Secrets' })).toBeVisible()
-  expect(screen.getByRole('tablist')).toHaveClass('h-auto')
-  expect(screen.getByRole('tablist')).toHaveClass('flex-nowrap', 'overflow-x-auto')
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
 })
 
 function redactedSnapshot(domain = 'bee.example.com') {
@@ -31,7 +30,7 @@ function redactedSnapshot(domain = 'bee.example.com') {
 }
 
 function renderConfiguration(section = 'general') {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[`/projects/bee/configuration?section=${section}`]}><Routes><Route path="/projects/:projectId/configuration" element={<ConfigurationPage />} /></Routes></MemoryRouter></QueryClientProvider>)
+  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[`/projects/bee/configuration?section=${section}`]}><Routes><Route path="/projects/:projectId/configuration" element={<ConfigurationPage />} /><Route path="/projects/:projectId/authentication" element={<AuthenticationWorkspace />}><Route path="sign-in-providers" element={<SignInProvidersRoute />} /><Route path="emails" element={<EmailsRoute />} /></Route></Routes></MemoryRouter></QueryClientProvider>)
 }
 
 it('keeps dirty input when preview is dismissed with Keep editing', async () => {
@@ -87,57 +86,14 @@ it('renders authoritative API field errors', async () => {
   expect(screen.getByText('Domain is already used')).toBeVisible()
 })
 
-it('can disable an enabled OAuth provider and sends its provider endpoint', async () => {
-  const user = userEvent.setup()
-  vi.stubGlobal('PointerEvent', MouseEvent)
-  let patchPath = ''
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === 'PATCH') { patchPath = String(input); return new Response(JSON.stringify({ projectId: 'bee', operationId: 'op-oauth', revision: 5 }), { status: 202 }) }
-    const snapshot = redactedSnapshot()
-    snapshot.configuration.auth.oauth = { google: { enabled: true, clientId: 'client-id', secretSet: true, secret: { action: '' }, fields: {} } }
-    return new Response(JSON.stringify(snapshot), { status: 200 })
-  }))
-  renderConfiguration('oauth')
-  const toggle = await screen.findByRole('switch', { name: 'Enable Google' })
-  await user.click(toggle)
-  await user.click(screen.getByRole('button', { name: 'Save Google' }))
-  await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
-  await waitFor(() => expect(patchPath).toContain('/configuration/oauth/google'))
-})
-
-it('associates nested OAuth API field errors with the provider control', async () => {
-  const user = userEvent.setup()
-  vi.stubGlobal('PointerEvent', MouseEvent)
-  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === 'PATCH') return new Response(JSON.stringify({ error: { code: 'INVALID_CONFIGURATION', message: 'invalid', fields: { 'auth.oauth.google.clientId': 'Client ID rejected' } } }), { status: 422 })
-    const snapshot = redactedSnapshot(); snapshot.configuration.auth.oauth = { google: { enabled: true, clientId: 'client-id', secretSet: true, secret: { action: '' }, fields: {} } }; return new Response(JSON.stringify(snapshot), { status: 200 })
-  }))
-  renderConfiguration('oauth')
-  await user.click(await screen.findByRole('switch', { name: 'Enable Google' }))
-  await user.click(screen.getByRole('button', { name: 'Save Google' }))
-  await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
-  const providerForm = document.getElementById('configuration-oauth-google-form')
-  expect(providerForm).not.toBeNull()
-  const clientId = within(providerForm as HTMLElement).getByLabelText('Client ID')
-  expect(clientId).toHaveAttribute('aria-invalid', 'true')
-  expect(clientId).toHaveAttribute('aria-describedby')
-  expect(screen.getByText('Client ID rejected')).toBeVisible()
-})
-
-it('keeps removal reachable for disabled configured SMTP and previews no runtime action', async () => {
-  const user = userEvent.setup()
-  let patchBody = ''
-  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === 'PATCH') { patchBody = String(init.body); return new Response(JSON.stringify({ projectId: 'bee', operationId: 'op-smtp', revision: 5 }), { status: 202 }) }
-    const snapshot = redactedSnapshot(); snapshot.configuration.auth.smtp = { enabled: false, host: '', port: 587, username: '', passwordSet: true, password: { action: '' }, senderEmail: '', senderName: '' }; return new Response(JSON.stringify(snapshot), { status: 200 })
-  }))
-  renderConfiguration('smtp')
-  await screen.findByRole('button', { name: 'Remove Password' })
-  await user.click(screen.getByRole('button', { name: 'Remove Password' }))
-  await user.click(screen.getByRole('button', { name: 'Save Email & SMTP' }))
-  expect(await screen.findByText('No runtime restart expected')).toBeVisible()
-  await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
-  await waitFor(() => expect(patchBody).toContain('"action":"remove"'))
+it.each([
+  ['auth', 'Sign In / Providers'],
+  ['oauth', 'Sign In / Providers'],
+  ['smtp', 'Emails'],
+] as const)('redirects legacy %s configuration routes to the Authentication workspace', async (section, heading) => {
+  renderConfiguration(section)
+  expect(await screen.findByRole('heading', { name: heading })).toBeVisible()
+  expect(screen.getByRole('navigation', { name: 'Authentication navigation' })).toBeVisible()
 })
 
 it('closes only public dependents when Gateway is disabled', async () => {
@@ -234,38 +190,4 @@ it.each([
   await user.click(screen.getByRole('button', { name: saveLabel }))
   expect(await screen.findByText('Configuration metadata only')).toBeVisible()
   expect(screen.getByText('No runtime restart expected')).toBeVisible()
-})
-
-it('shows an accessible error on the Phone provider when phone auth blocks submit', async () => {
-  const user = userEvent.setup()
-  vi.stubGlobal('PointerEvent', MouseEvent)
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(redactedSnapshot()), { status: 200, headers: { 'Content-Type': 'application/json' } })))
-  renderConfiguration('auth')
-  const phone = await screen.findByRole('switch', { name: 'Enable Phone Auth' })
-  await user.click(phone)
-  await user.click(screen.getByRole('button', { name: 'Save Authentication' }))
-  const provider = screen.getByRole('combobox', { name: 'Phone provider' })
-  expect(provider).toHaveAttribute('aria-invalid', 'true')
-  expect(provider).toHaveAttribute('aria-describedby')
-  expect(screen.getByText('Choose a supported phone provider')).toBeVisible()
-})
-
-it('shows disableSignup client and nested server errors on the associated toggle', async () => {
-  const user = userEvent.setup(); vi.stubGlobal('PointerEvent', MouseEvent)
-  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === 'PATCH') return new Response(JSON.stringify({ error: { code: 'INVALID_CONFIGURATION', message: 'invalid', fields: { 'auth.disableSignup': 'Signup is required by enabled providers' } } }), { status: 422 })
-    const snapshot = redactedSnapshot(); snapshot.configuration.auth.phone.enabled = true; snapshot.configuration.auth.phone.provider = 'twilio'; snapshot.configuration.auth.phone.secretSet = true; snapshot.configuration.auth.phone.secret = { action: '' }; snapshot.configuration.auth.phone.fields = { accountSid: 'a', messageServiceSid: 'm' }; return new Response(JSON.stringify(snapshot), { status: 200 })
-  }))
-  renderConfiguration('auth')
-  await user.click(await screen.findByRole('switch', { name: 'Anonymous sign-in' }))
-  await user.click(screen.getByRole('button', { name: 'Save Authentication' }))
-  await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
-  const keepEditing = screen.queryByRole('button', { name: 'Keep editing' })
-  if (keepEditing) await user.click(keepEditing)
-  const signup = await screen.findByRole('switch', { name: 'Allow signup' })
-  expect(signup).toHaveAttribute('aria-invalid', 'true')
-  expect(signup).toHaveAttribute('aria-describedby')
-  const errorId = signup.getAttribute('aria-describedby')
-  expect(errorId).toBeTruthy()
-  expect(document.getElementById(errorId as string)).toHaveTextContent('Signup is required by enabled providers')
 })

@@ -16,3 +16,17 @@ it('renders sign-in providers in the authentication workspace without configurat
   expect(screen.queryByRole('tablist', { name: /configuration/i })).not.toBeInTheDocument()
   router.dispose()
 })
+
+it('keeps project navigation and highlights the active Authentication item', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ username: 'admin', mustChangePassword: false, csrfToken: 'csrf-token' }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+  window.history.pushState({}, '', '/projects/bee/authentication/emails')
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createAppRouter(queryClient)
+
+  render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>)
+
+  expect(await screen.findByRole('link', { name: 'Overview' })).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Emails' })).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByText('NOTIFICATIONS')).toBeVisible()
+  router.dispose()
+})
