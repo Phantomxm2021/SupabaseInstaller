@@ -203,6 +203,13 @@ func sectionValuePatch(section string, expected int64, raw []byte) (contracts.Co
 // marked retain internally so aggregate validation can inspect the stored
 // secrets without treating the redacted marker as a user command.
 func mergeSMTPAuthPatch(base contracts.AuthConfig, incoming contracts.SMTPConfig) contracts.AuthConfig {
+	if incoming.Password.Action == "" {
+		if strings.TrimSpace(incoming.Password.Value) != "" {
+			incoming.Password.Action = "replace"
+		} else if base.SMTP.PasswordSet {
+			incoming.Password.Action = "retain"
+		}
+	}
 	base.SMTP = incoming
 	markUntouchedAuthSecrets(&base, "smtp")
 	return base
@@ -214,6 +221,13 @@ func mergeSMTPAuthPatch(base contracts.AuthConfig, incoming contracts.SMTPConfig
 func mergeOAuthAuthPatch(base contracts.AuthConfig, provider string, incoming contracts.OAuthProviderConfig) contracts.AuthConfig {
 	if base.OAuth == nil {
 		base.OAuth = map[string]contracts.OAuthProviderConfig{}
+	}
+	if incoming.Secret.Action == "" {
+		if strings.TrimSpace(incoming.Secret.Value) != "" {
+			incoming.Secret.Action = "replace"
+		} else if existing, ok := base.OAuth[provider]; ok && existing.SecretSet {
+			incoming.Secret.Action = "retain"
+		}
 	}
 	base.OAuth[provider] = incoming
 	markUntouchedAuthSecrets(&base, "oauth:"+provider)

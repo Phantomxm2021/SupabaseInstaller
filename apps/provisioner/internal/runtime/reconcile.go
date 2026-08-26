@@ -102,7 +102,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			}
 			rollbackErr := restore()
 			if rollbackErr != nil {
-				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr, rollbackErr), RollbackSucceeded: false}
+				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr, rollbackErr), RollbackSucceeded: false, RuntimeChanged: published}
 			}
 			if !published {
 				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr), RollbackSucceeded: cleanupErr == nil}
@@ -121,9 +121,9 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				}
 			}
 			if cleanupErr != nil || recoveryErr != nil {
-				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr, recoveryErr), RollbackSucceeded: false}
+				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr, recoveryErr), RollbackSucceeded: false, RuntimeChanged: published}
 			}
-			return &contracts.ReconcileFailure{Cause: cause, RollbackSucceeded: true}
+			return &contracts.ReconcileFailure{Cause: cause, RollbackSucceeded: true, RuntimeChanged: published}
 		}
 		if err := pointFunctionsEnvAtCandidate(candidateRef, rendered.Compose); err != nil {
 			return fail(rollback(err))
@@ -189,8 +189,9 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 	}
 	if err != nil {
 		if !errors.Is(err, contracts.ErrInvalidReconcileRevision) && !errors.Is(err, contracts.ErrStaleConfigRevision) && result.Error == nil {
-			result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: runtimeRollbackSucceeded, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Project runtime reconciliation failed"}}
-			err = &contracts.ReconcileFailure{Cause: err, Response: result, RollbackSucceeded: runtimeRollbackSucceeded}
+			runtimeChanged := runtimeRollback != nil
+			result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: runtimeRollbackSucceeded, RuntimeChanged: runtimeChanged, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Project runtime reconciliation failed"}}
+			err = &contracts.ReconcileFailure{Cause: err, Response: result, RollbackSucceeded: runtimeRollbackSucceeded, RuntimeChanged: runtimeChanged}
 		}
 		return result, err
 	}

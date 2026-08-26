@@ -52,6 +52,7 @@ var ErrMetadataPublication = errors.New("metadata publication failed")
 type MetadataPublicationError struct {
 	Publish           error
 	RollbackSucceeded bool
+	RuntimeChanged    bool
 }
 
 func (e *MetadataPublicationError) Error() string { return e.Publish.Error() }
@@ -224,10 +225,18 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 		return RuntimeRef{}, nil, nil, fmt.Errorf("inspect project directory: %w", err)
 	} else {
 		// Metadata may have been durably written before a render/stage failure
-		// on a brand-new project. Such a directory is not hydrated yet; restore
-		// only the authoritative template paths before staging the generation.
+		// on a brand-new project. Hydrate only an empty tree or the explicit
+		// manager-owned metadata-only state. A missing marker alone is not a
+		// freshness signal: user files must never be overwritten.
 		marker := filepath.Join(projectPath, "volumes", "db", "_supabase.sql")
 		if _, markerErr := os.Stat(marker); errors.Is(markerErr, os.ErrNotExist) {
+			owned, ownershipErr := managerOwnedIncompleteTree(projectPath)
+			if ownershipErr != nil {
+				return RuntimeRef{}, nil, nil, fmt.Errorf("inspect incomplete project template: %w", ownershipErr)
+			}
+			if !owned {
+				return RuntimeRef{}, nil, nil, errors.New("project template is incomplete and contains existing user data")
+			}
 			if err := copyEmbeddedTemplate(projectPath); err != nil {
 				return RuntimeRef{}, nil, nil, fmt.Errorf("hydrate incomplete project template: %w", err)
 			}
@@ -349,6 +358,48 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 	}
 	candidate = RuntimeRef{ProjectDir: projectPath, ComposeFile: filepath.Join(candidateDir, "docker-compose.yml"), EnvFile: filepath.Join(candidateDir, ".env"), FunctionsFile: filepath.Join(candidateDir, ".env.functions")}
 	return candidate, restore, commit, nil
+}
+
+// managerOwnedIncompleteTree distinguishes a directory created by Manager
+// before hydration from an existing user project. The marker file is not
+// sufficient because users may legitimately remove or replace it.
+func managerOwnedIncompleteTree(projectPath string) (bool, error) {
+	entries, err := os.ReadDir(projectPath)
+	if err != nil {
+		return false, err
+	}
+	if len(entries) == 0 {
+		return true, nil
+	}
+	// Functions source is explicitly user-owned. If the canonical embedded
+	// source already exists, a missing DB marker cannot authorize hydration.
+	if _, err := os.Stat(filepath.Join(projectPath, "volumes", "functions", "main", "index.ts")); err == nil {
+		return false, nil
+	}
+	metadataPresent := false
+	for _, entry := range entries {
+		switch entry.Name() {
+		case "project.json":
+			metadataPresent = true
+		case ".manager-runtime", ".manager-locks":
+			// These are Manager-owned control-plane entries.
+		case "docker-compose.yml", ".env", ".env.functions":
+			// Legacy generated files are also Manager-owned migration state.
+		case "volumes", "functions":
+			// Persistent data and the legacy Functions source are retained by
+			// hydration; copyEmbeddedTemplate only fills missing paths.
+		default:
+			return false, nil
+		}
+	}
+	// project.json is the durable ownership marker. A runtime directory on
+	// its own is not enough to authorize template hydration.
+	if metadataPresent {
+		return true, nil
+	}
+	// A legacy runtime-only tree can be safely hydrated while it is migrated;
+	// any persistent/user directory above caused an early false return.
+	return true, nil
 }
 
 // CleanupAbandonedRuntimeCandidates removes pre-commit candidate directories
@@ -485,6 +536,13 @@ func copyEmbeddedTemplate(destination string) error {
 		mode := fs.FileMode(0o600)
 		if info.Mode()&0o111 != 0 {
 			mode = 0o700
+		}
+		if _, err := os.Stat(target); err == nil {
+			// Existing project/user files are authoritative. Hydration may fill a
+			// missing template asset but must never overwrite user content.
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect existing template file %s: %w", relative, err)
 		}
 		if err := os.WriteFile(target, data, mode); err != nil {
 			return fmt.Errorf("write template file %s: %w", relative, err)
@@ -1030,9 +1088,9 @@ func (r *Root) UpdateMetadataWithRollback(slug string, mutate func(*Metadata) er
 	if writeErr := r.writeMetadata(slug, metadata); writeErr != nil {
 		if rollback != nil {
 			if rollbackErr := rollback(); rollbackErr != nil {
-				return Metadata{}, &MetadataPublicationError{Publish: errors.Join(writeErr, rollbackErr), RollbackSucceeded: false}
+				return Metadata{}, &MetadataPublicationError{Publish: errors.Join(writeErr, rollbackErr), RollbackSucceeded: false, RuntimeChanged: true}
 			}
-			return Metadata{}, &MetadataPublicationError{Publish: writeErr, RollbackSucceeded: true}
+			return Metadata{}, &MetadataPublicationError{Publish: writeErr, RollbackSucceeded: true, RuntimeChanged: true}
 		}
 		return Metadata{}, writeErr
 	}

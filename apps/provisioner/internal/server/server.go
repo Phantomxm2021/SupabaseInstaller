@@ -168,7 +168,7 @@ func (s *server) rollbackDatabasePassword(response http.ResponseWriter, request 
 			writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
 			return
 		}
-		writeJSON(response, http.StatusUnprocessableEntity, contracts.RotateDatabasePasswordResponse{OperationID: input.OperationID, ProjectID: input.ProjectID, Revision: input.ExpectedRevision, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rollback failed"}})
+		writeJSON(response, http.StatusUnprocessableEntity, contracts.RotateDatabasePasswordResponse{OperationID: input.OperationID, ProjectID: input.ProjectID, Revision: input.ExpectedRevision, RolledBack: false, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rollback failed"}})
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)

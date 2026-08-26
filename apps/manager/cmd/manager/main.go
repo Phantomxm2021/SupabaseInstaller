@@ -54,7 +54,7 @@ func main() {
 	provisionerClient := provisioner.NewClient(cfg.ProvisionerURL, cfg.ProvisionerToken, provisionerHTTP)
 	allocator := ports.NewAllocator(database, cfg.PortRangeStart, cfg.PortRangeEnd, ports.NetworkProbe{})
 	installer := install.NewOrchestrator(database, operations, allocator, cipher, provisionerClient, install.CryptoGenerator{Random: rand.Reader, Now: now}, now)
-	configurationManager := managerconfiguration.NewOrchestrator(database, operations, provisionerClient, cipher, now)
+	configurationManager := managerconfiguration.NewOrchestrator(database, operations, allocator, provisionerClient, cipher, now)
 	if err := configurationManager.Resume(context.Background(), projects.Get); err != nil {
 		slog.Error("resume configuration operations failed", "error", err)
 	}

@@ -155,6 +155,85 @@ func TestAdmitConfigurationIgnoresPortsOwnedByDisabledServices(t *testing.T) {
 	}
 }
 
+func TestAdmitConfigurationReservesPortsAcrossKindsAndPendingCandidates(t *testing.T) {
+	s := openTestStore(t)
+	first, second := projectFixture(), projectFixture()
+	first.ID, first.Slug, first.Name, first.Domain = "project-1", "bee-one", "Bee One", "one.example.com"
+	second.ID, second.Slug, second.Name, second.Domain = "project-2", "bee-two", "Bee Two", "two.example.com"
+	firstCfg, secondCfg := configurationFixture(), configurationFixture()
+	firstCfg.General.Domain, secondCfg.General.Domain = first.Domain, second.Domain
+	if err := s.CreateProject(context.Background(), first, firstCfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateProject(context.Background(), second, secondCfg); err != nil {
+		t.Fatal(err)
+	}
+	candidate := configurationFixture()
+	candidate.General.Domain = "pending.example.com"
+	candidate.Network.APIPort = 6123
+	queued := contracts.Operation{ID: "op-pending-a", ProjectID: first.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: time.Now()}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: queued, ProjectID: first.ID, Owner: queued.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	conflicting := candidate
+	conflicting.Network.StudioPort = 6123
+	conflicting.Services.Studio = true
+	queued2 := contracts.Operation{ID: "op-pending-b", ProjectID: second.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: time.Now()}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: queued2, ProjectID: second.ID, Owner: queued2.ID, ExpectedRevision: 1, Configuration: conflicting, OperationKind: "UPDATE_CONFIG", Now: time.Now()}); !errors.Is(err, ErrConfigurationConflict) {
+		t.Fatalf("pending cross-kind conflict = %v, want ErrConfigurationConflict", err)
+	}
+}
+
+func TestRestoreConfigurationStateOwnedDoesNotEraseSuccessor(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	candidate := configurationFixture()
+	candidate.General.Domain = "successor.example.com"
+	queued := contracts.Operation{ID: "op-owner", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: time.Now()}
+	snapshot, lease, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: queued, ProjectID: project.ID, Owner: queued.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE projects SET config_revision=3 WHERE id=?`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO project_secrets(project_id,kind,envelope_version,nonce,ciphertext,updated_at) VALUES(?,?,?,?,?,?)`, project.ID, "successor", 1, []byte("n"), []byte("successor-ciphertext"), formatTime(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RestoreConfigurationStateOwned(context.Background(), project.ID, snapshot.Revision, queued.ID, lease.Fence, time.Now()); !errors.Is(err, ErrStaleConfiguration) {
+		t.Fatalf("stale restore = %v, want ErrStaleConfiguration", err)
+	}
+	var count int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM project_secrets WHERE project_id=? AND kind='successor'`, project.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("successor secret count = %d, %v", count, err)
+	}
+}
+
+func TestRestoreConfigurationStateOwnedCleansFailedRevisionForNextAdmission(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	candidate := configurationFixture()
+	candidate.General.Domain = "failed.example.com"
+	now := time.Now().UTC()
+	op := contracts.Operation{ID: "op-failed", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	snapshot, lease, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RestoreConfigurationStateOwned(context.Background(), project.ID, snapshot.Revision, op.ID, lease.Fence, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: contracts.Operation{ID: "op-next", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now.Add(time.Second)}, ProjectID: project.ID, Owner: "op-next", ExpectedRevision: 1, Configuration: configurationFixture(), OperationKind: "UPDATE_CONFIG", Now: now.Add(time.Second)}); err != nil {
+		t.Fatalf("next admission after restore = %v", err)
+	}
+}
+
 func TestSnapshotMarkerDistinguishesEmptyRevision(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()

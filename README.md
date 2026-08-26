@@ -15,14 +15,18 @@ On Docker Desktop, `PROJECT_ROOT` must be an absolute shared host path.
 ```sh
 cp deploy/.env.example deploy/.env
 mkdir -p /Users/Shared/supabase-manager/projects
-openssl rand -base64 32    # MASTER_ENCRYPTION_KEY
-openssl rand -hex 32        # PROVISIONER_TOKEN
+umask 077
+MASTER_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+PROVISIONER_TOKEN="$(openssl rand -hex 32)"
+sed -e "s#^MASTER_ENCRYPTION_KEY=.*#MASTER_ENCRYPTION_KEY=$MASTER_ENCRYPTION_KEY#" -e "s#^PROVISIONER_TOKEN=.*#PROVISIONER_TOKEN=$PROVISIONER_TOKEN#" deploy/.env.example > deploy/.env
+unset MASTER_ENCRYPTION_KEY PROVISIONER_TOKEN
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build --wait
 ```
 
 Open `PUBLIC_ORIGIN`. First-run setup creates the administrator and shows
 recovery codes once. `MASTER_ENCRYPTION_KEY` and `PROVISIONER_TOKEN` are
-required; each must represent at least 32 bytes of cryptographic material.
+required; the master key must decode to exactly 32 bytes and the token must
+contain at least 32 bytes. The checked-in placeholders are rejected at startup.
 
 ## Security boundary
 

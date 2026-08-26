@@ -435,6 +435,33 @@ func TestReconcileMetadataWriteFailureRestoresRuntimeBeforeReturning(t *testing.
 	}
 }
 
+func TestReconcileMetadataWriteAndRuntimeRollbackFailureReportsChanged(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	writes := 0
+	root.SetMetadataWriteHookForTest(func(string, projectfs.Metadata) error {
+		writes++
+		if writes >= 1 {
+			return errors.New("injected final metadata publication failure")
+		}
+		return nil
+	})
+	runner.recreateError = errors.New("injected runtime rollback failure")
+	changed := baseConfig()
+	changed.General.SiteURL = "https://dual-failure.example.com"
+	result, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil || result.RolledBack || !result.RuntimeChanged {
+		t.Fatalf("result=%#v err=%v, want changed runtime with unknown rollback", result, err)
+	}
+}
+
 type fakeReconcileRunner struct {
 	validated        int
 	validatedDir     string
@@ -446,6 +473,7 @@ type fakeReconcileRunner struct {
 	removedCompose   string
 	removeError      error
 	validateError    error
+	recreateError    error
 }
 
 type captureComposeExecutor struct{ calls [][]string }
@@ -491,7 +519,7 @@ func (r *fakeReconcileRunner) UpSelected(_ context.Context, _ compose.ProjectRef
 }
 func (r *fakeReconcileRunner) Recreate(_ context.Context, _ compose.ProjectRef, services ...string) error {
 	r.recreated = append(r.recreated, services...)
-	return nil
+	return r.recreateError
 }
 func (r *fakeReconcileRunner) RemoveStopped(_ context.Context, project compose.ProjectRef, services ...string) error {
 	r.removed = append(r.removed, services...)

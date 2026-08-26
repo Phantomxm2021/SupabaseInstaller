@@ -113,8 +113,18 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 		rollbackComplete := false
 		runtimeStateKnown := false
 		runtimeStateChanged := false
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(payload, &fields)
+		// Outcome bits are endpoint-specific. A generic ErrorEnvelope has the
+		// same `error` member but no durable runtime outcome and must stay
+		// unknown so orchestration can recover instead of guessing.
+		explicitOutcome := func() bool {
+			_, rolledBack := fields["rolledBack"]
+			_, runtimeChanged := fields["runtimeChanged"]
+			return rolledBack || runtimeChanged
+		}
 		var rotation contracts.RotateDatabasePasswordResponse
-		if json.Unmarshal(payload, &rotation) == nil {
+		if (strings.Contains(path, "rotate-database-password") || strings.Contains(path, "rollback-database-password")) && explicitOutcome() && json.Unmarshal(payload, &rotation) == nil {
 			rollbackComplete = rotation.RolledBack
 			if rotation.Error != nil {
 				runtimeStateKnown = true
@@ -126,7 +136,7 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 				envelope.Error = *rotation.Error
 			} else {
 				var reconcile contracts.ReconcileProjectResponse
-				if json.Unmarshal(payload, &reconcile) == nil && reconcile.Error != nil {
+				if path == "/internal/v1/projects/reconcile" && explicitOutcome() && json.Unmarshal(payload, &reconcile) == nil && reconcile.Error != nil {
 					envelope.Error = *reconcile.Error
 					rollbackComplete = reconcile.RolledBack
 					runtimeStateKnown = true

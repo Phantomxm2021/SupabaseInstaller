@@ -171,6 +171,32 @@ func TestStageRuntimeFilesHydratesMetadataOnlyFreshProject(t *testing.T) {
 	}
 }
 
+func TestStageRuntimeFilesRefusesHydrationOverExistingUserTree(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "volumes", "functions", "main"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	userFile := filepath.Join(project, "volumes", "functions", "main", "index.ts")
+	if err := os.WriteFile(userFile, []byte("user function"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = root.StageRuntimeFiles("owned", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")})
+	if err == nil {
+		t.Fatal("incomplete user tree unexpectedly hydrated")
+	}
+	got, readErr := os.ReadFile(userFile)
+	if readErr != nil || string(got) != "user function" {
+		t.Fatalf("user function changed after rejected hydration: %q, %v", got, readErr)
+	}
+}
+
 func TestStageRuntimeFilesRestoreSwitchesToPriorGeneration(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {

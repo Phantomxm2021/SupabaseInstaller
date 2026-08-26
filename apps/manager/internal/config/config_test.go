@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func TestLoadRejectsMissingManagerSecrets(t *testing.T) {
 }
 
 func TestLoadReturnsValidatedManagerConfiguration(t *testing.T) {
-	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 	t.Setenv("MASTER_ENCRYPTION_KEY", key)
 	t.Setenv("PROVISIONER_TOKEN", strings.Repeat("a", 32))
 	t.Setenv("MANAGER_LISTEN_ADDR", "127.0.0.1:8181")
@@ -31,5 +32,13 @@ func TestLoadReturnsValidatedManagerConfiguration(t *testing.T) {
 	}
 	if len(cfg.MasterEncryptionKey) != 32 {
 		t.Fatalf("MasterEncryptionKey length = %d, want 32", len(cfg.MasterEncryptionKey))
+	}
+}
+
+func TestLoadRejectsPublishedExampleSecrets(t *testing.T) {
+	t.Setenv("MASTER_ENCRYPTION_KEY", "replace-with-output-of-openssl-rand-base64-32")
+	t.Setenv("PROVISIONER_TOKEN", "replace-with-output-of-openssl-rand-hex-32")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted example secrets")
 	}
 }

@@ -25,6 +25,19 @@ func TestClientReturnsProvisionerErrorCode(t *testing.T) {
 	}
 }
 
+func TestClientDoesNotInferRuntimeOutcomeFromGenericErrorEnvelope(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "RECONCILE_FAILED", Message: "failed"}})
+		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+	_, err := client.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+	var clientErr *ClientError
+	if !errors.As(err, &clientErr) || clientErr.RuntimeOutcomeKnown() {
+		t.Fatalf("generic reconcile error = %#v, want unknown runtime outcome", err)
+	}
+}
+
 func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
 	const sentinel = "new-password-sentinel"
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {

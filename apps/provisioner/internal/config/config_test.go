@@ -29,3 +29,10 @@ func TestLoadRejectsShortManagerToken(t *testing.T) {
 		t.Fatalf("Load() error = %v, want MANAGER_TOKEN validation", err)
 	}
 }
+
+func TestLoadRejectsPublishedExampleToken(t *testing.T) {
+	t.Setenv("MANAGER_TOKEN", "replace-with-output-of-openssl-rand-hex-32")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted example token")
+	}
+}

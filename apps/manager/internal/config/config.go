@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 const minimumTokenLength = 32
@@ -25,7 +26,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	keyText := os.Getenv("MASTER_ENCRYPTION_KEY")
-	if keyText == "" {
+	if keyText == "" || isExampleSecret(keyText) {
 		return Config{}, errors.New("MASTER_ENCRYPTION_KEY is required")
 	}
 	key, err := base64.StdEncoding.DecodeString(keyText)
@@ -33,7 +34,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("MASTER_ENCRYPTION_KEY must be base64-encoded 32 bytes")
 	}
 	token := os.Getenv("PROVISIONER_TOKEN")
-	if len(token) < minimumTokenLength {
+	if len(token) < minimumTokenLength || isExampleSecret(token) {
 		return Config{}, fmt.Errorf("PROVISIONER_TOKEN must be at least %d bytes", minimumTokenLength)
 	}
 
@@ -62,6 +63,15 @@ func Load() (Config, error) {
 		PortRangeStart:      portStart,
 		PortRangeEnd:        portEnd,
 	}, nil
+}
+
+func isExampleSecret(value string) bool {
+	for _, marker := range []string{"replace-with", "change-me", "example", "your-"} {
+		if strings.Contains(strings.ToLower(value), marker) {
+			return true
+		}
+	}
+	return value == strings.Repeat("0", len(value)) || value == strings.Repeat("A", len(value))
 }
 
 func envOr(name, fallback string) string {

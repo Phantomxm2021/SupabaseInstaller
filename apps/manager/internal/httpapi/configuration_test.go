@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"supabase-manager/apps/manager/internal/configuration"
 	"supabase-manager/apps/manager/internal/operation"
 	projectservice "supabase-manager/apps/manager/internal/project"
+	managersecrets "supabase-manager/apps/manager/internal/secrets"
 	"supabase-manager/apps/manager/internal/store"
 	"supabase-manager/internal/contracts"
 )
@@ -177,5 +179,47 @@ func TestMergeOAuthPatchRetainsUntouchedConfiguredSMTPSecret(t *testing.T) {
 	}
 	if merged.OAuth["google"].Secret.Action != "retain" {
 		t.Fatalf("OAuth action = %q, want retain", merged.OAuth["google"].Secret.Action)
+	}
+}
+
+func TestOAuthPatchWithNewProviderRetainsConfiguredSMTPAndReplacesSecret(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cipher, err := managersecrets.NewCipher(bytes.Repeat([]byte{8}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "mailer.example.com", SiteURL: "https://mailer.example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	cfg.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", Port: 587, Username: "mailer", PasswordSet: true, SenderEmail: "mailer@example.com", SenderName: "Mailer"}
+	proj := contracts.Project{ID: "mailer", Name: "Mailer", Slug: "mailer", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), proj, cfg); err != nil {
+		t.Fatal(err)
+	}
+	smtp, _ := cipher.Encrypt(proj.ID, "smtp.password", []byte("smtp-old"))
+	if err := database.PutSecret(context.Background(), proj.ID, "smtp.password", smtp); err != nil {
+		t.Fatal(err)
+	}
+	manager := configuration.NewOrchestrator(database, operation.NewService(database, func() string { return "oauth-http-op" }, time.Now), cipher)
+	mux := http.NewServeMux()
+	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: manager})
+	body := strings.NewReader(`{"expectedRevision":1,"value":{"enabled":true,"clientId":"google-client","secretSet":true,"secret":{"value":"google-secret"},"fields":{}}}`)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/projects/mailer/configuration/oauth/google", body))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("OAuth PATCH status = %d, body = %s", response.Code, response.Body.String())
+	}
+	stored, err := database.GetSecret(context.Background(), proj.ID, "smtp.password")
+	if err != nil {
+		t.Fatalf("SMTP secret disappeared: %v", err)
+	}
+	if plain, _ := cipher.Decrypt(proj.ID, "smtp.password", stored); string(plain) != "smtp-old" {
+		t.Fatalf("SMTP secret = %q, want retained", plain)
+	}
+	if _, err := database.GetSecret(context.Background(), proj.ID, "oauth.google.secret"); err != nil {
+		t.Fatalf("Google replacement not stored: %v", err)
 	}
 }
