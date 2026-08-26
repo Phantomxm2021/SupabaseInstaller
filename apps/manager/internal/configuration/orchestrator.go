@@ -488,7 +488,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 					rollbackRequest.IdempotencyKey = queued.ID + ":rollback"
 					rollbackRequest.OldPassword, rollbackRequest.NewPassword = rollbackRequest.NewPassword, rollbackRequest.OldPassword
 					rollbackErr := compensator.RollbackDatabasePassword(ctx, rollbackRequest)
-					if rollbackErr != nil && !runtimeOutcomeKnown(rollbackErr) {
+					if rollbackErr != nil {
 						return queued, rollbackErr
 					}
 					rollback = rollbackErr == nil
@@ -508,7 +508,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 					rollbackRequest.IdempotencyKey = queued.ID + ":rollback"
 					rollbackRequest.OldPassword, rollbackRequest.NewPassword = rollbackRequest.NewPassword, rollbackRequest.OldPassword
 					rollbackErr := compensator.RollbackDatabasePassword(ctx, rollbackRequest)
-					if rollbackErr != nil && !runtimeOutcomeKnown(rollbackErr) {
+					if rollbackErr != nil {
 						return queued, rollbackErr
 					}
 					rollback = rollbackErr == nil
@@ -530,7 +530,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 						rollbackRequest.IdempotencyKey = queued.ID + ":rollback"
 						rollbackRequest.OldPassword, rollbackRequest.NewPassword = rollbackRequest.NewPassword, rollbackRequest.OldPassword
 						rollbackErr := compensator.RollbackDatabasePassword(ctx, rollbackRequest)
-						if rollbackErr != nil && !runtimeOutcomeKnown(rollbackErr) {
+						if rollbackErr != nil {
 							return queued, rollbackErr
 						}
 						rollback = rollbackErr == nil
@@ -551,7 +551,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 					rollbackRequest.IdempotencyKey = queued.ID + ":rollback"
 					rollbackRequest.OldPassword, rollbackRequest.NewPassword = rollbackRequest.NewPassword, rollbackRequest.OldPassword
 					rollbackErr := compensator.RollbackDatabasePassword(ctx, rollbackRequest)
-					if rollbackErr != nil && !runtimeOutcomeKnown(rollbackErr) {
+					if rollbackErr != nil {
 						return queued, rollbackErr
 					}
 					rollback = rollbackErr == nil
