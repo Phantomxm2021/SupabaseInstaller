@@ -320,6 +320,25 @@ h2 {
 .auth-tabs-list [data-slot="tabs-trigger"][data-active] {
   color: #f0f3f1;
 }
+.authentication-content .auth-emails-page {
+  padding: 52px 34px 80px;
+}
+.auth-emails-page .page-heading {
+  margin-bottom: 48px;
+}
+.auth-emails-page .auth-email-tabs {
+  gap: 48px;
+}
+.auth-emails-page .auth-template-list {
+  gap: 56px;
+}
+.auth-emails-page .auth-template-list > section {
+  gap: 8px;
+}
+.auth-emails-page .auth-template-row > a > span:first-child,
+.auth-emails-page .auth-template-row > span > span {
+  font-weight: 500;
+}
 .auth-settings-card {
   overflow: hidden;
   border: 1px solid #2d312f;

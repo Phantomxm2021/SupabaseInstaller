@@ -1,35 +1,452 @@
-import { zodResolver } from '@hookform/resolvers/zod'
-import { ChevronRight, Server } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { useForm, type Resolver } from 'react-hook-form'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { MailerConfig, SMTPConfig } from '../../api/types'
-import { NumberField, SecretEditor, TextField, Toggle, errorAt, useResetOnServerRevision } from '../project/configuration/fields'
-import { mailerSchema, smtpSchema } from '../project/configuration/schema'
-import { useAuthenticationWorkspace, type AuthenticationWorkspaceContext } from './AuthenticationWorkspace'
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ChevronRight, Server } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useForm, type Resolver } from "react-hook-form";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { MailerConfig, SMTPConfig } from "../../api/types";
+import {
+  NumberField,
+  SecretEditor,
+  TextField,
+  Toggle,
+  errorAt,
+  useResetOnServerRevision,
+} from "../project/configuration/fields";
+import { mailerSchema, smtpSchema } from "../project/configuration/schema";
+import {
+  useAuthenticationWorkspace,
+  type AuthenticationWorkspaceContext,
+} from "./AuthenticationWorkspace";
 
-export const emailTemplates = [['confirm-signup', 'confirmation', 'Confirm sign up', 'Ask users to confirm their email address after signing up'], ['invite-user', 'invite', 'Invite user', 'Invite someone to create an account'], ['magic-link', 'magicLink', 'Magic link or OTP', 'Send a one-time sign-in link or one-time password'], ['change-email', 'emailChange', 'Change email address', 'Ask users to verify their new email address after changing it'], ['reset-password', 'recovery', 'Reset password', 'Send a password reset link or code'], ['reauthentication', 'reauthentication', 'Reauthentication', 'Ask users to verify their identity before a sensitive operation']] as const
-export const emailNotifications = [['password-changed', 'passwordChanged', 'Password changed', 'Notify users when their password has changed'], ['email-changed', 'emailChanged', 'Email address changed', 'Notify users when their email address has changed'], ['phone-changed', 'phoneChanged', 'Phone number changed', 'Notify users when their phone number has changed'], ['identity-linked', 'identityLinked', 'Sign-in method linked', 'Notify users when a sign-in method has been linked to their account'], ['identity-unlinked', 'identityUnlinked', 'Sign-in method removed', 'Notify users when a sign-in method has been removed from their account'], ['mfa-factor-enrolled', 'mfaFactorEnrolled', 'MFA method added', 'Notify users when an MFA method has been added to their account'], ['mfa-factor-unenrolled', 'mfaFactorUnenrolled', 'MFA method removed', 'Notify users when an MFA method has been removed from their account']] as const
+export const emailTemplates = [
+  [
+    "confirm-signup",
+    "confirmation",
+    "Confirm sign up",
+    "Ask users to confirm their email address after signing up",
+  ],
+  [
+    "invite-user",
+    "invite",
+    "Invite user",
+    "Invite someone to create an account",
+  ],
+  [
+    "magic-link",
+    "magicLink",
+    "Magic link or OTP",
+    "Send a one-time sign-in link or one-time password",
+  ],
+  [
+    "change-email",
+    "emailChange",
+    "Change email address",
+    "Ask users to verify their new email address after changing it",
+  ],
+  [
+    "reset-password",
+    "recovery",
+    "Reset password",
+    "Send a password reset link or code",
+  ],
+  [
+    "reauthentication",
+    "reauthentication",
+    "Reauthentication",
+    "Ask users to verify their identity before a sensitive operation",
+  ],
+] as const;
+export const emailNotifications = [
+  [
+    "password-changed",
+    "passwordChanged",
+    "Password changed",
+    "Notify users when their password has changed",
+  ],
+  [
+    "email-changed",
+    "emailChanged",
+    "Email address changed",
+    "Notify users when their email address has changed",
+  ],
+  [
+    "phone-changed",
+    "phoneChanged",
+    "Phone number changed",
+    "Notify users when their phone number has changed",
+  ],
+  [
+    "identity-linked",
+    "identityLinked",
+    "Sign-in method linked",
+    "Notify users when a sign-in method has been linked to their account",
+  ],
+  [
+    "identity-unlinked",
+    "identityUnlinked",
+    "Sign-in method removed",
+    "Notify users when a sign-in method has been removed from their account",
+  ],
+  [
+    "mfa-factor-enrolled",
+    "mfaFactorEnrolled",
+    "MFA method added",
+    "Notify users when an MFA method has been added to their account",
+  ],
+  [
+    "mfa-factor-unenrolled",
+    "mfaFactorUnenrolled",
+    "MFA method removed",
+    "Notify users when an MFA method has been removed from their account",
+  ],
+] as const;
 
-export function EmailsPage({ context: provided }: { context?: AuthenticationWorkspaceContext }) {
-  const workspace = useAuthenticationWorkspace(); const context = provided ?? workspace
-  const [tab, setTab] = useState('templates'); const [smtpDirty, setSMTPDirty] = useState(false); const [nextTab, setNextTab] = useState<string>()
-  const changeTab = (next: string) => { if (next === tab) return; if (tab === 'smtp' && smtpDirty) { setNextTab(next); return }; setTab(next) }
-  return <main className="page auth-page space-y-8"><header className="page-heading"><div><h1>Emails</h1><p className="muted">Configure what emails your users receive and how they are sent.</p></div></header><Tabs value={tab} onValueChange={changeTab} className="auth-email-tabs gap-12"><TabsList aria-label="Email settings" variant="line" className="auth-tabs-list border-b border-border"><TabsTrigger value="templates">Templates</TabsTrigger><TabsTrigger value="smtp">SMTP Settings</TabsTrigger></TabsList><TabsContent value="templates"><TemplateList context={context} /></TabsContent><TabsContent value="smtp"><SMTPSettings initial={context.auth.smtp} revision={context.revision} requestSave={context.requestSave} onDirty={setSMTPDirty} /></TabsContent></Tabs><AlertDialog open={Boolean(nextTab)} onOpenChange={(open) => !open && setNextTab(undefined)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Discard SMTP changes?</AlertDialogTitle><AlertDialogDescription>Your unsaved SMTP settings will be lost.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { setSMTPDirty(false); setTab(nextTab ?? 'templates'); setNextTab(undefined) }}>Discard changes</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></main>
+export function EmailsPage({
+  context: provided,
+}: {
+  context?: AuthenticationWorkspaceContext;
+}) {
+  const workspace = useAuthenticationWorkspace();
+  const context = provided ?? workspace;
+  const [tab, setTab] = useState("templates");
+  const [smtpDirty, setSMTPDirty] = useState(false);
+  const [nextTab, setNextTab] = useState<string>();
+  const changeTab = (next: string) => {
+    if (next === tab) return;
+    if (tab === "smtp" && smtpDirty) {
+      setNextTab(next);
+      return;
+    }
+    setTab(next);
+  };
+  return (
+    <main className="page auth-page auth-emails-page space-y-8">
+      <header className="page-heading">
+        <div>
+          <h1>Emails</h1>
+          <p className="muted">
+            Configure what emails your users receive and how they are sent.
+          </p>
+        </div>
+      </header>
+      <Tabs
+        value={tab}
+        onValueChange={changeTab}
+        className="auth-email-tabs gap-12"
+      >
+        <TabsList
+          aria-label="Email settings"
+          variant="line"
+          className="auth-tabs-list border-b border-border"
+        >
+          <TabsTrigger value="templates">Templates</TabsTrigger>
+          <TabsTrigger value="smtp">SMTP Settings</TabsTrigger>
+        </TabsList>
+        <TabsContent value="templates">
+          <TemplateList context={context} />
+        </TabsContent>
+        <TabsContent value="smtp">
+          <SMTPSettings
+            initial={context.auth.smtp}
+            revision={context.revision}
+            requestSave={context.requestSave}
+            onDirty={setSMTPDirty}
+          />
+        </TabsContent>
+      </Tabs>
+      <AlertDialog
+        open={Boolean(nextTab)}
+        onOpenChange={(open) => !open && setNextTab(undefined)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard SMTP changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your unsaved SMTP settings will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setSMTPDirty(false);
+                setTab(nextTab ?? "templates");
+                setNextTab(undefined);
+              }}
+            >
+              Discard changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </main>
+  );
 }
 
-function TemplateList({ context }: { context: AuthenticationWorkspaceContext }) {
-  const initial = context.auth.mailer; const form = useForm<MailerConfig>({ resolver: zodResolver(mailerSchema) as Resolver<MailerConfig>, defaultValues: initial }); useResetOnServerRevision(form as never, initial, context.revision); const mailer = form.watch(); const href = (key: string) => `/projects/${context.projectId}/authentication/emails/${key}`
-  return <form className="auth-template-list space-y-14" onSubmit={form.handleSubmit((mailer) => context.requestSave({ section: 'auth', value: { ...context.auth, mailer }, dirty: { mailer: form.formState.dirtyFields }, setError: (name, message) => form.setError(name.startsWith('mailer.') ? name.slice(7) as never : name as never, { type: 'server', message }) }))}><TemplateGroup title="Authentication">{emailTemplates.map(([key, , title, description]) => <TemplateLink key={key} to={href(key)} title={title} description={description} />)}</TemplateGroup><TemplateGroup title="Security" footer={<Button type="submit" disabled={!form.formState.isDirty}>Save changes</Button>}>{emailNotifications.map(([key, field, title, description]) => <div key={key} className="auth-template-row"><Link className="min-w-0 flex-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" to={href(key)}><span>{title}</span><small>{description}</small></Link><Toggle className="auth-notification-toggle" label={`Enable ${title.toLowerCase()} notification`} checked={mailer.notifications[field].enabled} onChange={(enabled) => form.setValue(`notifications.${field}.enabled`, enabled, { shouldDirty: true })} /><ChevronRight className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" /></div>)}</TemplateGroup></form>
+function TemplateList({
+  context,
+}: {
+  context: AuthenticationWorkspaceContext;
+}) {
+  const initial = context.auth.mailer;
+  const form = useForm<MailerConfig>({
+    resolver: zodResolver(mailerSchema) as Resolver<MailerConfig>,
+    defaultValues: initial,
+  });
+  useResetOnServerRevision(form as never, initial, context.revision);
+  const mailer = form.watch();
+  const href = (key: string) =>
+    `/projects/${context.projectId}/authentication/emails/${key}`;
+  return (
+    <form
+      className="auth-template-list space-y-14"
+      onSubmit={form.handleSubmit((mailer) =>
+        context.requestSave({
+          section: "auth",
+          value: { ...context.auth, mailer },
+          dirty: { mailer: form.formState.dirtyFields },
+          setError: (name, message) =>
+            form.setError(
+              name.startsWith("mailer.")
+                ? (name.slice(7) as never)
+                : (name as never),
+              { type: "server", message },
+            ),
+        }),
+      )}
+    >
+      <TemplateGroup title="Authentication">
+        {emailTemplates.map(([key, , title, description]) => (
+          <TemplateLink
+            key={key}
+            to={href(key)}
+            title={title}
+            description={description}
+          />
+        ))}
+      </TemplateGroup>
+      <TemplateGroup
+        title="Security"
+        footer={
+          <Button type="submit" disabled={!form.formState.isDirty}>
+            Save changes
+          </Button>
+        }
+      >
+        {emailNotifications.map(([key, field, title, description]) => (
+          <div key={key} className="auth-template-row">
+            <Link
+              className="min-w-0 flex-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              to={href(key)}
+            >
+              <span>{title}</span>
+              <small>{description}</small>
+            </Link>
+            <Toggle
+              className="auth-notification-toggle"
+              label={`Enable ${title.toLowerCase()} notification`}
+              checked={mailer.notifications[field].enabled}
+              onChange={(enabled) =>
+                form.setValue(`notifications.${field}.enabled`, enabled, {
+                  shouldDirty: true,
+                })
+              }
+            />
+            <ChevronRight
+              className="size-5 shrink-0 text-muted-foreground"
+              aria-hidden="true"
+            />
+          </div>
+        ))}
+      </TemplateGroup>
+    </form>
+  );
 }
-function TemplateGroup({ title, children, footer }: { title: string; children: React.ReactNode; footer?: React.ReactNode }) { return <section className="space-y-4"><h2>{title}</h2><div className="auth-settings-card" aria-label={`${title} templates`}>{children}{footer && <footer className="auth-template-footer">{footer}</footer>}</div></section> }
-function TemplateLink({ to, title, description }: { to: string; title: string; description: string }) { return <Link to={to} className="auth-template-row"><span><span>{title}</span><small>{description}</small></span><ChevronRight className="size-5 text-muted-foreground" aria-hidden="true" /></Link> }
+function TemplateGroup({
+  title,
+  children,
+  footer,
+}: {
+  title: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-4">
+      <h2>{title}</h2>
+      <div className="auth-settings-card" aria-label={`${title} templates`}>
+        {children}
+        {footer && <footer className="auth-template-footer">{footer}</footer>}
+      </div>
+    </section>
+  );
+}
+function TemplateLink({
+  to,
+  title,
+  description,
+}: {
+  to: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <Link to={to} className="auth-template-row">
+      <span>
+        <span>{title}</span>
+        <small>{description}</small>
+      </span>
+      <ChevronRight
+        className="size-5 text-muted-foreground"
+        aria-hidden="true"
+      />
+    </Link>
+  );
+}
 
-function SMTPSettings({ initial, revision, requestSave, onDirty }: { initial: SMTPConfig; revision: number; requestSave: AuthenticationWorkspaceContext['requestSave']; onDirty: (dirty: boolean) => void }) {
-  const form = useForm<SMTPConfig>({ resolver: zodResolver(smtpSchema) as Resolver<SMTPConfig>, defaultValues: initial }); useResetOnServerRevision(form, initial, revision); useEffect(() => onDirty(form.formState.isDirty), [form.formState.isDirty, onDirty]); const smtp = form.watch()
-  return <form className="space-y-7" onSubmit={form.handleSubmit((value) => requestSave({ section: 'smtp', value, dirty: form.formState.dirtyFields, setError: (name, message) => form.setError(name as never, { type: 'server', message }) }))}><section className="auth-settings-card"><div className="auth-settings-row"><Toggle className="auth-setting-toggle" id="smtp-enabled" label="Enable custom SMTP" description="Send authentication emails through your own SMTP provider. Rate limits still apply." checked={smtp.enabled} onChange={(enabled) => form.setValue('enabled', enabled, { shouldDirty: true, shouldValidate: true })} /></div><SettingsRow title="Sender details" description="Configure the sender information displayed in your users’ inboxes."><div className="grid gap-4"><TextField form={form} name="senderEmail" label="Sender email address" placeholder="no-reply@example.com" /><TextField form={form} name="senderName" label="Sender name" placeholder="Your project" /></div></SettingsRow><SettingsRow title="SMTP provider settings" description="The SMTP password is write-only and is retained until you replace or remove it."><div className="grid gap-4"><TextField form={form} name="host" label="Host" placeholder="smtp.example.com" /><NumberField form={form} name="port" label="Port number" min={1} max={65535} /><TextField form={form} name="username" label="Username" /><SecretEditor label="Password" configured={smtp.passwordSet} secret={smtp.password} error={errorAt(form.formState.errors, 'password')} onChange={(password) => form.setValue('password', password, { shouldDirty: true, shouldValidate: true })} /></div></SettingsRow><div className="flex items-center justify-between gap-4 p-5"><span className="flex items-center gap-2 text-sm text-muted-foreground"><Server className="size-4" />Changes are applied through the Auth-only operation flow.</span><Button type="submit" disabled={!form.formState.isDirty}>Save changes</Button></div></section></form>
+function SMTPSettings({
+  initial,
+  revision,
+  requestSave,
+  onDirty,
+}: {
+  initial: SMTPConfig;
+  revision: number;
+  requestSave: AuthenticationWorkspaceContext["requestSave"];
+  onDirty: (dirty: boolean) => void;
+}) {
+  const form = useForm<SMTPConfig>({
+    resolver: zodResolver(smtpSchema) as Resolver<SMTPConfig>,
+    defaultValues: initial,
+  });
+  useResetOnServerRevision(form, initial, revision);
+  useEffect(
+    () => onDirty(form.formState.isDirty),
+    [form.formState.isDirty, onDirty],
+  );
+  const smtp = form.watch();
+  return (
+    <form
+      className="space-y-7"
+      onSubmit={form.handleSubmit((value) =>
+        requestSave({
+          section: "smtp",
+          value,
+          dirty: form.formState.dirtyFields,
+          setError: (name, message) =>
+            form.setError(name as never, { type: "server", message }),
+        }),
+      )}
+    >
+      <section className="auth-settings-card">
+        <div className="auth-settings-row">
+          <Toggle
+            className="auth-setting-toggle"
+            id="smtp-enabled"
+            label="Enable custom SMTP"
+            description="Send authentication emails through your own SMTP provider. Rate limits still apply."
+            checked={smtp.enabled}
+            onChange={(enabled) =>
+              form.setValue("enabled", enabled, {
+                shouldDirty: true,
+                shouldValidate: true,
+              })
+            }
+          />
+        </div>
+        <SettingsRow
+          title="Sender details"
+          description="Configure the sender information displayed in your users’ inboxes."
+        >
+          <div className="grid gap-4">
+            <TextField
+              form={form}
+              name="senderEmail"
+              label="Sender email address"
+              placeholder="no-reply@example.com"
+            />
+            <TextField
+              form={form}
+              name="senderName"
+              label="Sender name"
+              placeholder="Your project"
+            />
+          </div>
+        </SettingsRow>
+        <SettingsRow
+          title="SMTP provider settings"
+          description="The SMTP password is write-only and is retained until you replace or remove it."
+        >
+          <div className="grid gap-4">
+            <TextField
+              form={form}
+              name="host"
+              label="Host"
+              placeholder="smtp.example.com"
+            />
+            <NumberField
+              form={form}
+              name="port"
+              label="Port number"
+              min={1}
+              max={65535}
+            />
+            <TextField form={form} name="username" label="Username" />
+            <SecretEditor
+              label="Password"
+              configured={smtp.passwordSet}
+              secret={smtp.password}
+              error={errorAt(form.formState.errors, "password")}
+              onChange={(password) =>
+                form.setValue("password", password, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
+              }
+            />
+          </div>
+        </SettingsRow>
+        <div className="flex items-center justify-between gap-4 p-5">
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Server className="size-4" />
+            Changes are applied through the Auth-only operation flow.
+          </span>
+          <Button type="submit" disabled={!form.formState.isDirty}>
+            Save changes
+          </Button>
+        </div>
+      </section>
+    </form>
+  );
 }
-function SettingsRow({ title, description, children }: { title: string; description: string; children: React.ReactNode }) { return <div className="auth-smtp-row"><div><h3>{title}</h3><p>{description}</p></div>{children}</div> }
+function SettingsRow({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="auth-smtp-row">
+      <div>
+        <h3>{title}</h3>
+        <p>{description}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
