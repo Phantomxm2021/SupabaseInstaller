@@ -62,16 +62,27 @@ it('keeps Sidebar and SidebarInset as direct provider children', () => {
 })
 
 it('renders project navigation in the single global Sidebar on project routes', () => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/configuration?section=services']}><AppShell /></MemoryRouter></QueryClientProvider>)
+  const sidebar = document.querySelector('[data-slot="sidebar"][data-state]')
   expect(document.querySelectorAll('[data-slot="sidebar"]')).toHaveLength(1)
+  expect(sidebar).toHaveAttribute('data-state', 'expanded')
   expect(document.querySelectorAll('[data-slot="sidebar-gap"]')).toHaveLength(1)
   const projectNavigation = screen.getByRole('navigation', { name: /project navigation/i })
-  expect(within(projectNavigation).getByRole('link', { name: 'Overview' })).toBeVisible()
-  expect(within(projectNavigation).getByRole('link', { name: 'General' })).toBeVisible()
-  expect(within(projectNavigation).getByRole('link', { name: 'Email & SMTP' })).toBeVisible()
-  expect(within(projectNavigation).getByRole('link', { name: 'OAuth Providers' })).toBeVisible()
+  const expectedLinks = [
+    ['Overview', '/projects/bee/overview'], ['General', '/projects/bee/configuration?section=general'], ['Services', '/projects/bee/configuration?section=services'],
+    ['Authentication', '/projects/bee/configuration?section=auth'], ['Email & SMTP', '/projects/bee/configuration?section=smtp'], ['OAuth Providers', '/projects/bee/configuration?section=oauth'],
+    ['Storage', '/projects/bee/configuration?section=storage'], ['Realtime', '/projects/bee/configuration?section=realtime'], ['Functions', '/projects/bee/configuration?section=functions'],
+    ['Database', '/projects/bee/configuration?section=database'], ['Connection Pool', '/projects/bee/configuration?section=pooler'], ['Gateway & Network', '/projects/bee/configuration?section=network'], ['API & Secrets', '/projects/bee/configuration?section=secrets'],
+  ] as const
+  expect(within(projectNavigation).getAllByRole('link')).toHaveLength(expectedLinks.length)
+  for (const [name, href] of expectedLinks) expect(within(projectNavigation).getByRole('link', { name })).toHaveAttribute('href', href)
   expect(within(projectNavigation).getByRole('link', { name: 'Services' })).toHaveAttribute('aria-current', 'page')
-  expect(document.querySelector('[data-slot="sidebar-container"]')).not.toHaveAttribute('data-state', 'expanded')
+  expect(new Set(Array.from(within(projectNavigation).getAllByRole('link')).map((link) => link.getAttribute('href'))).size).toBe(expectedLinks.length)
+  const runtimeNavigation = screen.getByRole('navigation', { name: /runtime navigation/i })
+  expect(within(runtimeNavigation).getByRole('link', { name: 'Logs' })).toHaveAttribute('href', '/projects/bee/logs')
+  expect(within(runtimeNavigation).getByRole('link', { name: 'Backups' })).toHaveAttribute('href', '/projects/bee/backups')
 })
 
 it('uses the same global Sidebar Sheet for project navigation on mobile', async () => {
@@ -84,18 +95,37 @@ it('uses the same global Sidebar Sheet for project navigation on mobile', async 
   expect(await screen.findByRole('navigation', { name: /project navigation/i })).toBeVisible()
   expect(screen.getByRole('link', { name: 'General' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Close' })).toBeVisible()
+  expect(document.querySelector('[data-slot="sidebar-trigger"]')).toHaveAttribute('aria-label', 'Close sidebar')
+  expect(document.querySelector('[data-slot="sidebar"][data-mobile="true"][data-open]')).toBeVisible()
 })
 
 it('updates the global desktop trigger name as the Sidebar changes state', async () => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
   await user.click(screen.getByRole('button', { name: 'Close sidebar' }))
   expect(screen.getByRole('button', { name: 'Open sidebar' })).toBeVisible()
 })
 
-it('does not render project navigation outside a canonical project route', () => {
-  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
+it.each(['/projects', '/projects/new', '/settings'])('does not render project navigation at %s', (path) => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><AppShell /></MemoryRouter></QueryClientProvider>)
   expect(screen.queryByRole('navigation', { name: /project navigation/i })).not.toBeInTheDocument()
+})
+
+it.each([
+  ['/projects/bee/configuration', 'General'],
+  ['/projects/bee/configuration?section=unknown', 'General'],
+  ['/projects/bee/configuration?section=oauth', 'OAuth Providers'],
+] as const)('highlights the canonical configuration section for %s', (path, activeLabel) => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><AppShell /></MemoryRouter></QueryClientProvider>)
+  const projectNavigation = screen.getByRole('navigation', { name: /project navigation/i })
+  expect(within(projectNavigation).getByRole('link', { name: activeLabel })).toHaveAttribute('aria-current', 'page')
+  expect(within(projectNavigation).getAllByRole('link').filter((link) => link.getAttribute('aria-current') === 'page')).toHaveLength(1)
 })
 
 it('refreshes CSRF and uses the refreshed token when signing out', async () => {

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Activity, Boxes, Braces, Database, FileClock, Globe2, HardDrive, KeyRound, LayoutDashboard, LockKeyhole, LogOut, Mail, Network, Radio, ScrollText, ServerCog, Settings, ShieldCheck, UserCircle, Waypoints } from 'lucide-react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { apiFetch, setCSRFToken } from '../api/client'
 import {
   Sidebar,
@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
 import { Badge } from '../components/ui/badge'
+import { CONFIGURATION_SECTIONS } from '../features/project/configuration/types'
 
 const projectNavigation = [
   ['configuration?section=general', 'General', Settings], ['configuration?section=services', 'Services', Activity], ['configuration?section=auth', 'Authentication', ShieldCheck], ['configuration?section=smtp', 'Email & SMTP', Mail],
@@ -33,6 +34,15 @@ const projectNavigation = [
 ] as const
 
 const runtimeNavigation = [['logs', 'Logs', ScrollText], ['backups', 'Backups', FileClock]] as const
+
+function isActiveProjectLink(location: ReturnType<typeof useLocation>, path: string) {
+  const [pathname, query] = path.split('?')
+  if (pathname !== 'configuration') return location.pathname.endsWith(`/${pathname}`)
+  if (!location.pathname.endsWith('/configuration')) return false
+  const requested = new URLSearchParams(location.search).get('section') ?? 'general'
+  const section = CONFIGURATION_SECTIONS.includes(requested as typeof CONFIGURATION_SECTIONS[number]) ? requested : 'general'
+  return section === new URLSearchParams(query ?? '').get('section')
+}
 
 export function AppShell() {
   const navigate = useNavigate()
@@ -70,21 +80,21 @@ export function AppShell() {
                 <SidebarGroupLabel><LockKeyhole /> Project</SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    <SidebarMenuItem><SidebarMenuButton isActive={location.pathname.endsWith('/overview')} tooltip="Overview" render={<NavLink to={`/projects/${projectId}/overview`} />}><LayoutDashboard /><span>Overview</span></SidebarMenuButton></SidebarMenuItem>
+                    <SidebarMenuItem><SidebarMenuButton isActive={location.pathname === `/projects/${projectId}` || location.pathname.endsWith('/overview')} tooltip="Overview" render={<Link to={`/projects/${projectId}/overview`} aria-current={location.pathname === `/projects/${projectId}` || location.pathname.endsWith('/overview') ? 'page' : undefined} />}><LayoutDashboard /><span>Overview</span></SidebarMenuButton></SidebarMenuItem>
                     {projectNavigation.map(([path, label, Icon]) => {
-                      const [pathname, query] = path.split('?')
-                      const expected = new URLSearchParams(query ?? '').get('section')
-                      const active = location.pathname.endsWith(`/${pathname}`) && (expected ? new URLSearchParams(location.search).get('section') === expected : !location.search)
-                      return <SidebarMenuItem key={`${path}-${label}`}><SidebarMenuButton isActive={active} tooltip={label} render={<NavLink to={`/projects/${projectId}/${path}`} />}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>
+                      const active = isActiveProjectLink(location, path)
+                      return <SidebarMenuItem key={`${path}-${label}`}><SidebarMenuButton isActive={active} tooltip={label} render={<Link to={`/projects/${projectId}/${path}`} aria-current={active ? 'page' : undefined} />}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>
                     })}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
+            </nav>}
+            {isProjectRoute && projectId && <nav aria-label="Runtime navigation">
               <SidebarGroup>
                 <SidebarGroupLabel>Runtime</SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {runtimeNavigation.map(([path, label, Icon]) => <SidebarMenuItem key={path}><SidebarMenuButton isActive={location.pathname.endsWith(`/${path}`)} tooltip={label} render={<NavLink to={`/projects/${projectId}/${path}`} />}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>)}
+                    {runtimeNavigation.map(([path, label, Icon]) => { const active = isActiveProjectLink(location, path); return <SidebarMenuItem key={path}><SidebarMenuButton isActive={active} tooltip={label} render={<Link to={`/projects/${projectId}/${path}`} aria-current={active ? 'page' : undefined} />}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem> })}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
