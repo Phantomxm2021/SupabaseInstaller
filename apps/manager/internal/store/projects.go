@@ -207,6 +207,26 @@ FROM project_secrets WHERE project_id = ? AND kind = ?`, projectID, kind).Scan(
 	return envelope, nil
 }
 
+// ListSecretKinds returns only identifiers. Callers can explicitly decrypt the
+// small set needed for a renderer without ever exposing ciphertext or values
+// through normal configuration projections.
+func (s *Store) ListSecretKinds(ctx context.Context, projectID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT kind FROM project_secrets WHERE project_id = ? ORDER BY kind`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list encrypted secret kinds: %w", err)
+	}
+	defer rows.Close()
+	var kinds []string
+	for rows.Next() {
+		var kind string
+		if err := rows.Scan(&kind); err != nil {
+			return nil, fmt.Errorf("scan encrypted secret kind: %w", err)
+		}
+		kinds = append(kinds, kind)
+	}
+	return kinds, rows.Err()
+}
+
 func (s *Store) DeleteSecret(ctx context.Context, projectID, kind string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id = ? AND kind = ?`, projectID, kind)
 	if err != nil {

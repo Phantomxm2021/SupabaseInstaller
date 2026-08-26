@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"supabase-manager/apps/manager/internal/configuration"
 	"supabase-manager/apps/manager/internal/lifecycle"
 	"supabase-manager/apps/manager/internal/operation"
 	"supabase-manager/apps/manager/internal/project"
@@ -24,9 +25,10 @@ type LifecycleManager interface {
 }
 
 type ProjectOptions struct {
-	Projects  *project.Service
-	Installer Installer
-	Lifecycle LifecycleManager
+	Projects      *project.Service
+	Installer     Installer
+	Lifecycle     LifecycleManager
+	Configuration *configuration.Orchestrator
 }
 
 type projectHandlers struct {

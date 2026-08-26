@@ -18,6 +18,12 @@ type Provisioner interface {
 	Inspect(ctx context.Context, request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error)
 }
 
+// ReconcileProvisioner is implemented by the current private RPC client. The
+// legacy Prepare methods remain optional for old test doubles and deployments.
+type ReconcileProvisioner interface {
+	Reconcile(ctx context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error)
+}
+
 type SecretGenerator interface {
 	Generate() (contracts.ProjectSecrets, error)
 }
@@ -72,16 +78,29 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 		return orchestrator.rollback(ctx, project, current.ID, "GENERATE_SECRETS", err)
 	}
 
-	prepare := contracts.PrepareProjectRequest{
-		OperationID: current.ID, IdempotencyKey: current.ID + ":prepare", ProjectID: project.ID, ProjectName: project.Name,
-		Slug: project.Slug, ExpectedRevision: 0, NextRevision: 1, Domain: project.Domain, SiteURL: project.SiteURL,
-		APIPort: apiPort, Secrets: generated,
+	configuration := contracts.ProjectConfiguration{Revision: 1, General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services}
+	if snapshot, readErr := orchestrator.store.GetConfiguration(ctx, project.ID); readErr == nil {
+		configuration = snapshot.Configuration
+		configuration.Revision = 1
 	}
-	if err := orchestrator.step(ctx, current.ID, "PREPARE_SUPABASE", 35, func() error {
-		_, err := orchestrator.provisioner.Prepare(ctx, prepare)
-		return err
-	}); err != nil {
-		return orchestrator.rollback(ctx, project, current.ID, "PREPARE_SUPABASE", err)
+	if reconcileProvisioner, ok := orchestrator.provisioner.(ReconcileProvisioner); ok {
+		reconcile := contracts.ReconcileProjectRequest{
+			OperationID: current.ID, IdempotencyKey: current.ID + ":reconcile", ProjectID: project.ID,
+			ProjectName: project.Name, Slug: project.Slug, ExpectedRevision: 0, NextRevision: 1,
+			APIPort: apiPort, Configuration: configuration, Secrets: generated,
+		}
+		if err := orchestrator.step(ctx, current.ID, "RECONCILE_RUNTIME", 35, func() error { _, err := reconcileProvisioner.Reconcile(ctx, reconcile); return err }); err != nil {
+			return orchestrator.rollback(ctx, project, current.ID, "RECONCILE_RUNTIME", err)
+		}
+	} else {
+		prepare := contracts.PrepareProjectRequest{
+			OperationID: current.ID, IdempotencyKey: current.ID + ":prepare", ProjectID: project.ID, ProjectName: project.Name,
+			Slug: project.Slug, ExpectedRevision: 0, NextRevision: 1, Domain: project.Domain, SiteURL: project.SiteURL,
+			APIPort: apiPort, Secrets: generated,
+		}
+		if err := orchestrator.step(ctx, current.ID, "PREPARE_SUPABASE", 35, func() error { _, err := orchestrator.provisioner.Prepare(ctx, prepare); return err }); err != nil {
+			return orchestrator.rollback(ctx, project, current.ID, "PREPARE_SUPABASE", err)
+		}
 	}
 	if err := orchestrator.step(ctx, current.ID, "START_RUNTIME", 70, func() error {
 		return orchestrator.provisioner.Lifecycle(ctx, contracts.LifecycleRequest{OperationID: current.ID, IdempotencyKey: current.ID + ":start", ProjectID: project.ID, Slug: project.Slug, Action: contracts.LifecycleStart})
@@ -89,7 +108,7 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 		return orchestrator.rollback(ctx, project, current.ID, "START_AUTH", err)
 	}
 	if err := orchestrator.step(ctx, current.ID, "FINAL_HEALTH_CHECK", 95, func() error {
-		result, err := orchestrator.provisioner.Inspect(ctx, contracts.InspectProjectRequest{ProjectID: project.ID, Slug: project.Slug, EnabledServices: lightweightServiceNames()})
+		result, err := orchestrator.provisioner.Inspect(ctx, contracts.InspectProjectRequest{ProjectID: project.ID, Slug: project.Slug, EnabledServices: enabledComposeServices(configuration.Services)})
 		if err != nil {
 			return err
 		}
@@ -160,4 +179,51 @@ func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID 
 
 func lightweightServiceNames() []string {
 	return []string{"db", "auth", "rest", "meta", "studio", "api-gw"}
+}
+
+func enabledComposeServices(services contracts.Services) []string {
+	result := make([]string, 0, 14)
+	if services.Database {
+		result = append(result, "db")
+	}
+	if services.Gateway {
+		result = append(result, "api-gw")
+	}
+	if services.Auth {
+		result = append(result, "auth")
+	}
+	if services.REST {
+		result = append(result, "rest")
+	}
+	if services.Studio {
+		result = append(result, "studio")
+	}
+	if services.PostgresMeta {
+		result = append(result, "meta")
+	}
+	if services.Realtime {
+		result = append(result, "realtime")
+	}
+	if services.Storage {
+		result = append(result, "storage")
+	}
+	if services.Imgproxy {
+		result = append(result, "imgproxy")
+	}
+	if services.Functions {
+		result = append(result, "functions")
+	}
+	if services.Supavisor {
+		result = append(result, "pooler")
+	}
+	if services.Logs {
+		result = append(result, "analytics", "vector")
+	}
+	return result
+}
+
+// EnabledComposeServices is the Manager-side projection used by health checks
+// and installation handoff; it mirrors the pinned renderer's service names.
+func EnabledComposeServices(services contracts.Services) []string {
+	return enabledComposeServices(services)
 }

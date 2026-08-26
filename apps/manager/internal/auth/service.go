@@ -205,6 +205,20 @@ func (s *Service) ChangePassword(ctx context.Context, identity Identity, current
 	return s.store.UpdateAdminPassword(ctx, admin.ID, hash, s.now())
 }
 
+// VerifyPassword performs a recent-authentication check for sensitive actions
+// without creating an operation or persisting the supplied password.
+func (s *Service) VerifyPassword(ctx context.Context, identity Identity, password string) error {
+	admin, err := s.store.GetAdmin(ctx, identity.AdminID)
+	if err != nil {
+		return ErrInvalidCredentials
+	}
+	valid, err := s.hasher.Verify(password, admin.PasswordHash)
+	if err != nil || !valid {
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
 func (s *Service) randomID(size int) (string, error) {
 	return s.randomToken(size)
 }

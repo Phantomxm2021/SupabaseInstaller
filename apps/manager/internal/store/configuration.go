@@ -15,10 +15,10 @@ import (
 var ErrStaleConfiguration = errors.New("stale project configuration revision")
 
 type ConfigurationSnapshot struct {
-	ProjectID        string
-	Revision         int64
-	LastGoodRevision int64
-	Configuration    contracts.ProjectConfiguration
+	ProjectID        string                         `json:"projectId"`
+	Revision         int64                          `json:"revision"`
+	LastGoodRevision int64                          `json:"lastGoodRevision"`
+	Configuration    contracts.ProjectConfiguration `json:"configuration"`
 }
 
 // SecretMutation is an already-encrypted change applied in the same transaction
@@ -35,7 +35,7 @@ func (s *Store) GetConfiguration(ctx context.Context, projectID string) (Configu
 	err := s.db.QueryRowContext(ctx, `
 SELECT p.id, p.config_revision, p.last_good_revision, c.config_json
 FROM projects AS p
-JOIN project_configs AS c ON c.project_id = p.id AND c.section = 'aggregate' AND c.revision = p.config_revision
+JOIN project_configs AS c ON c.project_id = p.id AND c.section = 'aggregate' AND c.revision = p.last_good_revision
 WHERE p.id = ?`, projectID).Scan(&snapshot.ProjectID, &snapshot.Revision, &snapshot.LastGoodRevision, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConfigurationSnapshot{}, ErrNotFound
@@ -47,6 +47,8 @@ WHERE p.id = ?`, projectID).Scan(&snapshot.ProjectID, &snapshot.Revision, &snaps
 		return ConfigurationSnapshot{}, fmt.Errorf("decode configuration: %w", err)
 	}
 	snapshot.Configuration = redactConfiguration(snapshot.Configuration)
+	// Revision remains the current desired revision for optimistic PATCH
+	// checks, while the body is projected from the last-known-good snapshot.
 	snapshot.Configuration.Revision = snapshot.Revision
 	return snapshot, nil
 }

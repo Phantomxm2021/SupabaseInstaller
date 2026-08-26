@@ -15,6 +15,7 @@ import (
 
 	"supabase-manager/apps/manager/internal/auth"
 	managerconfig "supabase-manager/apps/manager/internal/config"
+	managerconfiguration "supabase-manager/apps/manager/internal/configuration"
 	"supabase-manager/apps/manager/internal/httpapi"
 	"supabase-manager/apps/manager/internal/install"
 	"supabase-manager/apps/manager/internal/lifecycle"
@@ -53,11 +54,13 @@ func main() {
 	provisionerClient := provisioner.NewClient(cfg.ProvisionerURL, cfg.ProvisionerToken, provisionerHTTP)
 	allocator := ports.NewAllocator(database, cfg.PortRangeStart, cfg.PortRangeEnd, ports.NetworkProbe{})
 	installer := install.NewOrchestrator(database, operations, allocator, cipher, provisionerClient, install.CryptoGenerator{Random: rand.Reader, Now: now}, now)
+	configurationManager := managerconfiguration.NewOrchestrator(database, operations, provisionerClient, cipher, now)
 	lifecycleManager := lifecycle.NewService(database, operations, provisionerClient)
 	api := httpapi.NewRouter(httpapi.RouterOptions{
-		Auth:       httpapi.AuthOptions{Service: adminAuth, PublicOrigin: cfg.PublicOrigin, SecureCookies: cfg.SecureCookies},
-		Projects:   httpapi.ProjectOptions{Projects: projects, Installer: installer, Lifecycle: lifecycleManager},
-		Operations: operations,
+		Auth:          httpapi.AuthOptions{Service: adminAuth, PublicOrigin: cfg.PublicOrigin, SecureCookies: cfg.SecureCookies},
+		Projects:      httpapi.ProjectOptions{Projects: projects, Installer: installer, Lifecycle: lifecycleManager},
+		Operations:    operations,
+		Configuration: configurationManager,
 	})
 	assets := webdist.Embedded()
 	if cfg.WebDistPath != "" {
