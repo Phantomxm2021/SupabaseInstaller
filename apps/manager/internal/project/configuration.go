@@ -190,7 +190,8 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 			validation.add("auth.smtp.password", "cannot be removed while SMTP is enabled")
 		}
 		validatePort(auth.SMTP.Port, "auth.smtp.port", validation)
-		if _, err := mail.ParseAddress(auth.SMTP.SenderEmail); err != nil || strings.TrimSpace(auth.SMTP.SenderEmail) == "" {
+		parsedEmail, emailErr := mail.ParseAddress(auth.SMTP.SenderEmail)
+		if emailErr != nil || parsedEmail.Name != "" || parsedEmail.Address != auth.SMTP.SenderEmail || strings.TrimSpace(auth.SMTP.SenderEmail) == "" {
 			validation.add("auth.smtp.senderEmail", "must be a valid email address")
 		}
 		if strings.TrimSpace(auth.SMTP.SenderName) == "" {

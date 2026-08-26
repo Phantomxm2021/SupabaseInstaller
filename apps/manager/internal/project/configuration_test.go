@@ -155,6 +155,15 @@ func TestAuthJWTExpiryMatchesPinnedRuntimeRange(t *testing.T) {
 	}
 }
 
+func TestAuthSMTPEmailRejectsDisplayNameLikeFrontend(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", Port: 587, Username: "bee", Password: contracts.SecretInput{Action: "replace", Value: "secret"}, SenderEmail: "Bee <bee@example.com>", SenderName: "Bee"}
+	var validation *ValidationError
+	if err := ValidateConfiguration(cfg); !errors.As(err, &validation) || validation.Fields["auth.smtp.senderEmail"] == "" {
+		t.Fatalf("ValidateConfiguration(display-name sender) = %v, want senderEmail error", err)
+	}
+}
+
 func TestConfigurationPatchOmitsFullConfigurationForSectionPatch(t *testing.T) {
 	payload, err := json.Marshal(contracts.ConfigurationPatch{ExpectedRevision: 2, General: &contracts.GeneralConfig{Domain: "bee.example.com"}})
 	if err != nil {

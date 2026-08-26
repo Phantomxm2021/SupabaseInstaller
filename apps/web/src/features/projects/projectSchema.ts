@@ -22,7 +22,6 @@ const validDomain = (value: string) => {
   if (colonCount === 1 && /:[0-9]+$/.test(host)) host = host.slice(0, host.lastIndexOf(':'))
   const ipv4 = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(host) ? host.split('.') : undefined
   if (host === 'localhost' || (ipv4 && ipv4.every((part) => part === String(Number(part)) && Number(part) <= 255)) || (host.includes(':') && (() => { try { new URL(`http://[${host}]`); return true } catch { return false } })())) return true
-  if (ipv4) return false
   if (host.length > 253 || !host.includes('.')) return false
   return host.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
 }

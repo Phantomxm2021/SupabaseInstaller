@@ -20,15 +20,17 @@ export interface Services {
 
 export type Preset = 'LIGHTWEIGHT' | 'STANDARD' | 'FULL' | 'CUSTOM'
 export type SecretAction = '' | 'retain' | 'replace' | 'remove'
-/** A secret mutation is always explicit on create/update requests. */
-export type RedactedSecretInput = { action: ''; value?: never }
-export type CreateSecretInput = { action: ''; value?: never } | { action: 'replace'; value: string }
-export type UpdateSecretInput = { action: 'retain' | 'remove'; value?: never } | { action: 'replace'; value: string }
+/** Go's non-pointer secret wire shape always carries an action marker. */
+export type UnsetSecretInput = { action: ''; value?: never }
+export type RedactedSecretInput = UnsetSecretInput
+export type CreateSecretInput = UnsetSecretInput | { action: 'replace'; value: string }
+export type UpdateSecretInput = UnsetSecretInput | { action: 'retain' | 'remove'; value?: never } | { action: 'replace'; value: string }
 export type SecretInput = RedactedSecretInput | CreateSecretInput | UpdateSecretInput
 /** Convert a redacted marker to an explicit update command at the client boundary. */
-export function toUpdateSecretInput(input: RedactedSecretInput, configured: boolean): UpdateSecretInput {
+export function toUpdateSecretInput(input: RedactedSecretInput, configured: boolean, requested: 'unchanged' | 'remove' = 'unchanged'): UpdateSecretInput {
   if (input.action !== '') throw new Error('redacted secret markers must use an empty action')
-  return configured ? { action: 'retain' } : { action: 'remove' }
+  if (!configured) return { action: '' }
+  return requested === 'remove' ? { action: 'remove' } : { action: 'retain' }
 }
 export interface GeneralConfig { domain: string; siteUrl: string; supabaseVersion: string }
 export interface EmailAuthConfig { enabled: boolean; allowSignup: boolean; confirmEmail: boolean; secureEmailChange: boolean; doubleConfirmChanges: boolean }

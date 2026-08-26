@@ -102,6 +102,11 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	if err := requireExplicitSecretActionsForPatch(patch); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
+	// GetDesiredConfiguration is redacted by design. Restore retain markers
+	// only for secret leaves from sections omitted by this patch so aggregate
+	// validation can inspect the stored secret without treating an untouched
+	// redacted marker as an incoming command.
+	restoreUntouchedSecretActions(&cfg, &base.Configuration, patch)
 	if err := ValidateConfiguration(cfg); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
@@ -183,6 +188,34 @@ func requireExplicitAuthSecretActions(auth *contracts.AuthConfig) error {
 		}
 	}
 	return nil
+}
+
+func restoreUntouchedSecretActions(cfg, base *contracts.ProjectConfiguration, patch contracts.ConfigurationPatch) {
+	allIncoming := patch.Configuration != nil
+	if !allIncoming && patch.Auth == nil {
+		if base.Auth.SMTP.PasswordSet && cfg.Auth.SMTP.Password.Action == "" {
+			cfg.Auth.SMTP.Password.Action = "retain"
+		}
+		if base.Auth.Phone.SecretSet && cfg.Auth.Phone.Secret.Action == "" {
+			cfg.Auth.Phone.Secret.Action = "retain"
+		}
+		for provider, oauth := range cfg.Auth.OAuth {
+			if baseOAuth, exists := base.Auth.OAuth[provider]; exists && baseOAuth.SecretSet && oauth.Secret.Action == "" {
+				oauth.Secret.Action = "retain"
+				cfg.Auth.OAuth[provider] = oauth
+			}
+		}
+	}
+	if !allIncoming && patch.Storage == nil && base.Storage.SecretAccessKeySet && cfg.Storage.SecretAccessKey.Action == "" {
+		cfg.Storage.SecretAccessKey.Action = "retain"
+	}
+	if !allIncoming && patch.Functions == nil {
+		for index := range cfg.Functions.Variables {
+			if index < len(base.Functions.Variables) && base.Functions.Variables[index].ValueSet && cfg.Functions.Variables[index].Value.Action == "" {
+				cfg.Functions.Variables[index].Value.Action = "retain"
+			}
+		}
+	}
 }
 
 func (s *ConfigurationService) secretMutations(ctx context.Context, projectID string, cfg *contracts.ProjectConfiguration) ([]store.SecretMutation, error) {

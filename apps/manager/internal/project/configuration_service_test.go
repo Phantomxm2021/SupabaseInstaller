@@ -118,6 +118,56 @@ func TestConfigurationServiceRequiresExplicitActionForExistingSecret(t *testing.
 	}
 }
 
+func TestConfigurationServicePartialGeneralPatchPreservesConfiguredSecrets(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cipher, _ := managersecrets.NewCipher(bytes.Repeat([]byte{6}, 32))
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", Port: 587, Username: "bee", PasswordSet: true, Password: contracts.SecretInput{Action: "retain"}, SenderEmail: "bee@example.com", SenderName: "Bee"}
+	cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true, ClientID: "client", SecretSet: true, Secret: contracts.SecretInput{Action: "retain"}}}
+	project := contracts.Project{ID: "project-1", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0", Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	for kind, value := range map[string]string{"smtp.password": "smtp-secret", "oauth.google.secret": "oauth-secret"} {
+		envelope, err := cipher.Encrypt(project.ID, kind, []byte(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.PutSecret(context.Background(), project.ID, kind, envelope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := NewConfigurationService(database, cipher, time.Now)
+	got, err := service.Patch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}})
+	if err != nil {
+		t.Fatalf("General-only Patch() error = %v", err)
+	}
+	if got.Revision != 2 || got.Configuration.Auth.SMTP.Password.Action != "" || got.Configuration.Auth.OAuth["google"].Secret.Action != "" {
+		t.Fatalf("partial patch returned non-redacted secret state: %#v", got.Configuration.Auth)
+	}
+}
+
+func TestConfigurationServicePartialGeneralPatchAcceptsDefaultLocalAndDisabledPhone(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	project := contracts.Project{ID: "project-1", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0", Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	service := NewConfigurationService(database, nil, time.Now)
+	if _, err := service.Patch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}}); err != nil {
+		t.Fatalf("default local General-only Patch() error = %v", err)
+	}
+}
+
 func TestConfigurationServiceRejectsStaleRevision(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {

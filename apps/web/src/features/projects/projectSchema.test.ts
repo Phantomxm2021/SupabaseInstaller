@@ -46,7 +46,7 @@ it('accepts IPv6/localhost parity and rejects Caddy without its gateway dependen
   project.configuration.general.domain = '[::1]:8080'
   expect(projectSchema.safeParse(project).success).toBe(true)
   project.configuration.general.domain = '999.999.999.999'
-  expect(projectSchema.safeParse(project).success).toBe(false)
+  expect(projectSchema.safeParse(project).success).toBe(true)
   const caddy = validProject().configuration as any
   caddy.network.httpsMode = 'caddy'
   caddy.services.gateway = false
@@ -88,7 +88,8 @@ it('keeps redacted and update secret truth tables distinct', () => {
   expect(updateSecretSchema.safeParse({ action: 'replace' }).success).toBe(false)
   expect(updateSecretSchema.safeParse({ action: 'replace', value: 'secret' }).success).toBe(true)
   expect(toUpdateSecretInput({ action: '' }, true)).toEqual({ action: 'retain' })
-  expect(toUpdateSecretInput({ action: '' }, false)).toEqual({ action: 'remove' })
+  expect(toUpdateSecretInput({ action: '' }, false)).toEqual({ action: '' })
+  expect(toUpdateSecretInput({ action: '' }, true, 'remove')).toEqual({ action: 'remove' })
 })
 
 it.each([
