@@ -45,6 +45,16 @@ type OperationCompensation struct {
 	Key   string
 }
 
+func validateConfigurationOwner(owner string, fence int64) error {
+	if strings.TrimSpace(owner) == "" {
+		return fmt.Errorf("configuration operation owner is required")
+	}
+	if fence <= 0 {
+		return fmt.Errorf("configuration operation fence must be positive")
+	}
+	return nil
+}
+
 func (s *Store) SetOperationCompensation(ctx context.Context, operationID, phase, key string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE operations SET compensation_phase=?, compensation_idempotency_key=? WHERE id=?`, phase, key, operationID)
 	return err
@@ -76,6 +86,12 @@ type ConfigurationAdmission struct {
 }
 
 func (s *Store) AdmitConfiguration(ctx context.Context, input ConfigurationAdmission) (ConfigurationSnapshot, ConfigurationLease, error) {
+	if err := validateConfigurationOwner(input.Owner, 1); err != nil {
+		return ConfigurationSnapshot{}, ConfigurationLease{}, err
+	}
+	if input.Operation.ID == "" || input.Operation.ID != input.Owner {
+		return ConfigurationSnapshot{}, ConfigurationLease{}, fmt.Errorf("configuration operation owner must match operation id")
+	}
 	if input.OperationKind == "" {
 		input.OperationKind = "UPDATE_CONFIG"
 	}
@@ -218,14 +234,10 @@ func configurationResources(cfg contracts.ProjectConfiguration) map[string]strin
 	return resources
 }
 
-// AcquireConfigurationLease is retained for callers that only need a boolean;
-// workers should retain the fencing generation from the extended method.
-func (s *Store) AcquireConfigurationLease(ctx context.Context, projectID, owner string, now time.Time, ttl time.Duration) (bool, error) {
-	_, acquired, err := s.AcquireConfigurationLeaseWithFence(ctx, projectID, owner, now, ttl)
-	return acquired, err
-}
-
 func (s *Store) AcquireConfigurationLeaseWithFence(ctx context.Context, projectID, owner string, now time.Time, ttl time.Duration) (int64, bool, error) {
+	if err := validateConfigurationOwner(owner, 1); err != nil {
+		return 0, false, err
+	}
 	expires := now.Add(ttl)
 	result, err := s.db.ExecContext(ctx, `
 INSERT INTO project_configuration_leases(project_id, owner, fence, acquired_at, expires_at)
@@ -246,12 +258,10 @@ WHERE project_configuration_leases.expires_at <= excluded.acquired_at`, projectI
 	return fence, true, nil
 }
 
-func (s *Store) ReleaseConfigurationLease(ctx context.Context, projectID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id = ?`, projectID)
-	return err
-}
-
 func (s *Store) RenewConfigurationLease(ctx context.Context, projectID, owner string, fence int64, now time.Time, ttl time.Duration) (bool, error) {
+	if err := validateConfigurationOwner(owner, fence); err != nil {
+		return false, err
+	}
 	result, err := s.db.ExecContext(ctx, `UPDATE project_configuration_leases SET expires_at = ? WHERE project_id = ? AND owner = ? AND fence = ?`, formatTime(now.Add(ttl)), projectID, owner, fence)
 	if err != nil {
 		return false, err
@@ -261,11 +271,17 @@ func (s *Store) RenewConfigurationLease(ctx context.Context, projectID, owner st
 }
 
 func (s *Store) ReleaseConfigurationLeaseOwned(ctx context.Context, projectID, owner string, fence int64) error {
+	if err := validateConfigurationOwner(owner, fence); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id = ? AND owner = ? AND fence = ?`, projectID, owner, fence)
 	return err
 }
 
 func (s *Store) OwnsConfigurationLease(ctx context.Context, projectID, owner string, fence int64, now time.Time) (bool, error) {
+	if err := validateConfigurationOwner(owner, fence); err != nil {
+		return false, err
+	}
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_configuration_leases WHERE project_id=? AND owner=? AND fence=? AND expires_at > ?`, projectID, owner, fence, formatTime(now)).Scan(&count)
 	return count == 1, err
@@ -275,6 +291,12 @@ func (s *Store) OwnsConfigurationLease(ctx context.Context, projectID, owner str
 // fencing generation and binds that generation to its durable command payload
 // atomically. A resumed worker must never run a payload carrying an old fence.
 func (s *Store) AcquireConfigurationLeaseForOperation(ctx context.Context, projectID, owner, operationID string, now time.Time, ttl time.Duration) (ConfigurationLease, bool, error) {
+	if err := validateConfigurationOwner(owner, 1); err != nil {
+		return ConfigurationLease{}, false, err
+	}
+	if operationID == "" || operationID != owner {
+		return ConfigurationLease{}, false, fmt.Errorf("configuration lease owner must match operation id")
+	}
 	var lease ConfigurationLease
 	err := s.InTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `INSERT INTO project_configuration_leases(project_id,owner,fence,acquired_at,expires_at) VALUES(?,?,1,?,?) ON CONFLICT(project_id) DO UPDATE SET owner=excluded.owner,fence=project_configuration_leases.fence+1,acquired_at=excluded.acquired_at,expires_at=excluded.expires_at WHERE project_configuration_leases.expires_at <= excluded.acquired_at`, projectID, owner, formatTime(now), formatTime(now.Add(ttl)))
@@ -354,10 +376,6 @@ func (s *Store) GetDesiredConfiguration(ctx context.Context, projectID string) (
 	return snapshot, nil
 }
 
-func (s *Store) SaveConfiguration(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration, now time.Time) (ConfigurationSnapshot, error) {
-	return s.saveConfiguration(ctx, projectID, expected, cfg, now, nil)
-}
-
 // PersistAllocatedConfiguration records server-owned ports without creating a
 // user configuration revision. Allocation happens during installation before
 // the first desired revision is rendered, so the immutable create revision
@@ -395,96 +413,6 @@ func (s *Store) PersistAllocatedConfiguration(ctx context.Context, projectID str
 	})
 }
 
-func (s *Store) SaveConfigurationWithSecrets(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration, now time.Time, mutations []SecretMutation) (ConfigurationSnapshot, error) {
-	return s.saveConfiguration(ctx, projectID, expected, cfg, now, mutations)
-}
-
-func (s *Store) saveConfiguration(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration, now time.Time, mutations []SecretMutation) (ConfigurationSnapshot, error) {
-	redacted := redactConfiguration(cfg)
-	next := expected + 1
-	redacted.Revision = next
-	payload, err := json.Marshal(redacted)
-	if err != nil {
-		return ConfigurationSnapshot{}, fmt.Errorf("encode configuration: %w", err)
-	}
-	var result ConfigurationSnapshot
-	err = s.InTx(ctx, func(tx *sql.Tx) error {
-		var conflictID string
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id <> ? AND (domain = ? OR EXISTS (
-			SELECT 1 FROM port_allocations pa WHERE pa.project_id <> ? AND ((? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?))
-		)) LIMIT 1`, projectID, cfg.General.Domain, projectID,
-			cfg.Network.APIPort, true, cfg.Network.APIPort,
-			cfg.Network.StudioPort, cfg.Services.Studio, cfg.Network.StudioPort,
-			cfg.Network.DirectDatabasePort, cfg.Services.DirectDB, cfg.Network.DirectDatabasePort,
-			cfg.Network.PoolerPort, cfg.Services.Supavisor, cfg.Network.PoolerPort,
-			cfg.Pooler.TransactionPort, cfg.Services.Supavisor, cfg.Pooler.TransactionPort,
-			cfg.Pooler.SessionPort, cfg.Services.Supavisor, cfg.Pooler.SessionPort).Scan(&conflictID); err == nil {
-			return fmt.Errorf("%w: %s", ErrConfigurationConflict, conflictID)
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check configuration conflicts: %w", err)
-		}
-		var lastGood int64
-		if err := tx.QueryRowContext(ctx, `SELECT last_good_revision FROM projects WHERE id = ?`, projectID).Scan(&lastGood); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
-			}
-			return fmt.Errorf("read last good configuration revision: %w", err)
-		}
-		updated, err := tx.ExecContext(ctx, `UPDATE projects SET config_revision = ?, updated_at = ? WHERE id = ? AND config_revision = ?`, next, formatTime(now), projectID, expected)
-		if err != nil {
-			return fmt.Errorf("advance configuration revision: %w", err)
-		}
-		count, err := updated.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("read configuration revision update: %w", err)
-		}
-		if count == 0 {
-			var current int64
-			err := tx.QueryRowContext(ctx, `SELECT config_revision FROM projects WHERE id = ?`, projectID).Scan(&current)
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
-			}
-			if err != nil {
-				return fmt.Errorf("read current configuration revision: %w", err)
-			}
-			return fmt.Errorf("%w: expected %d, current %d", ErrStaleConfiguration, expected, current)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO project_configs(project_id, section, revision, config_json, created_at) VALUES (?, 'aggregate', ?, ?, ?)`, projectID, next, string(payload), formatTime(now)); err != nil {
-			return fmt.Errorf("insert configuration revision: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_versions(project_id, revision, kind, envelope_version, nonce, ciphertext) SELECT project_id, ?, kind, envelope_version, nonce, ciphertext FROM project_secrets WHERE project_id = ?`, next, projectID); err != nil {
-			return fmt.Errorf("snapshot encrypted secrets: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_snapshot_markers(project_id, revision, present) VALUES (?, ?, CASE WHEN EXISTS (SELECT 1 FROM project_secrets WHERE project_id = ?) THEN 1 ELSE 0 END)`, projectID, next, projectID); err != nil {
-			return fmt.Errorf("mark encrypted secret snapshot: %w", err)
-		}
-		// Canonical project/service/port rows are applied only by
-		// owned publication after Provisioner health succeeds. This desired
-		// snapshot transaction must never make an unhealthy revision look live.
-		for _, mutation := range mutations {
-			if mutation.Delete {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id = ? AND kind = ?`, projectID, mutation.Kind); err != nil {
-					return fmt.Errorf("delete encrypted secret %s: %w", mutation.Kind, err)
-				}
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, `
-INSERT INTO project_secrets(project_id, kind, envelope_version, nonce, ciphertext, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(project_id, kind) DO UPDATE SET envelope_version = excluded.envelope_version, nonce = excluded.nonce, ciphertext = excluded.ciphertext, updated_at = excluded.updated_at`,
-				projectID, mutation.Kind, mutation.Envelope.Version, mutation.Envelope.Nonce, mutation.Envelope.Ciphertext, formatTime(now)); err != nil {
-				return fmt.Errorf("store encrypted secret %s: %w", mutation.Kind, err)
-			}
-		}
-		result = ConfigurationSnapshot{ProjectID: projectID, Revision: next, LastGoodRevision: lastGood, Configuration: redacted}
-		return nil
-	})
-	if err != nil {
-		return ConfigurationSnapshot{}, err
-	}
-	return result, nil
-}
-
 type serviceProjection struct {
 	name    string
 	enabled bool
@@ -504,13 +432,16 @@ func projectServiceProjection(services contracts.Services) []serviceProjection {
 // It uses CAS on desired revision and the operation's lease/fence before
 // touching secrets, so a stale worker cannot erase a successor revision.
 func (s *Store) RestoreConfigurationStateOwned(ctx context.Context, projectID string, failedRevision int64, owner string, fence int64, now time.Time) error {
+	if err := validateConfigurationOwner(owner, fence); err != nil {
+		return err
+	}
 	return s.InTx(ctx, func(tx *sql.Tx) error {
 		var current, lastGood int64
 		if err := tx.QueryRowContext(ctx, `SELECT config_revision,last_good_revision FROM projects WHERE id=?`, projectID).Scan(&current, &lastGood); err != nil {
 			return err
 		}
 		if current != failedRevision {
-			if owner != "" && current == lastGood {
+			if current == lastGood {
 				var phase string
 				if err := tx.QueryRowContext(ctx, `SELECT compensation_phase FROM operations WHERE id=?`, owner).Scan(&phase); err == nil && phase == "STATE_RESTORED" {
 					return nil
@@ -518,26 +449,24 @@ func (s *Store) RestoreConfigurationStateOwned(ctx context.Context, projectID st
 			}
 			return fmt.Errorf("%w: expected failed revision %d, current %d", ErrStaleConfiguration, failedRevision, current)
 		}
-		if owner != "" {
-			var leaseOwner string
-			var leaseFence int64
-			if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&leaseOwner, &leaseFence); err != nil {
-				return err
-			}
-			// An expired lease is recoverable by its original fenced owner. The
-			// current-revision CAS above proves that no successor has admitted;
-			// rejecting solely on expiry would strand candidate rows forever after
-			// a process pause. A different owner/fence is still stale.
-			if leaseOwner != owner || leaseFence != fence {
-				return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
-			}
-			var boundRevision, boundFence int64
-			if err := tx.QueryRowContext(ctx, `SELECT revision,fence FROM operation_configurations WHERE operation_id=? AND project_id=?`, owner, projectID).Scan(&boundRevision, &boundFence); err != nil {
-				return err
-			}
-			if boundRevision != failedRevision || boundFence != fence {
-				return fmt.Errorf("%w: operation fence changed", ErrStaleConfiguration)
-			}
+		var leaseOwner string
+		var leaseFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&leaseOwner, &leaseFence); err != nil {
+			return err
+		}
+		// An expired lease is recoverable by its original fenced owner. The
+		// current-revision CAS above proves that no successor has admitted;
+		// rejecting solely on expiry would strand candidate rows forever after
+		// a process pause. A different owner/fence is still stale.
+		if leaseOwner != owner || leaseFence != fence {
+			return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
+		}
+		var boundRevision, boundFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT revision,fence FROM operation_configurations WHERE operation_id=? AND project_id=?`, owner, projectID).Scan(&boundRevision, &boundFence); err != nil {
+			return err
+		}
+		if boundRevision != failedRevision || boundFence != fence {
+			return fmt.Errorf("%w: operation fence changed", ErrStaleConfiguration)
 		}
 		var raw string
 		if err := tx.QueryRowContext(ctx, `SELECT config_json FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, projectID, lastGood).Scan(&raw); err != nil {
@@ -584,13 +513,11 @@ func (s *Store) RestoreConfigurationStateOwned(ctx context.Context, projectID st
 		if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=? AND revision=?`, projectID, failedRevision); err != nil {
 			return err
 		}
-		if owner != "" {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id=? AND owner=? AND fence=?`, projectID, owner, fence); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase='STATE_RESTORED' WHERE id=?`, owner); err != nil {
-				return err
-			}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id=? AND owner=? AND fence=?`, projectID, owner, fence); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase='STATE_RESTORED' WHERE id=?`, owner); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -676,6 +603,12 @@ func (s *Store) MarkConfigurationGoodOwned(ctx context.Context, projectID string
 	if revision <= 0 {
 		return ErrStaleConfiguration
 	}
+	if err := validateConfigurationOwner(owner, fence); err != nil {
+		return err
+	}
+	if strings.TrimSpace(phase) == "" {
+		return fmt.Errorf("configuration publication phase is required")
+	}
 	return s.InTx(ctx, func(tx *sql.Tx) error {
 		var current, lastGood int64
 		if err := tx.QueryRowContext(ctx, `SELECT config_revision, last_good_revision FROM projects WHERE id = ?`, projectID).Scan(&current, &lastGood); err != nil {
@@ -697,22 +630,20 @@ func (s *Store) MarkConfigurationGoodOwned(ctx context.Context, projectID string
 		if revision < lastGood {
 			return fmt.Errorf("%w: last good revision is %d", ErrStaleConfiguration, lastGood)
 		}
-		if owner != "" {
-			var leaseOwner string
-			var leaseFence int64
-			if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&leaseOwner, &leaseFence); err != nil {
-				return err
-			}
-			if leaseOwner != owner || leaseFence != fence {
-				return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
-			}
-			var boundRevision, boundFence int64
-			if err := tx.QueryRowContext(ctx, `SELECT revision,fence FROM operation_configurations WHERE operation_id=? AND project_id=?`, owner, projectID).Scan(&boundRevision, &boundFence); err != nil {
-				return err
-			}
-			if boundRevision != revision || boundFence != fence {
-				return fmt.Errorf("%w: operation fence changed", ErrStaleConfiguration)
-			}
+		var leaseOwner string
+		var leaseFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&leaseOwner, &leaseFence); err != nil {
+			return err
+		}
+		if leaseOwner != owner || leaseFence != fence {
+			return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
+		}
+		var boundRevision, boundFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT revision,fence FROM operation_configurations WHERE operation_id=? AND project_id=?`, owner, projectID).Scan(&boundRevision, &boundFence); err != nil {
+			return err
+		}
+		if boundRevision != revision || boundFence != fence {
+			return fmt.Errorf("%w: operation fence changed", ErrStaleConfiguration)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE projects SET last_good_revision = ? WHERE id = ?`, revision, projectID); err != nil {
 			return fmt.Errorf("mark configuration good: %w", err)
@@ -731,10 +662,8 @@ func (s *Store) MarkConfigurationGoodOwned(ctx context.Context, projectID string
 		if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
 			return err
 		}
-		if owner != "" && phase != "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase=? WHERE id=?`, phase, owner); err != nil {
-				return err
-			}
+		if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase=? WHERE id=?`, phase, owner); err != nil {
+			return err
 		}
 		return nil
 	})

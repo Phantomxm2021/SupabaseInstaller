@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,6 +13,25 @@ import (
 	"supabase-manager/apps/manager/internal/store"
 	"supabase-manager/internal/contracts"
 )
+
+func admitProjectPatch(service *ConfigurationService, projectID string, patch contracts.ConfigurationPatch) (store.ConfigurationSnapshot, error) {
+	cfg, err := service.PreparePatch(context.Background(), projectID, patch)
+	if err != nil {
+		return store.ConfigurationSnapshot{}, err
+	}
+	mutations, err := service.PrepareSecretMutations(context.Background(), projectID, &cfg)
+	if err != nil {
+		return store.ConfigurationSnapshot{}, err
+	}
+	now := time.Now().UTC()
+	operationID := fmt.Sprintf("project-test-%d", now.UnixNano())
+	op := contracts.Operation{ID: operationID, ProjectID: projectID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	snapshot, lease, err := service.store.AdmitConfiguration(context.Background(), store.ConfigurationAdmission{Operation: op, ProjectID: projectID, Owner: operationID, ExpectedRevision: patch.ExpectedRevision, Configuration: cfg, OperationKind: "UPDATE_CONFIG", Mutations: mutations, Now: now})
+	if err == nil {
+		err = service.store.ReleaseConfigurationLeaseOwned(context.Background(), projectID, operationID, lease.Fence)
+	}
+	return snapshot, err
+}
 
 func TestConfigurationServiceRejectsInvalidServiceClosure(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
@@ -33,7 +53,7 @@ func TestConfigurationServiceRejectsInvalidServiceClosure(t *testing.T) {
 	services.Gateway = false
 	services.REST = true
 	service := NewConfigurationService(database, cipher, time.Now)
-	_, err = service.Patch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Services: &services})
+	_, err = admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Services: &services})
 	var validation *ValidationError
 	if !errors.As(err, &validation) || validation.Fields["services.gateway"] == "" {
 		t.Fatalf("expected field validation for invalid closure, got %v", err)
@@ -75,7 +95,7 @@ func TestConfigurationServiceSecretPatches(t *testing.T) {
 			}
 			cfg.Functions.Variables[0].Value = contracts.SecretInput{Action: tc.action, Value: tc.value}
 			service := NewConfigurationService(database, cipher, func() time.Time { return time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC) })
-			got, err := service.Patch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg})
+			got, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg})
 			if err != nil {
 				t.Fatalf("Patch() error = %v", err)
 			}
@@ -113,7 +133,7 @@ func TestConfigurationServiceRejectsEmptySecretReplacement(t *testing.T) {
 	}
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", Value: contracts.SecretInput{Action: "replace"}}}
 	service := NewConfigurationService(database, cipher, time.Now)
-	if _, err := service.Patch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); err == nil {
+	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); err == nil {
 		t.Fatal("Patch() accepted empty replacement")
 	}
 	got, err := database.GetConfiguration(context.Background(), project.ID)
@@ -136,7 +156,7 @@ func TestConfigurationServiceRequiresExplicitActionForExistingSecret(t *testing.
 	}
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", ValueSet: true, Value: contracts.SecretInput{}}}
 	service := NewConfigurationService(database, cipher, time.Now)
-	if _, err := service.Patch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); err == nil {
+	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); err == nil {
 		t.Fatal("Patch() accepted an implicit retain marker")
 	}
 	got, err := database.GetConfiguration(context.Background(), project.ID)
@@ -169,7 +189,7 @@ func TestConfigurationServicePartialGeneralPatchPreservesConfiguredSecrets(t *te
 		}
 	}
 	service := NewConfigurationService(database, cipher, time.Now)
-	got, err := service.Patch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}})
+	got, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}})
 	if err != nil {
 		t.Fatalf("General-only Patch() error = %v", err)
 	}
@@ -190,7 +210,7 @@ func TestConfigurationServicePartialGeneralPatchAcceptsDefaultLocalAndDisabledPh
 		t.Fatal(err)
 	}
 	service := NewConfigurationService(database, nil, time.Now)
-	if _, err := service.Patch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}}); err != nil {
+	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}}); err != nil {
 		t.Fatalf("default local General-only Patch() error = %v", err)
 	}
 }
@@ -207,10 +227,10 @@ func TestConfigurationServiceRejectsStaleRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewConfigurationService(database, nil, time.Now)
-	if _, err := service.Save(context.Background(), project.ID, 1, cfg); err != nil {
+	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Save(context.Background(), project.ID, 1, cfg); !errors.Is(err, ErrStaleConfiguration) {
+	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); !errors.Is(err, ErrStaleConfiguration) {
 		t.Fatalf("stale Save() error = %v, want ErrStaleConfiguration", err)
 	}
 }

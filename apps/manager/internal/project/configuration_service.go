@@ -45,21 +45,6 @@ func (s *ConfigurationService) GetDesired(ctx context.Context, projectID string)
 	return s.store.GetDesiredConfiguration(ctx, projectID)
 }
 
-func (s *ConfigurationService) Save(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration) (store.ConfigurationSnapshot, error) {
-	if err := requireExplicitSecretActions(cfg); err != nil {
-		return store.ConfigurationSnapshot{}, err
-	}
-	return s.save(ctx, projectID, expected, cfg)
-}
-
-func (s *ConfigurationService) Patch(ctx context.Context, projectID string, patch contracts.ConfigurationPatch) (store.ConfigurationSnapshot, error) {
-	cfg, err := s.PreparePatch(ctx, projectID, patch)
-	if err != nil {
-		return store.ConfigurationSnapshot{}, err
-	}
-	return s.save(ctx, projectID, patch.ExpectedRevision, cfg)
-}
-
 // PreparePatch computes and validates a mutation without writing. Queueing
 // uses this to place the exact encrypted mutation and command payload in the
 // same SQLite transaction as the revision and operation row.
@@ -120,27 +105,6 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 
 func (s *ConfigurationService) PrepareSecretMutations(ctx context.Context, projectID string, cfg *contracts.ProjectConfiguration) ([]store.SecretMutation, error) {
 	return s.secretMutations(ctx, projectID, cfg)
-}
-
-// Update and ApplyPatch are aliases kept for handlers that use command-style
-// naming while the API's canonical operation is Patch.
-func (s *ConfigurationService) Update(ctx context.Context, projectID string, patch contracts.ConfigurationPatch) (store.ConfigurationSnapshot, error) {
-	return s.Patch(ctx, projectID, patch)
-}
-
-func (s *ConfigurationService) ApplyPatch(ctx context.Context, projectID string, patch contracts.ConfigurationPatch) (store.ConfigurationSnapshot, error) {
-	return s.Patch(ctx, projectID, patch)
-}
-
-func (s *ConfigurationService) save(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration) (store.ConfigurationSnapshot, error) {
-	if err := ValidateConfiguration(cfg); err != nil {
-		return store.ConfigurationSnapshot{}, err
-	}
-	mutations, err := s.secretMutations(ctx, projectID, &cfg)
-	if err != nil {
-		return store.ConfigurationSnapshot{}, err
-	}
-	return s.store.SaveConfigurationWithSecrets(ctx, projectID, expected, cfg, s.now(), mutations)
 }
 
 func requireExplicitSecretActionsForPatch(patch contracts.ConfigurationPatch) error {

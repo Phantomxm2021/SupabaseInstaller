@@ -40,19 +40,19 @@ func TestConfigurationLeaseSerializesAndRecoversAfterExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	acquired, err := s.AcquireConfigurationLease(context.Background(), project.ID, "first", now, time.Minute)
-	if err != nil || !acquired {
-		t.Fatalf("first lease = %v, %v", acquired, err)
+	fence, acquired, err := s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "first", now, time.Minute)
+	if err != nil || !acquired || fence != 1 {
+		t.Fatalf("first lease = %d, %v, %v", fence, acquired, err)
 	}
-	acquired, err = s.AcquireConfigurationLease(context.Background(), project.ID, "second", now.Add(time.Second), time.Minute)
+	_, acquired, err = s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "second", now.Add(time.Second), time.Minute)
 	if err != nil || acquired {
 		t.Fatalf("second lease while held = %v, %v", acquired, err)
 	}
-	acquired, err = s.AcquireConfigurationLease(context.Background(), project.ID, "second", now.Add(2*time.Minute), time.Minute)
+	fence, acquired, err = s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "second", now.Add(2*time.Minute), time.Minute)
 	if err != nil || !acquired {
 		t.Fatalf("expired lease recovery = %v, %v", acquired, err)
 	}
-	if err := s.ReleaseConfigurationLease(context.Background(), project.ID); err != nil {
+	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, "second", fence); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -71,7 +71,7 @@ func TestConfigurationLeaseReleaseIsOwnerAndFenceBound(t *testing.T) {
 	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, "stale-owner", fence); err != nil {
 		t.Fatal(err)
 	}
-	if acquired, err := s.AcquireConfigurationLease(context.Background(), project.ID, "second", now.Add(2*time.Minute), time.Minute); err != nil || !acquired {
+	if _, acquired, err := s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "second", now.Add(2*time.Minute), time.Minute); err != nil || !acquired {
 		t.Fatalf("expired takeover = %v, %v", acquired, err)
 	}
 	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, "first", fence); err != nil {
@@ -268,6 +268,25 @@ func TestMarkConfigurationGoodOwnedPublishesCommitPhaseAtomically(t *testing.T) 
 	}
 }
 
+func TestOwnedConfigurationPublicationRejectsEmptyOwnerOrFence(t *testing.T) {
+	database := openTestStore(t)
+	project := projectFixture()
+	if err := database.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	op := contracts.Operation{ID: "strict-owner-op", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: time.Now()}
+	snapshot, _, err := database.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: configurationFixture(), OperationKind: "UPDATE_CONFIG", Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MarkConfigurationGoodOwned(context.Background(), project.ID, snapshot.Revision, "", 1, "COMMITTED", time.Now()); err == nil {
+		t.Fatal("MarkConfigurationGoodOwned accepted an empty owner")
+	}
+	if err := database.MarkConfigurationGoodOwned(context.Background(), project.ID, snapshot.Revision, op.ID, 0, "COMMITTED", time.Now()); err == nil {
+		t.Fatal("MarkConfigurationGoodOwned accepted an empty fence")
+	}
+}
+
 func TestRestoreConfigurationStateOwnedIsIdempotentAfterStateRestored(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
@@ -342,15 +361,15 @@ func TestConfigurationRevisionIsOptimisticAndRedacted(t *testing.T) {
 	}
 	cfg.Auth.SMTP.Password = contracts.SecretInput{Action: "replace", Value: "smtp-plaintext"}
 	cfg.Auth.SMTP.PasswordSet = true
-	saved, err := s.SaveConfiguration(context.Background(), project.ID, 1, cfg, time.Now())
+	saved, err := admitStoreConfiguration(s, project.ID, 1, cfg, "revision-first")
 	if err != nil {
-		t.Fatalf("SaveConfiguration() error = %v", err)
+		t.Fatalf("admission error = %v", err)
 	}
 	if saved.Revision != 2 {
 		t.Fatalf("saved revision = %d, want 2", saved.Revision)
 	}
-	if _, err := s.SaveConfiguration(context.Background(), project.ID, 1, cfg, time.Now()); !errors.Is(err, ErrStaleConfiguration) {
-		t.Fatalf("stale SaveConfiguration() error = %v, want ErrStaleConfiguration", err)
+	if _, err := admitStoreConfiguration(s, project.ID, 1, cfg, "revision-stale"); !errors.Is(err, ErrStaleConfiguration) {
+		t.Fatalf("stale admission error = %v, want ErrStaleConfiguration", err)
 	}
 	var raw string
 	if err := s.DB().QueryRow(`SELECT config_json FROM project_configs WHERE project_id = ? AND section = 'aggregate' AND revision = 2`, project.ID).Scan(&raw); err != nil {
@@ -519,12 +538,12 @@ func TestConfigurationSnapshotsAreImmutable(t *testing.T) {
 	}
 	first := configurationFixture()
 	first.General.Domain = "first.example.com"
-	if _, err := s.SaveConfiguration(context.Background(), project.ID, 1, first, time.Now()); err != nil {
+	if _, err := admitStoreConfiguration(s, project.ID, 1, first, "immutable-first"); err != nil {
 		t.Fatal(err)
 	}
 	second := first
 	second.General.Domain = "second.example.com"
-	if _, err := s.SaveConfiguration(context.Background(), project.ID, 2, second, time.Now()); err != nil {
+	if _, err := admitStoreConfiguration(s, project.ID, 2, second, "immutable-second"); err != nil {
 		t.Fatal(err)
 	}
 	var raw string
@@ -544,6 +563,21 @@ func openTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+// admitStoreConfiguration is test-local: production writes must enter through
+// the owned admission boundary rather than a direct Save API.
+func admitStoreConfiguration(s *Store, projectID string, expected int64, cfg contracts.ProjectConfiguration, operationID string) (ConfigurationSnapshot, error) {
+	now := time.Now().UTC()
+	op := contracts.Operation{ID: operationID, ProjectID: projectID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	snapshot, lease, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: projectID, Owner: operationID, ExpectedRevision: expected, Configuration: cfg, OperationKind: "UPDATE_CONFIG", Now: now})
+	if err != nil {
+		return ConfigurationSnapshot{}, err
+	}
+	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), projectID, operationID, lease.Fence); err != nil {
+		return ConfigurationSnapshot{}, err
+	}
+	return snapshot, nil
 }
 
 func projectFixture() contracts.Project {
