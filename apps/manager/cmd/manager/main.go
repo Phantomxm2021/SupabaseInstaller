@@ -55,7 +55,9 @@ func main() {
 	allocator := ports.NewAllocator(database, cfg.PortRangeStart, cfg.PortRangeEnd, ports.NetworkProbe{})
 	installer := install.NewOrchestrator(database, operations, allocator, cipher, provisionerClient, install.CryptoGenerator{Random: rand.Reader, Now: now}, now)
 	configurationManager := managerconfiguration.NewOrchestrator(database, operations, provisionerClient, cipher, now)
-	_ = configurationManager.Resume(context.Background(), projects.Get)
+	if err := configurationManager.Resume(context.Background(), projects.Get); err != nil {
+		slog.Error("resume configuration operations failed", "error", err)
+	}
 	lifecycleManager := lifecycle.NewService(database, operations, provisionerClient)
 	api := httpapi.NewRouter(httpapi.RouterOptions{
 		Auth:          httpapi.AuthOptions{Service: adminAuth, PublicOrigin: cfg.PublicOrigin, SecureCookies: cfg.SecureCookies},

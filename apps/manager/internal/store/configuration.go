@@ -30,6 +30,28 @@ type SecretMutation struct {
 	Delete   bool
 }
 
+// AcquireConfigurationLease is the database-backed per-project fence used by
+// configuration workers. The expiry makes a queued operation recoverable after
+// a crashed manager instead of leaving an in-memory lock behind forever.
+func (s *Store) AcquireConfigurationLease(ctx context.Context, projectID, owner string, now time.Time, ttl time.Duration) (bool, error) {
+	expires := now.Add(ttl)
+	result, err := s.db.ExecContext(ctx, `
+INSERT INTO project_configuration_leases(project_id, owner, acquired_at, expires_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(project_id) DO UPDATE SET owner=excluded.owner, acquired_at=excluded.acquired_at, expires_at=excluded.expires_at
+WHERE project_configuration_leases.expires_at <= excluded.acquired_at`, projectID, owner, formatTime(now), formatTime(expires))
+	if err != nil {
+		return false, fmt.Errorf("acquire configuration lease: %w", err)
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func (s *Store) ReleaseConfigurationLease(ctx context.Context, projectID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id = ?`, projectID)
+	return err
+}
+
 func (s *Store) GetConfiguration(ctx context.Context, projectID string) (ConfigurationSnapshot, error) {
 	var snapshot ConfigurationSnapshot
 	var raw string
@@ -98,7 +120,9 @@ func (s *Store) saveConfiguration(ctx context.Context, projectID string, expecte
 	var result ConfigurationSnapshot
 	err = s.InTx(ctx, func(tx *sql.Tx) error {
 		var conflictID string
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE (domain = ? OR (? > 0 AND id IN (SELECT project_id FROM port_allocations WHERE port = ?))) AND id <> ? LIMIT 1`, cfg.General.Domain, cfg.Network.APIPort, cfg.Network.APIPort, projectID).Scan(&conflictID); err == nil {
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id <> ? AND (domain = ? OR EXISTS (
+			SELECT 1 FROM port_allocations pa WHERE pa.project_id <> projects.id AND pa.port > 0 AND pa.port IN (?, ?, ?, ?, ?, ?)
+		)) LIMIT 1`, projectID, cfg.General.Domain, cfg.Network.APIPort, cfg.Network.StudioPort, cfg.Network.DirectDatabasePort, cfg.Network.PoolerPort, cfg.Pooler.TransactionPort, cfg.Pooler.SessionPort).Scan(&conflictID); err == nil {
 			return fmt.Errorf("%w: %s", ErrConfigurationConflict, conflictID)
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("check configuration conflicts: %w", err)
@@ -138,6 +162,35 @@ func (s *Store) saveConfiguration(ctx context.Context, projectID string, expecte
 		if _, err := tx.ExecContext(ctx, `UPDATE projects SET domain = ?, site_url = ?, supabase_version = ?, services_json = ?, updated_at = ? WHERE id = ?`, cfg.General.Domain, cfg.General.SiteURL, cfg.General.SupabaseVersion, string(servicesJSON), formatTime(now), projectID); err != nil {
 			return fmt.Errorf("update project projection: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM project_services WHERE project_id = ?`, projectID); err != nil {
+			return fmt.Errorf("replace service projection: %w", err)
+		}
+		for _, service := range projectServiceProjection(cfg.Services) {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO project_services(project_id, service, enabled, status) VALUES (?, ?, ?, 'UNKNOWN')`, projectID, service.name, service.enabled); err != nil {
+				return fmt.Errorf("store service projection %s: %w", service.name, err)
+			}
+		}
+		for _, port := range []struct {
+			kind string
+			port int
+		}{
+			{kind: "API", port: cfg.Network.APIPort},
+			{kind: "STUDIO", port: cfg.Network.StudioPort},
+			{kind: "DATABASE", port: cfg.Network.DirectDatabasePort},
+			{kind: "POOLER", port: cfg.Network.PoolerPort},
+			{kind: "POOLER_TRANSACTION", port: cfg.Pooler.TransactionPort},
+			{kind: "POOLER_SESSION", port: cfg.Pooler.SessionPort},
+		} {
+			if port.port == 0 {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM port_allocations WHERE project_id = ? AND kind = ?`, projectID, port.kind); err != nil {
+				return fmt.Errorf("replace port projection %s: %w", port.kind, err)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO port_allocations(port, project_id, kind, created_at) VALUES (?, ?, ?, ?)`, port.port, projectID, port.kind, formatTime(now)); err != nil {
+				return fmt.Errorf("store port projection %s: %w", port.kind, err)
+			}
+		}
 		for _, mutation := range mutations {
 			if mutation.Delete {
 				if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id = ? AND kind = ?`, projectID, mutation.Kind); err != nil {
@@ -160,6 +213,21 @@ ON CONFLICT(project_id, kind) DO UPDATE SET envelope_version = excluded.envelope
 		return ConfigurationSnapshot{}, err
 	}
 	return result, nil
+}
+
+type serviceProjection struct {
+	name    string
+	enabled bool
+}
+
+func projectServiceProjection(services contracts.Services) []serviceProjection {
+	return []serviceProjection{
+		{"database", services.Database}, {"gateway", services.Gateway}, {"auth", services.Auth},
+		{"rest", services.REST}, {"studio", services.Studio}, {"postgresMeta", services.PostgresMeta},
+		{"realtime", services.Realtime}, {"storage", services.Storage}, {"imgproxy", services.Imgproxy},
+		{"functions", services.Functions}, {"supavisor", services.Supavisor}, {"logs", services.Logs},
+		{"vector", services.Vector}, {"directDb", services.DirectDB},
+	}
 }
 
 // RestoreSecretsRevision restores the encrypted secret set that existed just
@@ -197,6 +265,20 @@ func (s *Store) GetOperationConfiguration(ctx context.Context, operationID strin
 		return snapshot, err
 	}
 	return snapshot, nil
+}
+
+func (s *Store) PutOperationSecret(ctx context.Context, operationID, kind string, envelope secrets.Envelope) error {
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO operation_secrets(operation_id,kind,envelope_version,nonce,ciphertext) VALUES(?,?,?,?,?)`, operationID, kind, envelope.Version, envelope.Nonce, envelope.Ciphertext)
+	return err
+}
+
+func (s *Store) GetOperationSecret(ctx context.Context, operationID, kind string) (secrets.Envelope, error) {
+	var envelope secrets.Envelope
+	err := s.db.QueryRowContext(ctx, `SELECT envelope_version,nonce,ciphertext FROM operation_secrets WHERE operation_id=? AND kind=?`, operationID, kind).Scan(&envelope.Version, &envelope.Nonce, &envelope.Ciphertext)
+	if errors.Is(err, sql.ErrNoRows) {
+		return envelope, ErrNotFound
+	}
+	return envelope, err
 }
 
 func (s *Store) MarkConfigurationGood(ctx context.Context, projectID string, revision int64) error {

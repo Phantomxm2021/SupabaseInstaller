@@ -60,13 +60,19 @@ func (s *Store) ListActiveOperations(ctx context.Context, typ contracts.Operatio
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []contracts.Operation
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var result []contracts.Operation
+	for _, id := range ids {
 		op, err := s.GetOperation(ctx, id)
 		if err != nil {
 			return nil, err

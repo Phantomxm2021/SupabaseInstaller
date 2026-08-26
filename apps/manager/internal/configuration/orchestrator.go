@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"supabase-manager/apps/manager/internal/operation"
+	"supabase-manager/apps/manager/internal/ports"
 	"supabase-manager/apps/manager/internal/project"
 	managersecrets "supabase-manager/apps/manager/internal/secrets"
 	"supabase-manager/apps/manager/internal/store"
@@ -27,6 +28,12 @@ type Provisioner interface {
 
 type PasswordRotationProvisioner interface {
 	RotateDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) (contracts.RotateDatabasePasswordResponse, error)
+}
+
+// PasswordRotationRollbackProvisioner is an explicit compensation boundary
+// used if Manager cannot publish the newly rotated encrypted secret.
+type PasswordRotationRollbackProvisioner interface {
+	RollbackDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) error
 }
 
 type Orchestrator struct {
@@ -94,17 +101,28 @@ func (o *Orchestrator) QueuePatch(ctx context.Context, projectID string, patch c
 		return operation.Operation{}, store.ConfigurationSnapshot{}, errors.New("configuration orchestrator is unavailable")
 	}
 	o.acquire(projectID)
+	lease, err := o.store.AcquireConfigurationLease(ctx, projectID, o.id(), o.now(), 45*time.Minute)
+	if err != nil || !lease {
+		o.release(projectID)
+		if err != nil {
+			return operation.Operation{}, store.ConfigurationSnapshot{}, err
+		}
+		return operation.Operation{}, store.ConfigurationSnapshot{}, errors.New("configuration operation already active")
+	}
 	snapshot, err := o.configs.Patch(ctx, projectID, patch)
 	if err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
 		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, err
 	}
 	queued, err := o.operations.Create(ctx, projectID, operation.TypeUpdateConfig)
 	if err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
 		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, err
 	}
 	if err := o.store.BindOperationConfiguration(ctx, queued.ID, projectID, snapshot, o.now()); err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
 		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, err
 	}
@@ -132,7 +150,12 @@ func (o *Orchestrator) release(projectID string) {
 		}
 	}
 }
-func (o *Orchestrator) Release(projectID string) { o.release(projectID) }
+func (o *Orchestrator) Release(projectID string) {
+	o.release(projectID)
+	if o.store != nil {
+		_ = o.store.ReleaseConfigurationLease(context.Background(), projectID)
+	}
+}
 
 // Queue is the concise command-style alias used by API adapters.
 func (o *Orchestrator) Queue(ctx context.Context, projectID string, patch contracts.ConfigurationPatch) (operation.Operation, store.ConfigurationSnapshot, error) {
@@ -144,8 +167,17 @@ func (o *Orchestrator) QueueDatabasePasswordRotation(ctx context.Context, projec
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", errors.New("configuration orchestrator is unavailable")
 	}
 	o.acquire(projectID)
-	current, err := o.configs.Get(ctx, projectID)
+	lease, err := o.store.AcquireConfigurationLease(ctx, projectID, o.id(), o.now(), 45*time.Minute)
+	if err != nil || !lease {
+		o.release(projectID)
+		if err != nil {
+			return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
+		}
+		return operation.Operation{}, store.ConfigurationSnapshot{}, "", errors.New("configuration operation already active")
+	}
+	current, err := o.configs.GetDesired(ctx, projectID)
 	if err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
 		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
 	}
@@ -154,20 +186,35 @@ func (o *Orchestrator) QueueDatabasePasswordRotation(ctx context.Context, projec
 	// successfully updated PostgreSQL and its dependents.
 	next, err := o.configs.Save(ctx, projectID, current.Revision, current.Configuration)
 	if err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
 		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
 	}
 	newPassword, err := randomSecret()
 	if err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
 		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
 	}
 	queued, err := o.operations.Create(ctx, projectID, operation.TypeUpdateConfig)
 	if err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
 		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
 	}
 	if err := o.store.BindOperationConfiguration(ctx, queued.ID, projectID, next, o.now()); err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
+	}
+	envelope, err := o.cipher.Encrypt(projectID, "operation.database-password", []byte(newPassword))
+	if err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
+	}
+	if err := o.store.PutOperationSecret(ctx, queued.ID, "database-password", envelope); err != nil {
+		_ = o.store.ReleaseConfigurationLease(ctx, projectID)
 		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
 	}
@@ -183,9 +230,16 @@ func randomSecret() (string, error) {
 }
 
 func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentProject contracts.Project, queued operation.Operation, snapshot store.ConfigurationSnapshot, newPassword string) (operation.Operation, error) {
-	if err := o.operations.Start(ctx, queued.ID); err != nil {
-		return queued, err
+	defer o.release(currentProject.ID)
+	defer o.store.ReleaseConfigurationLease(context.Background(), currentProject.ID)
+	if queued.Status == operation.Queued {
+		if err := o.operations.Start(ctx, queued.ID); err != nil {
+			return queued, err
+		}
+	} else if queued.Status != operation.Running {
+		return queued, errors.New("rotation operation is not runnable")
 	}
+	var rotationRequest contracts.RotateDatabasePasswordRequest
 	for i, step := range []string{"VALIDATE_CONFIGURATION", "SAVE_CONFIGURATION", "RENDER_RUNTIME", "RECONCILE_SERVICES", "VERIFY_SERVICES", "MARK_CONFIGURATION_GOOD"} {
 		progress := (i + 1) * 15
 		if err := o.operations.StartStep(ctx, queued.ID, step, progress); err != nil {
@@ -197,7 +251,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			}
 		}
 		if step == "RECONCILE_SERVICES" {
-			secrets, _, err := o.hydrate(ctx, currentProject.ID, snapshot.Configuration)
+			secrets, runtimeSecrets, err := o.hydrate(ctx, currentProject.ID, snapshot.Configuration)
 			if err != nil {
 				return o.fail(ctx, queued, step, errors.New("runtime reconciliation failed"), false)
 			}
@@ -205,11 +259,18 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			if !ok {
 				return o.fail(ctx, queued, step, errors.New("database password rotation unavailable"), false)
 			}
-			result, reconcileErr := rotator.RotateDatabasePassword(ctx, contracts.RotateDatabasePasswordRequest{OperationID: queued.ID, IdempotencyKey: queued.ID + ":rotate", ProjectID: currentProject.ID, ProjectName: currentProject.Name, Slug: currentProject.Slug, ExpectedRevision: snapshot.Revision - 1, NextRevision: snapshot.Revision, OldPassword: secrets.DatabasePassword, NewPassword: newPassword})
+			oldPassword := secrets.DatabasePassword
+			secrets.DatabasePassword = newPassword
+			configuration := snapshot.Configuration
+			if configuration.Network.APIPort == 0 {
+				configuration.Network.APIPort, _ = o.store.ReservedPort(ctx, currentProject.ID, string(ports.KindAPI))
+			}
+			rotationRequest := contracts.RotateDatabasePasswordRequest{OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: queued.ID, IdempotencyKey: queued.ID + ":rotate", ProjectID: currentProject.ID, ProjectName: currentProject.Name, Slug: currentProject.Slug, ExpectedRevision: snapshot.Revision - 1, NextRevision: snapshot.Revision, OldPassword: oldPassword, NewPassword: newPassword, Configuration: configuration, Secrets: secrets, RuntimeSecrets: runtimeSecrets}
+			result, reconcileErr := rotator.RotateDatabasePassword(ctx, rotationRequest)
 			if reconcileErr != nil {
 				return o.fail(ctx, queued, step, errors.New("runtime reconciliation failed"), reconcileRollback(reconcileErr))
 			}
-			if result.ProjectID != "" && result.ProjectID != currentProject.ID {
+			if result.OperationID != queued.ID || result.ProjectID != currentProject.ID || result.Revision != snapshot.Revision {
 				return o.fail(ctx, queued, step, errors.New("runtime verification failed"), false)
 			}
 		}
@@ -219,7 +280,15 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 				return o.fail(ctx, queued, step, errors.New("database password rotation failed"), true)
 			}
 			if err := o.store.PublishConfigurationSecret(ctx, currentProject.ID, snapshot.Revision, "database-password", envelope, o.now()); err != nil {
-				return o.fail(ctx, queued, step, err, false)
+				rollback := false
+				if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
+					rollbackRequest := rotationRequest
+					rollbackRequest.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
+					rollbackRequest.IdempotencyKey = queued.ID + ":rollback"
+					rollbackRequest.OldPassword, rollbackRequest.NewPassword = rollbackRequest.NewPassword, rollbackRequest.OldPassword
+					rollback = compensator.RollbackDatabasePassword(ctx, rollbackRequest) == nil
+				}
+				return o.fail(ctx, queued, step, err, rollback)
 			}
 		}
 		if err := o.operations.CompleteStep(ctx, queued.ID, step, progress); err != nil {
@@ -246,6 +315,7 @@ func reconcileRollback(err error) bool {
 // redacted, and operation events must never contain rendered environment data.
 func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project, queued operation.Operation, snapshot store.ConfigurationSnapshot) (operation.Operation, error) {
 	defer o.release(currentProject.ID)
+	defer o.store.ReleaseConfigurationLease(context.Background(), currentProject.ID)
 	if o.provisioner == nil {
 		return queued, errors.New("configuration provisioner is unavailable")
 	}
@@ -280,6 +350,10 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 		NextRevision: snapshot.Revision, APIPort: snapshot.Configuration.Network.APIPort,
 		Configuration: snapshot.Configuration, Secrets: secrets, RuntimeSecrets: runtimeSecrets,
 	}
+	if request.APIPort == 0 {
+		request.APIPort, _ = o.store.ReservedPort(ctx, currentProject.ID, string(ports.KindAPI))
+		request.Configuration.Network.APIPort = request.APIPort
+	}
 	if err := o.operations.StartStep(ctx, queued.ID, "RECONCILE_SERVICES", 70); err != nil {
 		return queued, err
 	}
@@ -287,7 +361,9 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 	if reconcileErr != nil {
 		rolledBack := reconcileRollback(reconcileErr)
 		if rolledBack {
-			_ = o.store.RestoreSecretsRevision(ctx, currentProject.ID, snapshot.Revision)
+			if restoreErr := o.store.RestoreSecretsRevision(ctx, currentProject.ID, snapshot.Revision); restoreErr != nil {
+				rolledBack = false
+			}
 		}
 		return o.fail(ctx, queued, "RECONCILE_SERVICES", errors.New("runtime reconciliation failed"), rolledBack)
 	}
@@ -331,6 +407,9 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 	for _, queued := range active {
 		p, err := lookup(ctx, queued.ProjectID)
 		if err != nil {
+			if queued.Status == operation.Queued {
+				_ = o.operations.Start(ctx, queued.ID)
+			}
 			_ = o.operations.Fail(ctx, queued.ID, "RESUME", errors.New("project unavailable during operation resume"))
 			continue
 		}
@@ -339,11 +418,25 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 			snapshot, err = o.store.GetDesiredConfiguration(ctx, queued.ProjectID)
 		}
 		if err != nil {
+			if queued.Status == operation.Queued {
+				_ = o.operations.Start(ctx, queued.ID)
+			}
 			_ = o.operations.Fail(ctx, queued.ID, "RESUME", errors.New("configuration unavailable during operation resume"))
 			continue
 		}
 		o.acquire(queued.ProjectID)
+		lease, leaseErr := o.store.AcquireConfigurationLease(ctx, queued.ProjectID, queued.ID, o.now(), 45*time.Minute)
+		if leaseErr != nil || !lease {
+			o.release(queued.ProjectID)
+			continue
+		}
 		go func(op operation.Operation, project contracts.Project, snap store.ConfigurationSnapshot) {
+			if envelope, secretErr := o.store.GetOperationSecret(context.Background(), op.ID, "database-password"); secretErr == nil {
+				if plain, decryptErr := o.cipher.Decrypt(project.ID, "operation.database-password", envelope); decryptErr == nil {
+					_, _ = o.RunDatabasePasswordRotation(context.Background(), project, op, snap, string(plain))
+					return
+				}
+			}
 			_, _ = o.Run(context.Background(), project, op, snap)
 		}(queued, p, snapshot)
 	}

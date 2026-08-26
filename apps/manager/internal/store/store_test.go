@@ -27,6 +27,64 @@ func TestStoreCreatesAndReadsProject(t *testing.T) {
 	if got.ID != want.ID || got.Slug != want.Slug || !got.Services.Database || got.Health != contracts.HealthUnknown {
 		t.Fatalf("GetProject() = %#v, want persisted project", got)
 	}
+	var enabled int
+	if err := s.DB().QueryRow(`SELECT enabled FROM project_services WHERE project_id = ? AND service = 'database'`, want.ID).Scan(&enabled); err != nil || enabled != 1 {
+		t.Fatalf("database service projection = %d, %v; want enabled", enabled, err)
+	}
+}
+
+func TestSecretVersionSnapshotRestoresPrePatchSet(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	cipher, _ := secrets.NewCipher(bytes.Repeat([]byte{7}, 32))
+	old, _ := cipher.Encrypt(project.ID, "smtp.password", []byte("old"))
+	if err := s.PutSecret(context.Background(), project.ID, "smtp.password", old); err != nil {
+		t.Fatal(err)
+	}
+	cfg := configurationFixture()
+	cfg.Auth.SMTP.PasswordSet = true
+	newEnvelope, _ := cipher.Encrypt(project.ID, "smtp.password", []byte("new"))
+	if _, err := s.SaveConfigurationWithSecrets(context.Background(), project.ID, 1, cfg, time.Now(), []SecretMutation{{Kind: "smtp.password", Envelope: newEnvelope}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RestoreSecretsRevision(context.Background(), project.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetSecret(context.Background(), project.ID, "smtp.password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := cipher.Decrypt(project.ID, "smtp.password", got)
+	if string(plain) != "old" {
+		t.Fatalf("restored secret=%q, want old", plain)
+	}
+}
+
+func TestConfigurationLeaseSerializesAndRecoversAfterExpiry(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	acquired, err := s.AcquireConfigurationLease(context.Background(), project.ID, "first", now, time.Minute)
+	if err != nil || !acquired {
+		t.Fatalf("first lease = %v, %v", acquired, err)
+	}
+	acquired, err = s.AcquireConfigurationLease(context.Background(), project.ID, "second", now.Add(time.Second), time.Minute)
+	if err != nil || acquired {
+		t.Fatalf("second lease while held = %v, %v", acquired, err)
+	}
+	acquired, err = s.AcquireConfigurationLease(context.Background(), project.ID, "second", now.Add(2*time.Minute), time.Minute)
+	if err != nil || !acquired {
+		t.Fatalf("expired lease recovery = %v, %v", acquired, err)
+	}
+	if err := s.ReleaseConfigurationLease(context.Background(), project.ID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestStorePersistsOnlyEncryptedSecretEnvelope(t *testing.T) {

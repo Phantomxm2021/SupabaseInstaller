@@ -38,6 +38,13 @@ func (s *ConfigurationService) Get(ctx context.Context, projectID string) (store
 	return s.store.GetConfiguration(ctx, projectID)
 }
 
+// GetDesired returns the latest aggregate, including an unapplied revision.
+// It is the correct merge base for durable operations queued behind runtime
+// reconciliation.
+func (s *ConfigurationService) GetDesired(ctx context.Context, projectID string) (store.ConfigurationSnapshot, error) {
+	return s.store.GetDesiredConfiguration(ctx, projectID)
+}
+
 func (s *ConfigurationService) Save(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration) (store.ConfigurationSnapshot, error) {
 	return s.save(ctx, projectID, expected, cfg)
 }

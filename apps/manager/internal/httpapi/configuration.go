@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -194,7 +195,17 @@ func sectionValuePatch(section string, expected int64, raw []byte) (contracts.Co
 func decodeRaw(raw []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(target)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("section contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func (h configurationHandlers) queue(w http.ResponseWriter, r *http.Request, patch contracts.ConfigurationPatch) {

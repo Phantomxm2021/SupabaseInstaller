@@ -86,6 +86,10 @@ func (c *Client) RotateDatabasePassword(ctx context.Context, input contracts.Rot
 	return output, nil
 }
 
+func (c *Client) RollbackDatabasePassword(ctx context.Context, input contracts.RotateDatabasePasswordRequest) error {
+	return c.post(ctx, "/internal/v1/projects/rollback-database-password", input, nil)
+}
+
 func (c *Client) post(ctx context.Context, path string, input, output any) error {
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -107,11 +111,19 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 		var envelope contracts.ErrorEnvelope
 		_ = json.Unmarshal(payload, &envelope)
 		rollbackComplete := false
+		var rotation contracts.RotateDatabasePasswordResponse
+		if json.Unmarshal(payload, &rotation) == nil {
+			rollbackComplete = rotation.RolledBack
+		}
 		if envelope.Error.Code == "" {
-			var reconcile contracts.ReconcileProjectResponse
-			if json.Unmarshal(payload, &reconcile) == nil && reconcile.Error != nil {
-				envelope.Error = *reconcile.Error
-				rollbackComplete = reconcile.RolledBack
+			if rotation.Error != nil {
+				envelope.Error = *rotation.Error
+			} else {
+				var reconcile contracts.ReconcileProjectResponse
+				if json.Unmarshal(payload, &reconcile) == nil && reconcile.Error != nil {
+					envelope.Error = *reconcile.Error
+					rollbackComplete = reconcile.RolledBack
+				}
 			}
 		}
 		code, message := envelope.Error.Code, envelope.Error.Message
@@ -124,7 +136,15 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 		return &ClientError{Code: code, Message: message, Status: response.StatusCode, RollbackComplete: rollbackComplete}
 	}
 	if output != nil && response.StatusCode != http.StatusNoContent {
-		if err := json.NewDecoder(response.Body).Decode(output); err != nil {
+		decoder := json.NewDecoder(response.Body)
+		if err := decoder.Decode(output); err != nil {
+			return fmt.Errorf("decode provisioner response: %w", err)
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				return fmt.Errorf("decode provisioner response: multiple JSON values")
+			}
 			return fmt.Errorf("decode provisioner response: %w", err)
 		}
 	}

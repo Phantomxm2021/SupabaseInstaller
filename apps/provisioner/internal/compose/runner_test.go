@@ -3,8 +3,40 @@ package compose
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+type inputCaptureExecutor struct {
+	args  []string
+	input []byte
+}
+
+func (e *inputCaptureExecutor) Run(_ context.Context, _ string, args, _ []string) ([]byte, error) {
+	e.args = args
+	return nil, nil
+}
+func (e *inputCaptureExecutor) RunInput(_ context.Context, _ string, args, _ []string, input []byte) ([]byte, error) {
+	e.args = args
+	e.input = input
+	return nil, nil
+}
+
+func TestRotateDatabasePasswordKeepsSecretsOutOfArgv(t *testing.T) {
+	executor := &inputCaptureExecutor{}
+	runner := NewRunner(executor)
+	if err := runner.RotateDatabasePassword(context.Background(), ProjectRef{Slug: "bee", Dir: "/tmp/project", ComposeFile: "/tmp/project/current.yml"}, "old-sentinel", "new-sentinel"); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range executor.args {
+		if strings.Contains(arg, "sentinel") {
+			t.Fatalf("secret leaked into argv: %v", executor.args)
+		}
+	}
+	if !strings.Contains(string(executor.input), "new-sentinel") {
+		t.Fatal("new password was not supplied through controlled SQL input")
+	}
+}
 
 func TestRunnerUsesArgumentVectorAndFixedProjectDirectory(t *testing.T) {
 	executor := &fakeExecutor{}

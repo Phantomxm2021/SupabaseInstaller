@@ -1,11 +1,13 @@
 package compose
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 type ProjectRef struct {
@@ -18,8 +20,18 @@ type ProjectRef struct {
 type Executor interface {
 	Run(ctx context.Context, command string, args, env []string) ([]byte, error)
 }
+type InputExecutor interface {
+	RunInput(context.Context, string, []string, []string, []byte) ([]byte, error)
+}
 
 type OSExecutor struct{}
+
+func (OSExecutor) RunInput(ctx context.Context, command string, args, env []string, input []byte) ([]byte, error) {
+	process := exec.CommandContext(ctx, command, args...)
+	process.Env = append([]string{"PATH=" + os.Getenv("PATH")}, env...)
+	process.Stdin = bytes.NewReader(input)
+	return process.CombinedOutput()
+}
 
 func (OSExecutor) Run(ctx context.Context, command string, args, env []string) ([]byte, error) {
 	process := exec.CommandContext(ctx, command, args...)
@@ -41,7 +53,16 @@ func (r *Runner) RotateDatabasePassword(ctx context.Context, project ProjectRef,
 	if oldPassword == "" || newPassword == "" {
 		return fmt.Errorf("database password values are required")
 	}
-	args := append(r.baseArgs(project), "exec", "-T", "-e", "PGPASSWORD="+oldPassword, "db", "psql", "-U", "postgres", "-d", "postgres", "-v", "new_password="+newPassword, "-c", "ALTER ROLE postgres PASSWORD :'new_password'")
+	_ = oldPassword // local postgres socket authentication is used; never put secrets in argv
+	args := append(r.baseArgs(project), "exec", "-T", "db", "psql", "-U", "postgres", "-d", "postgres")
+	if inputRunner, ok := r.executor.(InputExecutor); ok {
+		statement := "ALTER ROLE postgres PASSWORD '" + strings.ReplaceAll(newPassword, "'", "''") + "';\n"
+		if output, err := inputRunner.RunInput(ctx, "docker", args, nil, []byte(statement)); err != nil {
+			return fmt.Errorf("database password update failed; output length=%d", len(output))
+		}
+		return nil
+	}
+	args = append(args, "-v", "new_password="+newPassword, "-c", "ALTER ROLE postgres PASSWORD :'new_password'")
 	output, err := r.executor.Run(ctx, "docker", args, nil)
 	if err != nil {
 		return fmt.Errorf("database password update failed; output length=%d", len(output))

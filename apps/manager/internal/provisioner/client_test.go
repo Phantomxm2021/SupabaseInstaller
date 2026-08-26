@@ -3,6 +3,7 @@ package provisioner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -40,6 +41,24 @@ func TestClientReturnsProvisionerErrorCode(t *testing.T) {
 	_, err := client.Prepare(context.Background(), contracts.PrepareProjectRequest{})
 	if err == nil || !strings.Contains(err.Error(), "STALE_CONFIG_REVISION") {
 		t.Fatalf("Prepare() error = %v, want provisioner error code", err)
+	}
+}
+
+func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
+	const sentinel = "new-password-sentinel"
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body, _ := json.Marshal(contracts.RotateDatabasePasswordResponse{RolledBack: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: sentinel}})
+		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+
+	_, err := client.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{})
+	if err == nil || !strings.Contains(err.Error(), "Database password rotation failed") || strings.Contains(err.Error(), sentinel) {
+		t.Fatalf("RotateDatabasePassword() error = %v, want redacted typed failure", err)
+	}
+	var clientErr *ClientError
+	if !errors.As(err, &clientErr) || !clientErr.RollbackSucceeded() {
+		t.Fatalf("RotateDatabasePassword() error = %#v, want rollback state", err)
 	}
 }
 

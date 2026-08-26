@@ -61,15 +61,19 @@ type ReconcileProjectResponse struct {
 // Provisioner receives values only over the authenticated private channel and
 // never includes them in responses, logs, or operation events.
 type RotateDatabasePasswordRequest struct {
-	OperationID      string `json:"operationId"`
-	IdempotencyKey   string `json:"idempotencyKey"`
-	ProjectID        string `json:"projectId"`
-	ProjectName      string `json:"projectName"`
-	Slug             string `json:"slug"`
-	ExpectedRevision int64  `json:"expectedRevision"`
-	NextRevision     int64  `json:"nextRevision"`
-	OldPassword      string `json:"oldPassword"`
-	NewPassword      string `json:"newPassword"`
+	OperationKind    string               `json:"operationKind"`
+	OperationID      string               `json:"operationId"`
+	IdempotencyKey   string               `json:"idempotencyKey"`
+	ProjectID        string               `json:"projectId"`
+	ProjectName      string               `json:"projectName"`
+	Slug             string               `json:"slug"`
+	ExpectedRevision int64                `json:"expectedRevision"`
+	NextRevision     int64                `json:"nextRevision"`
+	OldPassword      string               `json:"oldPassword"`
+	NewPassword      string               `json:"newPassword"`
+	Configuration    ProjectConfiguration `json:"configuration"`
+	Secrets          ProjectSecrets       `json:"secrets"`
+	RuntimeSecrets   map[string]string    `json:"runtimeSecrets,omitempty"`
 }
 
 type RotateDatabasePasswordResponse struct {
