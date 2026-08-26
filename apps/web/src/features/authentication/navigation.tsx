@@ -8,12 +8,9 @@ type AuthenticationItem = readonly [path: string, label: string]
 type AuthenticationGroup = { label: string; items: readonly AuthenticationItem[] }
 
 export const authenticationGroups: readonly AuthenticationGroup[] = [
-  { label: 'Manage', items: [['users', 'Users'], ['oauth-apps', 'OAuth Apps']] },
   { label: 'Notifications', items: [['emails', 'Emails']] },
-  { label: 'Configuration', items: [['sign-in-providers', 'Sign In / Providers'], ['sessions', 'Sessions'], ['rate-limits', 'Rate Limits'], ['multi-factor', 'Multi-Factor'], ['url-configuration', 'URL Configuration'], ['attack-protection', 'Attack Protection'], ['auth-hooks', 'Auth Hooks'], ['audit-logs', 'Audit Logs'], ['performance', 'Performance']] },
+  { label: 'Configuration', items: [['sign-in-providers', 'Sign In / Providers'], ['rate-limits', 'Rate Limits'], ['multi-factor', 'Multi-Factor'], ['url-configuration', 'URL Configuration']] },
 ] as const
-
-export const unsupportedAuthenticationRoutes = authenticationGroups.flatMap((group) => group.items).filter(([path]) => path !== 'emails' && path !== 'sign-in-providers' && path !== 'url-configuration')
 
 const compactBreakpoint = 900
 

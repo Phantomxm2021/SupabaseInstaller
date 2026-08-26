@@ -5,6 +5,8 @@ import { toast } from 'sonner'
 import { Alert } from '@/components/ui/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { apiFetch } from '../../api/client'
 import type { AuthConfig, GeneralConfig, RedactedProjectConfiguration, Services } from '../../api/types'
 import { affectedServices, normalizeRedactedConfiguration, sectionImpact, sectionLabel, type PendingConfigurationSave } from '../project/configuration/types'
@@ -63,5 +65,10 @@ export function MultiFactorRoute() {
 }
 
 export function URLConfigurationRoute() {
-  return <section className="page"><h1>URL Configuration</h1></section>
+  const { auth, general, requestSave } = useAuthenticationWorkspace()
+  const [siteUrl, setSiteUrl] = useState(general.siteUrl)
+  const [redirectUrls, setRedirectUrls] = useState(auth.redirectUrls)
+  const siteDirty = siteUrl !== general.siteUrl
+  const redirectsDirty = JSON.stringify(redirectUrls) !== JSON.stringify(auth.redirectUrls)
+  return <main className="page space-y-12"><header className="page-heading"><div><h1>URL Configuration</h1><p className="muted">Configure site URL and redirect URLs for authentication.</p></div></header><section className="space-y-4"><h2 className="text-xl font-semibold">Site URL</h2><form className="overflow-hidden rounded-xl border border-border bg-card" onSubmit={(event) => { event.preventDefault(); requestSave({ section: 'general', value: { ...general, siteUrl }, dirty: { siteUrl: true } }) }}><div className="grid gap-5 p-5 lg:grid-cols-[minmax(18rem,1fr)_minmax(20rem,1fr)]"><div><h3 className="text-sm font-medium">Site URL</h3><p className="mt-1 text-sm text-muted-foreground">The default redirect URL when a valid redirect is not specified.</p></div><Input aria-label="Site URL" value={siteUrl} onChange={(event) => setSiteUrl(event.target.value)} placeholder="https://app.example.com" /></div><div className="flex justify-end border-t border-border p-5"><Button type="submit" disabled={!siteDirty}>Save changes</Button></div></form></section><section className="space-y-4"><div><h2 className="text-xl font-semibold">Redirect URLs</h2><p className="muted mt-1">URLs authentication providers may redirect to after sign-in.</p></div><form className="overflow-hidden rounded-xl border border-border bg-card" onSubmit={(event) => { event.preventDefault(); requestSave({ section: 'auth', value: { ...auth, redirectUrls }, dirty: { redirectUrls: true } }) }}><div className="space-y-3 p-5">{redirectUrls.map((value, index) => <div className="flex gap-3" key={`${index}-${value}`}><Input aria-label={`Redirect URL ${index + 1}`} value={value} onChange={(event) => setRedirectUrls((current) => current.map((item, position) => position === index ? event.target.value : item))} placeholder="https://app.example.com/auth/callback" /><Button type="button" variant="outline" onClick={() => setRedirectUrls((current) => current.filter((_, position) => position !== index))}>Remove</Button></div>)}{redirectUrls.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No Redirect URLs</p>}<Button type="button" variant="outline" onClick={() => setRedirectUrls((current) => [...current, ''])}>Add URL</Button></div><div className="flex justify-end border-t border-border p-5"><Button type="submit" disabled={!redirectsDirty}>Save changes</Button></div></form></section></main>
 }

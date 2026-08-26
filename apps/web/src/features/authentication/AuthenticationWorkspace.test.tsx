@@ -66,16 +66,3 @@ it('opens the Authentication navigation from an accessible mobile trigger', asyn
   expect(await screen.findByRole('navigation', { name: 'Authentication navigation' })).toBeVisible()
   router.dispose()
 })
-
-it('renders an explicit placeholder for unsupported Authentication routes', async () => {
-  stubWorkspaceFetch()
-  window.history.pushState({}, '', '/projects/bee/authentication/sessions')
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const router = createAppRouter(queryClient)
-
-  render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>)
-
-  expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeVisible()
-  expect(screen.getByText('Not configured in this Manager version')).toBeVisible()
-  router.dispose()
-})
