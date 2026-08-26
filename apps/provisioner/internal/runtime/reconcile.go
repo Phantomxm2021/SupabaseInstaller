@@ -1,10 +1,13 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"time"
 
@@ -68,49 +71,62 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			return fail(reconcileFailure(err, false))
 		}
 		candidateProject := compose.ProjectRef{Slug: request.Slug, Dir: candidateRef.ProjectDir, ComposeFile: candidateRef.ComposeFile, EnvFile: candidateRef.EnvFile}
-		previousRef, _ := backend.projectFS.CurrentRuntimeFiles(request.Slug)
+		previousRef, _ := backend.projectFS.CurrentRuntimeGeneration(request.Slug)
 		previousProject := compose.ProjectRef{Slug: request.Slug, Dir: previousRef.ProjectDir, ComposeFile: previousRef.ComposeFile, EnvFile: previousRef.EnvFile}
-		currentProject := previousProject
-		currentProject.Slug = request.Slug
+		currentRef, _ := backend.projectFS.CurrentRuntimeFiles(request.Slug)
+		currentProject := compose.ProjectRef{Slug: request.Slug, Dir: currentRef.ProjectDir, ComposeFile: currentRef.ComposeFile, EnvFile: currentRef.EnvFile}
 		newServices := append([]string(nil), rendered.EnabledComposeServices...)
 		disabled := difference(previousServices, newServices)
+		added := difference(newServices, previousServices)
 		published := false
 		rollback := func(cause error) error {
-			if published && len(previousServices) == 0 && len(newServices) > 0 {
+			var cleanupErr error
+			if published && len(added) > 0 {
 				// The current candidate is still selected while containers are
 				// removed; this leaves volumes intact before restoring the pointer.
-				if err := backend.runner.RemoveStopped(ctx, currentProject, newServices...); err != nil {
-					return &contracts.ReconcileFailure{Cause: errors.Join(cause, err), RollbackSucceeded: false}
-				}
+				cleanupErr = backend.runner.RemoveStopped(ctx, currentProject, added...)
 			}
 			rollbackErr := restore()
 			if rollbackErr != nil {
-				return &contracts.ReconcileFailure{Cause: errors.Join(cause, rollbackErr), RollbackSucceeded: false}
+				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr, rollbackErr), RollbackSucceeded: false}
+			}
+			if !published {
+				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr), RollbackSucceeded: cleanupErr == nil}
 			}
 			rollbackServices := append(affectedServices(previousConfig, request.Configuration), disabled...)
-			rollbackServices = unique(rollbackServices)
+			rollbackServices = intersect(unique(rollbackServices), previousServices)
+			var recoveryErr error
 			if len(previousServices) > 0 && len(rollbackServices) > 0 {
 				if err := backend.runner.Recreate(ctx, previousProject, rollbackServices...); err != nil {
-					return &contracts.ReconcileFailure{Cause: errors.Join(cause, err), RollbackSucceeded: false}
+					recoveryErr = err
 				}
 			}
-			if len(previousServices) > 0 {
+			if recoveryErr == nil && len(previousServices) > 0 {
 				if err := backend.waitHealthy(ctx, request.Slug, previousServices); err != nil {
-					return &contracts.ReconcileFailure{Cause: errors.Join(cause, err), RollbackSucceeded: false}
+					recoveryErr = err
 				}
+			}
+			if cleanupErr != nil || recoveryErr != nil {
+				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr, recoveryErr), RollbackSucceeded: false}
 			}
 			return &contracts.ReconcileFailure{Cause: cause, RollbackSucceeded: true}
+		}
+		if err := pointFunctionsEnvAtCandidate(candidateRef, rendered.Compose); err != nil {
+			return fail(rollback(err))
 		}
 		if err := backend.runner.Validate(ctx, candidateProject); err != nil {
 			return fail(rollback(err))
 		}
-		if err := backend.runner.RemoveStopped(ctx, previousProject, disabled...); err != nil {
+		if err := writeCandidateCompose(candidateRef.ComposeFile, []byte(rendered.Compose)); err != nil {
 			return fail(rollback(err))
 		}
 		if err := commit(); err != nil {
 			return fail(rollback(err))
 		}
 		published = true
+		if err := backend.runner.RemoveStopped(ctx, previousProject, disabled...); err != nil {
+			return fail(rollback(err))
+		}
 		if metadata.Revision == 0 && len(previousServices) == 0 {
 			if err := backend.runner.UpDatabase(ctx, currentProject); err != nil {
 				return fail(rollback(err))
@@ -124,7 +140,6 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			if err := backend.runner.Recreate(ctx, currentProject, affected...); err != nil {
 				return fail(rollback(err))
 			}
-			added := difference(newServices, previousServices)
 			if err := backend.runner.UpSelected(ctx, currentProject, added...); err != nil {
 				return fail(rollback(err))
 			}
@@ -166,6 +181,36 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 	return result, nil
 }
 
+func pointFunctionsEnvAtCandidate(ref projectfs.RuntimeRef, original string) error {
+	path := filepath.ToSlash(filepath.Join(".", ".manager-runtime", "current", ".env.functions"))
+	candidate, err := filepath.Rel(ref.ProjectDir, ref.FunctionsFile)
+	if err != nil {
+		return err
+	}
+	candidate = filepath.ToSlash(filepath.Join(".", candidate))
+	patched := bytes.Replace([]byte(original), []byte(path), []byte(candidate), 1)
+	if bytes.Equal(patched, []byte(original)) {
+		return nil
+	}
+	return writeCandidateCompose(ref.ComposeFile, patched)
+}
+
+func writeCandidateCompose(path string, contents []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(contents); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
 const reconcileHealthTimeout = 30 * time.Second
 const reconcileHealthPoll = 50 * time.Millisecond
 
@@ -183,7 +228,7 @@ func (backend *Backend) waitHealthy(ctx context.Context, slug string, enabled []
 		if report.Health == contracts.HealthHealthy {
 			return nil
 		}
-		if report.Health != contracts.HealthStarting {
+		if !reportHasTransientService(report) {
 			return fmt.Errorf("runtime health is %s", report.Health)
 		}
 		timer := time.NewTimer(reconcileHealthPoll)
@@ -196,6 +241,18 @@ func (backend *Backend) waitHealthy(ctx context.Context, slug string, enabled []
 		case <-timer.C:
 		}
 	}
+}
+
+func reportHasTransientService(report health.Report) bool {
+	for _, service := range report.Services {
+		if service.Health == contracts.HealthUnhealthy {
+			return false
+		}
+		if service.Health == contracts.HealthStarting {
+			return true
+		}
+	}
+	return report.Health == contracts.HealthStarting
 }
 
 func reconcileFailure(cause error, rolledBack bool) error {
@@ -234,6 +291,9 @@ func affectedServices(before, after contracts.ProjectConfiguration) []string {
 	if before.Network.DirectDatabasePort != after.Network.DirectDatabasePort {
 		set["db"] = true
 	}
+	if before.Services.DirectDB != after.Services.DirectDB {
+		set["db"] = true
+	}
 	if before.Network.PoolerPort != after.Network.PoolerPort {
 		set["supavisor"] = true
 	}
@@ -242,6 +302,34 @@ func affectedServices(before, after contracts.ProjectConfiguration) []string {
 	}
 	if before.Services.Gateway != after.Services.Gateway {
 		set["api-gw"] = true
+	}
+	if before.Services.Database != after.Services.Database {
+		set["db"] = true
+	}
+	if before.Services.Auth != after.Services.Auth {
+		set["auth"] = true
+	}
+	if before.Services.REST != after.Services.REST {
+		set["rest"] = true
+	}
+	if before.Services.PostgresMeta != after.Services.PostgresMeta {
+		set["meta"] = true
+	}
+	if before.Services.Storage != after.Services.Storage {
+		set["storage"] = true
+	}
+	if before.Services.Functions != after.Services.Functions {
+		set["functions"] = true
+	}
+	if before.Services.Supavisor != after.Services.Supavisor {
+		set["supavisor"] = true
+	}
+	if before.Services.Logs != after.Services.Logs {
+		set["analytics"], set["logflare"] = true, true
+		set["vector"] = true
+	}
+	if before.Services.Vector != after.Services.Vector {
+		set["vector"] = true
 	}
 	if before.Services.Studio != after.Services.Studio {
 		set["studio"] = true

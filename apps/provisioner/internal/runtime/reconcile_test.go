@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/apps/provisioner/internal/render"
 	"supabase-manager/internal/contracts"
 )
 
@@ -148,8 +150,7 @@ func TestAffectedServicesCoversRenderedTopologyAndRuntimeFields(t *testing.T) {
 	}{
 		{"realtime tuning", func(c *contracts.ProjectConfiguration) { c.Realtime.MaxConnections = 200; c.Services.Realtime = true }, []string{"realtime"}},
 		{"direct db", func(c *contracts.ProjectConfiguration) {
-			c.Database.DirectPort = true
-			c.Database.DirectPortNumber = 15432
+			c.Services.DirectDB = true
 		}, []string{"db"}},
 		{"imgproxy storage", func(c *contracts.ProjectConfiguration) { c.Services.Imgproxy = true }, []string{"storage"}},
 		{"gateway toggle", func(c *contracts.ProjectConfiguration) { c.Services.Gateway = false }, []string{"api-gw"}},
@@ -162,6 +163,50 @@ func TestAffectedServicesCoversRenderedTopologyAndRuntimeFields(t *testing.T) {
 				t.Fatalf("affected = %#v, want %#v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestReconcileRollbackRemovesServicesAddedByFailedCandidate(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	inspector := &sequenceInspector{}
+	backend := NewBackend(root, runner, inspector)
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	inspector.reports = []health.Report{{Health: contracts.HealthUnhealthy}, {Health: contracts.HealthHealthy}}
+	changed := baseConfig()
+	changed.Services.Imgproxy = true
+	result, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil || !result.RolledBack {
+		t.Fatalf("result=%#v err=%v, want rollback", result, err)
+	}
+	if !containsString(runner.removed, "imgproxy") {
+		t.Fatalf("removed=%#v, want newly added imgproxy cleanup", runner.removed)
+	}
+}
+
+func TestReconcileValidationFailureDoesNotRecreatePreviousServices(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	runner.validateError = errors.New("invalid candidate")
+	changed := baseConfig()
+	changed.General.SiteURL = "https://validation-failure.example.com"
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2)); err == nil {
+		t.Fatal("validation failure returned success")
+	}
+	if len(runner.recreated) != 0 {
+		t.Fatalf("recreated=%#v, want no runtime mutation on validation failure", runner.recreated)
 	}
 }
 
@@ -186,6 +231,9 @@ func TestReconcileRemovesDisabledServicesUsingPreviousCurrentModel(t *testing.T)
 	}
 	if strings.Contains(runner.removedCompose, ".candidate-") {
 		t.Fatalf("disabled removal used candidate path: %q", runner.removedCompose)
+	}
+	if !strings.Contains(runner.removedCompose, string(filepath.Separator)+"generations"+string(filepath.Separator)) {
+		t.Fatalf("disabled removal did not use immutable previous generation: %q", runner.removedCompose)
 	}
 }
 
@@ -217,6 +265,64 @@ func TestReconcileProductionRunnerUsesCandidateThenCurrentAndDbFirst(t *testing.
 	}
 	if db < 0 || dependent < 0 || db > dependent {
 		t.Fatalf("compose calls not db-first: %#v", executor.calls)
+	}
+}
+
+func TestInitialRollbackRestoresPointerWhenCandidateCleanupFails(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{removeError: errors.New("injected candidate cleanup failure")}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	result, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1))
+	if err == nil || result.RolledBack {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	current, _ := root.RuntimeComposePath("bee")
+	if _, statErr := os.Lstat(current); !os.IsNotExist(statErr) {
+		t.Fatalf("candidate current survived cleanup failure: %v", statErr)
+	}
+}
+
+func TestReconcilePollsRealInspectorTransientServiceState(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &sequencedContainerSource{}
+	backend := NewBackend(root, &fakeReconcileRunner{}, health.NewInspector(source))
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if source.calls < 2 {
+		t.Fatalf("container source calls = %d, want polling", source.calls)
+	}
+}
+
+func TestRealComposeParserValidatesRevisionZeroFunctionsCandidateWithoutCurrent(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := baseConfig()
+	cfg.Revision = 1
+	out, err := render.Project(render.Input{ProjectID: "project-1", Slug: "bee", APIPort: 18001, Configuration: cfg, Secrets: contracts.ProjectSecrets{DatabasePassword: "db-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}, RuntimeSecrets: map[string]string{"storage.secretAccessKey": "storage-secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, restore, _, err := root.StageRuntimeFilesWithRef("bee", projectfs.RuntimeFiles{Compose: []byte(out.Compose), Env: []byte(out.Env), FunctionsEnv: []byte(out.FunctionsEnv)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pointFunctionsEnvAtCandidate(ref, out.Compose); err != nil {
+		t.Fatal(err)
+	}
+	if err := compose.NewRunner(compose.OSExecutor{}).Validate(context.Background(), compose.ProjectRef{Slug: "bee", Dir: ref.ProjectDir, ComposeFile: ref.ComposeFile, EnvFile: ref.EnvFile}); err != nil {
+		t.Fatalf("real compose config validation: %v", err)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -314,6 +420,8 @@ type fakeReconcileRunner struct {
 	recreated        []string
 	removed          []string
 	removedCompose   string
+	removeError      error
+	validateError    error
 }
 
 type captureComposeExecutor struct{ calls [][]string }
@@ -321,6 +429,21 @@ type captureComposeExecutor struct{ calls [][]string }
 func (e *captureComposeExecutor) Run(_ context.Context, _ string, args, _ []string) ([]byte, error) {
 	e.calls = append(e.calls, append([]string(nil), args...))
 	return nil, nil
+}
+
+type sequencedContainerSource struct{ calls int }
+
+func (s *sequencedContainerSource) Containers(context.Context, string) ([]health.Container, error) {
+	s.calls++
+	state, healthState := "restarting", "starting"
+	if s.calls > 1 {
+		state, healthState = "running", "healthy"
+	}
+	containers := make([]health.Container, 0, 8)
+	for _, service := range []string{"api-gw", "auth", "db", "functions", "meta", "rest", "storage", "studio"} {
+		containers = append(containers, health.Container{Service: service, State: state, Health: healthState})
+	}
+	return containers, nil
 }
 
 func (r *fakeReconcileRunner) UpDatabase(context.Context, compose.ProjectRef) error { return nil }
@@ -336,7 +459,7 @@ func (r *fakeReconcileRunner) DownRuntime(context.Context, compose.ProjectRef) e
 func (r *fakeReconcileRunner) Validate(_ context.Context, project compose.ProjectRef) error {
 	r.validated++
 	r.validatedDir, r.validatedCompose, r.validatedEnv = project.Dir, project.ComposeFile, project.EnvFile
-	return nil
+	return r.validateError
 }
 func (r *fakeReconcileRunner) UpSelected(_ context.Context, _ compose.ProjectRef, services ...string) error {
 	r.up = append(r.up, append([]string(nil), services...))
@@ -349,6 +472,9 @@ func (r *fakeReconcileRunner) Recreate(_ context.Context, _ compose.ProjectRef, 
 func (r *fakeReconcileRunner) RemoveStopped(_ context.Context, project compose.ProjectRef, services ...string) error {
 	r.removed = append(r.removed, services...)
 	r.removedCompose = project.ComposeFile
+	if r.removeError != nil {
+		return r.removeError
+	}
 	return nil
 }
 
@@ -393,6 +519,15 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 func mustReadRuntime(t *testing.T, path string) []byte {
 	t.Helper()

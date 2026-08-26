@@ -85,6 +85,19 @@ func (r *Root) CurrentRuntimeFiles(slug string) (RuntimeRef, error) {
 	return RuntimeRef{ProjectDir: projectPath, ComposeFile: filepath.Join(current, "docker-compose.yml"), EnvFile: filepath.Join(current, ".env"), FunctionsFile: filepath.Join(current, ".env.functions")}, nil
 }
 
+// CurrentRuntimeGeneration returns an immutable ref to the currently selected
+// generation. Unlike CurrentRuntimeFiles, its paths do not follow the current
+// symlink after a later commit.
+func (r *Root) CurrentRuntimeGeneration(slug string) (RuntimeRef, error) {
+	ref, err := r.CurrentRuntimeFiles(slug)
+	if err != nil { return RuntimeRef{}, err }
+	target, err := os.Readlink(filepath.Join(ref.ProjectDir, ".manager-runtime", "current"))
+	if errors.Is(err, os.ErrNotExist) { return ref, nil }
+	if err != nil { return RuntimeRef{}, err }
+	generation := filepath.Join(ref.ProjectDir, ".manager-runtime", filepath.FromSlash(target))
+	return RuntimeRef{ProjectDir: ref.ProjectDir, ComposeFile: filepath.Join(generation, "docker-compose.yml"), EnvFile: filepath.Join(generation, ".env"), FunctionsFile: filepath.Join(generation, ".env.functions")}, nil
+}
+
 func (r *Root) RuntimeComposePath(slug string) (string, error) {
 	ref, err := r.CurrentRuntimeFiles(slug)
 	if err != nil {
