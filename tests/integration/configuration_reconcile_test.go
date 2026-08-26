@@ -41,7 +41,14 @@ func TestConfigurationReconcile(t *testing.T) {
 	op := patchJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration/oauth/google", map[string]any{"expectedRevision": revision, "value": google}, cookie, csrf)
 	waitOperation(t, client, baseURL, op["operationId"].(string), cookie, csrf)
 	config = getJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration", cookie, csrf)
-	functions := config["functions"].(map[string]any)
+	canonical, ok := config["configuration"].(map[string]any)
+	if !ok {
+		t.Fatal("configuration response omitted canonical configuration")
+	}
+	functions, ok := canonical["functions"].(map[string]any)
+	if !ok {
+		t.Fatal("configuration response omitted functions section")
+	}
 	functions["variables"] = []any{map[string]any{"name": "TASK10_ACCEPTANCE_SECRET", "valueSet": true, "value": map[string]any{"action": "replace", "value": acceptanceValue()}}}
 	op = patchJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration/functions", map[string]any{"expectedRevision": int64(config["revision"].(float64)), "value": functions}, cookie, csrf)
 	waitOperation(t, client, baseURL, op["operationId"].(string), cookie, csrf)
@@ -49,7 +56,17 @@ func TestConfigurationReconcile(t *testing.T) {
 	if supabaseURL == "" {
 		t.Fatal("SUPABASE_MANAGER_E2E_SUPABASE_URL is required")
 	}
-	response, err := client.Get(supabaseURL + "/auth/v1/settings")
+	request, err := http.NewRequest(http.MethodGet, supabaseURL+"/auth/v1/settings", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anonKey := os.Getenv("SUPABASE_MANAGER_E2E_ANON_KEY")
+	if anonKey == "" {
+		t.Fatal("SUPABASE_MANAGER_E2E_ANON_KEY is required for authenticated settings acceptance")
+	}
+	request.Header.Set("apikey", anonKey)
+	request.Header.Set("Authorization", "Bearer "+anonKey)
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatalf("GET /auth/v1/settings: %v", err)
 	}
@@ -65,6 +82,7 @@ func loginAcceptance(t *testing.T, client *http.Client, baseURL, username, passw
 	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	request, _ := http.NewRequest(http.MethodPost, baseURL+"/api/session", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", baseURL)
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatalf("login: %v", err)

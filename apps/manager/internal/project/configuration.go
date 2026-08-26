@@ -117,6 +117,34 @@ func ValidateConfiguration(cfg contracts.ProjectConfiguration) error {
 	return validation
 }
 
+// ValidateStoredConfiguration validates the redacted canonical state emitted
+// after command actions have been consumed into encrypted mutations. A stored
+// configured secret has an empty action by design; command validation remains
+// strict at PreparePatch/Save boundaries.
+func ValidateStoredConfiguration(cfg contracts.ProjectConfiguration) error {
+	if cfg.Auth.SMTP.PasswordSet && cfg.Auth.SMTP.Password.Action == "" {
+		cfg.Auth.SMTP.Password.Action = "retain"
+	}
+	if cfg.Auth.Phone.SecretSet && cfg.Auth.Phone.Secret.Action == "" {
+		cfg.Auth.Phone.Secret.Action = "retain"
+	}
+	for provider, value := range cfg.Auth.OAuth {
+		if value.SecretSet && value.Secret.Action == "" {
+			value.Secret.Action = "retain"
+			cfg.Auth.OAuth[provider] = value
+		}
+	}
+	if cfg.Storage.SecretAccessKeySet && cfg.Storage.SecretAccessKey.Action == "" {
+		cfg.Storage.SecretAccessKey.Action = "retain"
+	}
+	for index := range cfg.Functions.Variables {
+		if cfg.Functions.Variables[index].ValueSet && cfg.Functions.Variables[index].Value.Action == "" {
+			cfg.Functions.Variables[index].Value.Action = "retain"
+		}
+	}
+	return ValidateConfiguration(cfg)
+}
+
 func validateServicesConfiguration(services contracts.Services, validation *ValidationError) {
 	if !services.Database {
 		validation.add("services.database", "PostgreSQL is required")

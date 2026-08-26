@@ -42,3 +42,11 @@ func TestLoadRejectsPublishedExampleSecrets(t *testing.T) {
 		t.Fatal("Load accepted example secrets")
 	}
 }
+
+func TestLoadRejectsPublishedZeroMasterKey(t *testing.T) {
+	t.Setenv("MASTER_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	t.Setenv("PROVISIONER_TOKEN", strings.Repeat("b", 32))
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted the published all-zero master key")
+	}
+}

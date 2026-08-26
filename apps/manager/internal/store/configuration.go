@@ -40,6 +40,25 @@ type ConfigurationLease struct {
 	Fence int64
 }
 
+type OperationCompensation struct {
+	Phase string
+	Key   string
+}
+
+func (s *Store) SetOperationCompensation(ctx context.Context, operationID, phase, key string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE operations SET compensation_phase=?, compensation_idempotency_key=? WHERE id=?`, phase, key, operationID)
+	return err
+}
+
+func (s *Store) GetOperationCompensation(ctx context.Context, operationID string) (OperationCompensation, error) {
+	var state OperationCompensation
+	err := s.db.QueryRowContext(ctx, `SELECT compensation_phase,compensation_idempotency_key FROM operations WHERE id=?`, operationID).Scan(&state.Phase, &state.Key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return state, ErrNotFound
+	}
+	return state, err
+}
+
 // ConfigurationAdmission is the single durable admission boundary for a
 // configuration command. The lease, revision, encrypted mutations, operation
 // event and exact command payload are committed (or rolled back) together.
@@ -517,11 +536,14 @@ func (s *Store) RestoreConfigurationStateOwned(ctx context.Context, projectID st
 		if owner != "" {
 			var leaseOwner string
 			var leaseFence int64
-			var expires string
-			if err := tx.QueryRowContext(ctx, `SELECT owner,fence,expires_at FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&leaseOwner, &leaseFence, &expires); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&leaseOwner, &leaseFence); err != nil {
 				return err
 			}
-			if leaseOwner != owner || leaseFence != fence || expires <= formatTime(now) {
+			// An expired lease is recoverable by its original fenced owner. The
+			// current-revision CAS above proves that no successor has admitted;
+			// rejecting solely on expiry would strand candidate rows forever after
+			// a process pause. A different owner/fence is still stale.
+			if leaseOwner != owner || leaseFence != fence {
 				return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
 			}
 			var boundRevision, boundFence int64
@@ -657,6 +679,109 @@ func (s *Store) GetSecretAtRevision(ctx context.Context, projectID string, revis
 		return envelope, ErrNotFound
 	}
 	return envelope, err
+}
+
+// CleanupTerminalConfigurationCandidates repairs revisions left by older
+// Manager versions after a terminal failure. Active operation owners and
+// successor revisions are preserved; only unowned candidates are removed.
+func (s *Store) CleanupTerminalConfigurationCandidates(ctx context.Context) error {
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT id,config_revision,last_good_revision FROM projects`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var projectID string
+			var current, lastGood int64
+			if err := rows.Scan(&projectID, &current, &lastGood); err != nil {
+				return err
+			}
+			candidateRows, err := tx.QueryContext(ctx, `SELECT revision FROM project_configs WHERE project_id=? AND section='aggregate' AND revision>? ORDER BY revision`, projectID, lastGood)
+			if err != nil {
+				return err
+			}
+			var candidates []int64
+			for candidateRows.Next() {
+				var revision int64
+				if err := candidateRows.Scan(&revision); err != nil {
+					candidateRows.Close()
+					return err
+				}
+				candidates = append(candidates, revision)
+			}
+			if err := candidateRows.Err(); err != nil {
+				candidateRows.Close()
+				return err
+			}
+			candidateRows.Close()
+			for _, revision := range candidates {
+				var active int
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operation_configurations oc JOIN operations o ON o.id=oc.operation_id WHERE oc.project_id=? AND oc.revision=? AND o.status IN ('QUEUED','RUNNING','ROLLING_BACK')`, projectID, revision).Scan(&active); err != nil {
+					return err
+				}
+				if active != 0 {
+					continue
+				}
+				if revision == current {
+					if err := restoreSecretsRevisionTx(ctx, tx, projectID, revision); err != nil && !errors.Is(err, ErrNotFound) {
+						return err
+					}
+					var raw string
+					if err := tx.QueryRowContext(ctx, `SELECT config_json FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, projectID, lastGood).Scan(&raw); err != nil {
+						return err
+					}
+					var cfg contracts.ProjectConfiguration
+					if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+						return err
+					}
+					if _, err := tx.ExecContext(ctx, `UPDATE projects SET config_revision=?,updated_at=? WHERE id=? AND config_revision=?`, lastGood, formatTime(time.Now()), projectID, current); err != nil {
+						return err
+					}
+					if err := updateCanonicalProjectionTx(ctx, tx, projectID, cfg, time.Now()); err != nil {
+						return err
+					}
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, projectID, revision); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM project_secret_versions WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM project_secret_snapshot_markers WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
+					return err
+				}
+			}
+			var activeOperations int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations WHERE project_id=? AND status IN ('QUEUED','RUNNING','ROLLING_BACK')`, projectID).Scan(&activeOperations); err != nil {
+				return err
+			}
+			if activeOperations == 0 {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id=?`, projectID); err != nil {
+					return err
+				}
+			}
+		}
+		return rows.Err()
+	})
+}
+
+func restoreSecretsRevisionTx(ctx context.Context, tx *sql.Tx, projectID string, revision int64) error {
+	var present int
+	if err := tx.QueryRowContext(ctx, `SELECT present FROM project_secret_snapshot_markers WHERE project_id=? AND revision=?`, projectID, revision).Scan(&present); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id=?`, projectID); err != nil {
+		return err
+	}
+	if present == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id,kind,envelope_version,nonce,ciphertext,updated_at) SELECT project_id,kind,envelope_version,nonce,ciphertext,? FROM project_secret_versions WHERE project_id=? AND revision=?`, formatTime(time.Now()), projectID, revision)
+	return err
 }
 
 func (s *Store) MarkConfigurationGood(ctx context.Context, projectID string, revision int64) error {

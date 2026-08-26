@@ -3,7 +3,6 @@
 package configuration
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -306,33 +305,22 @@ func randomSecret() (string, error) {
 }
 
 // allocateUpdatePorts applies the same server-owned allocator used by install
-// to installed-project updates. The UI never accepts these values; enabling a
-// service obtains ports here before admission and therefore before render.
+// to installed-project updates. It only chooses candidate values. Canonical
+// allocations are promoted or released by MarkConfigurationGood in the same
+// transaction as the desired revision; a failed render therefore cannot
+// change the last-good runtime's ports.
 func (o *Orchestrator) allocateUpdatePorts(ctx context.Context, projectID string, cfg *contracts.ProjectConfiguration) error {
 	if o.allocator == nil {
 		return nil
 	}
-	release := func(kind ports.Kind) error { return o.allocator.Release(ctx, projectID, kind) }
 	if !cfg.Services.Studio {
-		if err := release(ports.KindStudio); err != nil {
-			return err
-		}
 		cfg.Network.StudioPort = 0
 	}
 	if !cfg.Services.DirectDB {
-		if err := release(ports.KindDirectDB); err != nil {
-			return err
-		}
 		cfg.Database.DirectPort = false
 		cfg.Database.DirectPortNumber, cfg.Network.DirectDatabasePort = 0, 0
 	}
 	if !cfg.Services.Supavisor {
-		if err := release(ports.KindPoolerTxn); err != nil {
-			return err
-		}
-		if err := release(ports.KindPoolerSes); err != nil {
-			return err
-		}
 		cfg.Pooler.TransactionPort, cfg.Pooler.SessionPort, cfg.Network.PoolerPort = 0, 0, 0
 	}
 	kinds := []ports.Kind{ports.KindAPI}
@@ -345,7 +333,7 @@ func (o *Orchestrator) allocateUpdatePorts(ctx context.Context, projectID string
 	if cfg.Services.Supavisor {
 		kinds = append(kinds, ports.KindPoolerTxn, ports.KindPoolerSes)
 	}
-	allocated, err := o.allocator.ReserveMany(ctx, projectID, kinds)
+	allocated, err := o.allocator.CandidateMany(ctx, projectID, kinds)
 	if err != nil {
 		return err
 	}
@@ -391,18 +379,33 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 	// A worker may have crashed after Manager published the new envelope and
 	// while compensation was in flight. Re-enter through the same fenced,
 	// idempotent rollback key before attempting any new rotation work.
-	if queued.CurrentStep == "MARK_CONFIGURATION_GOOD" && o.rotationSecretPublished(ctx, currentProject.ID, queued.ID) {
+	compensation, _ := o.store.GetOperationCompensation(ctx, queued.ID)
+	if queued.CurrentStep == "MARK_CONFIGURATION_GOOD" && compensation.Phase == "ROLLBACK_CONFIRMED" {
+		if err := o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot); err != nil {
+			return queued, err
+		}
+		return o.fail(ctx, queued, queued.CurrentStep, errors.New("database password rotation compensated"), true)
+	}
+	if queued.CurrentStep == "MARK_CONFIGURATION_GOOD" && (compensation.Phase == "ROLLBACK_PENDING" || compensation.Phase == "RUNTIME_COMMITTED") {
 		if old, oldErr := o.rotationOldPassword(ctx, currentProject.ID, snapshot.Revision-1); oldErr == nil {
 			request, requestErr := o.rotationRequestForRecovery(ctx, currentProject, queued, snapshot, old, newPassword)
 			if requestErr == nil {
 				if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
 					request.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
-					request.IdempotencyKey = queued.ID + ":rollback"
+					request.IdempotencyKey = compensation.Key
+					if request.IdempotencyKey == "" {
+						request.IdempotencyKey = queued.ID + ":rollback"
+					}
 					request.OldPassword, request.NewPassword = newPassword, old
 					if rollbackErr := compensator.RollbackDatabasePassword(ctx, request); rollbackErr == nil {
-						_ = o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot)
+						if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_CONFIRMED", request.IdempotencyKey); err != nil {
+							return queued, err
+						}
+						if err := o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot); err != nil {
+							return queued, err
+						}
 						return o.fail(ctx, queued, queued.CurrentStep, errors.New("database password rotation compensated"), true)
-					} else if !runtimeOutcomeKnown(rollbackErr) {
+					} else {
 						return queued, rollbackErr
 					}
 				}
@@ -428,7 +431,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 				_ = o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot)
 				return o.fail(ctx, queued, step, errors.New("configuration lease lost"), false)
 			}
-			if err := project.ValidateConfiguration(snapshot.Configuration); err != nil {
+			if err := project.ValidateStoredConfiguration(snapshot.Configuration); err != nil {
 				return o.fail(ctx, queued, step, err, false)
 			}
 		}
@@ -477,12 +480,18 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			if result.OperationID != queued.ID || result.ProjectID != currentProject.ID || result.Revision != snapshot.Revision {
 				return o.fail(ctx, queued, step, errors.New("runtime verification failed"), false)
 			}
+			if err := o.store.SetOperationCompensation(ctx, queued.ID, "RUNTIME_COMMITTED", queued.ID+":rollback"); err != nil {
+				return queued, err
+			}
 		}
 		if step == "MARK_CONFIGURATION_GOOD" {
 			envelope, err := o.cipher.Encrypt(currentProject.ID, "database-password", []byte(newPassword))
 			if err != nil {
 				rollback := false
 				if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
+					if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_PENDING", queued.ID+":rollback"); err != nil {
+						return queued, err
+					}
 					rollbackRequest := rotationRequest
 					rollbackRequest.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
 					rollbackRequest.IdempotencyKey = queued.ID + ":rollback"
@@ -494,6 +503,9 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 					rollback = rollbackErr == nil
 				}
 				if rollback {
+					if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_CONFIRMED", queued.ID+":rollback"); err != nil {
+						return queued, err
+					}
 					if restoreErr := o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot); restoreErr != nil {
 						rollback = false
 					}
@@ -503,6 +515,9 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			if err := o.store.PublishConfigurationSecret(ctx, currentProject.ID, snapshot.Revision, "database-password", envelope, o.now()); err != nil {
 				rollback := false
 				if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
+					if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_PENDING", queued.ID+":rollback"); err != nil {
+						return queued, err
+					}
 					rollbackRequest := rotationRequest
 					rollbackRequest.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
 					rollbackRequest.IdempotencyKey = queued.ID + ":rollback"
@@ -514,6 +529,9 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 					rollback = rollbackErr == nil
 				}
 				if rollback {
+					if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_CONFIRMED", queued.ID+":rollback"); err != nil {
+						return queued, err
+					}
 					if restoreErr := o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot); restoreErr != nil {
 						rollback = false
 					}
@@ -525,6 +543,9 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 				if err := confirmer.ConfirmDatabasePasswordRotation(ctx, confirmation); err != nil {
 					rollback := false
 					if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
+						if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_PENDING", queued.ID+":rollback"); err != nil {
+							return queued, err
+						}
 						rollbackRequest := rotationRequest
 						rollbackRequest.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
 						rollbackRequest.IdempotencyKey = queued.ID + ":rollback"
@@ -536,6 +557,9 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 						rollback = rollbackErr == nil
 					}
 					if rollback {
+						if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_CONFIRMED", queued.ID+":rollback"); err != nil {
+							return queued, err
+						}
 						if restoreErr := o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot); restoreErr != nil {
 							rollback = false
 						}
@@ -546,6 +570,9 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			if err := o.store.MarkConfigurationGood(ctx, currentProject.ID, snapshot.Revision); err != nil {
 				rollback := false
 				if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
+					if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_PENDING", queued.ID+":rollback"); err != nil {
+						return queued, err
+					}
 					rollbackRequest := rotationRequest
 					rollbackRequest.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
 					rollbackRequest.IdempotencyKey = queued.ID + ":rollback"
@@ -557,6 +584,9 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 					rollback = rollbackErr == nil
 				}
 				if rollback {
+					if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_CONFIRMED", queued.ID+":rollback"); err != nil {
+						return queued, err
+					}
 					if restoreErr := o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot); restoreErr != nil {
 						rollback = false
 					}
@@ -572,15 +602,6 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 		return queued, err
 	}
 	return o.operations.Get(ctx, queued.ID)
-}
-
-func (o *Orchestrator) rotationSecretPublished(ctx context.Context, projectID, operationID string) bool {
-	current, currentErr := o.store.GetSecret(ctx, projectID, "database-password")
-	target, targetErr := o.store.GetOperationSecret(ctx, operationID, "database-password")
-	if currentErr != nil || targetErr != nil {
-		return false
-	}
-	return current.Version == target.Version && bytes.Equal(current.Nonce, target.Nonce) && bytes.Equal(current.Ciphertext, target.Ciphertext)
 }
 
 func reconcileRollback(err error) bool {
@@ -654,7 +675,7 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 			return queued, err
 		}
 		if i == 0 {
-			if err := project.ValidateConfiguration(snapshot.Configuration); err != nil {
+			if err := project.ValidateStoredConfiguration(snapshot.Configuration); err != nil {
 				_ = o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot)
 				return o.fail(ctx, queued, name, err, false)
 			}

@@ -234,6 +234,68 @@ func TestRestoreConfigurationStateOwnedCleansFailedRevisionForNextAdmission(t *t
 	}
 }
 
+func TestRestoreConfigurationStateOwnedAllowsExpiredOriginalFence(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	op := contracts.Operation{ID: "expired-owner", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	candidate := configurationFixture()
+	candidate.General.Domain = "expired-failed.example.com"
+	snapshot, lease, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RestoreConfigurationStateOwned(context.Background(), project.ID, snapshot.Revision, op.ID, lease.Fence, now.Add(2*time.Hour)); err != nil {
+		t.Fatalf("expired original owner restore = %v", err)
+	}
+}
+
+func TestCleanupTerminalConfigurationCandidatesRecoversLegacyFailedRevision(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	candidate := configurationFixture()
+	candidate.General.Domain = "legacy-failed.example.com"
+	now := time.Now().UTC()
+	op := contracts.Operation{ID: "legacy-failed-op", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE operations SET status='FAILED' WHERE id=?`, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CleanupTerminalConfigurationCandidates(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: contracts.Operation{ID: "legacy-next", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now.Add(time.Second)}, ProjectID: project.ID, Owner: "legacy-next", ExpectedRevision: 1, Configuration: configurationFixture(), OperationKind: "UPDATE_CONFIG", Now: now.Add(time.Second)}); err != nil {
+		t.Fatalf("admission after startup cleanup = %v", err)
+	}
+}
+
+func TestOperationCompensationStateIsDurable(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	op := contracts.Operation{ID: "comp-op", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: time.Now()}
+	if err := s.CreateOperation(context.Background(), op, "OPERATION_QUEUED", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetOperationCompensation(context.Background(), op.ID, "ROLLBACK_PENDING", "comp-op:rollback"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetOperationCompensation(context.Background(), op.ID)
+	if err != nil || got.Phase != "ROLLBACK_PENDING" || got.Key != "comp-op:rollback" {
+		t.Fatalf("compensation state=%#v err=%v", got, err)
+	}
+}
+
 func TestSnapshotMarkerDistinguishesEmptyRevision(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()

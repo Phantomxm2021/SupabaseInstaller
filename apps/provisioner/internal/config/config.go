@@ -32,7 +32,7 @@ func isExampleSecret(value string) bool {
 			return true
 		}
 	}
-	return value == strings.Repeat("0", len(value))
+	return value == strings.Repeat("0", len(value)) || value == strings.Repeat("A", len(value))
 }
 
 func envOr(name, fallback string) string {

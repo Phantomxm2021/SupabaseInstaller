@@ -360,9 +360,9 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 	return candidate, restore, commit, nil
 }
 
-// managerOwnedIncompleteTree distinguishes a directory created by Manager
-// before hydration from an existing user project. The marker file is not
-// sufficient because users may legitimately remove or replace it.
+// managerOwnedIncompleteTree only recognizes the durable metadata-only state
+// as manager-owned. Names such as volumes and functions are user data; they
+// must never be treated as permission to fill a partial tree.
 func managerOwnedIncompleteTree(projectPath string) (bool, error) {
 	entries, err := os.ReadDir(projectPath)
 	if err != nil {
@@ -371,35 +371,38 @@ func managerOwnedIncompleteTree(projectPath string) (bool, error) {
 	if len(entries) == 0 {
 		return true, nil
 	}
-	// Functions source is explicitly user-owned. If the canonical embedded
-	// source already exists, a missing DB marker cannot authorize hydration.
-	if _, err := os.Stat(filepath.Join(projectPath, "volumes", "functions", "main", "index.ts")); err == nil {
-		return false, nil
-	}
-	metadataPresent := false
+	metadata := false
 	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			return false, nil
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return false, infoErr
+		}
+		if !info.Mode().IsRegular() {
+			return false, nil
+		}
 		switch entry.Name() {
 		case "project.json":
-			metadataPresent = true
-		case ".manager-runtime", ".manager-locks":
-			// These are Manager-owned control-plane entries.
+			metadata = true
 		case "docker-compose.yml", ".env", ".env.functions":
-			// Legacy generated files are also Manager-owned migration state.
-		case "volumes", "functions":
-			// Persistent data and the legacy Functions source are retained by
-			// hydration; copyEmbeddedTemplate only fills missing paths.
+			// Explicitly manager-generated legacy files may be migrated. This
+			// does not authorize hydration over volumes/functions/user paths.
 		default:
 			return false, nil
 		}
 	}
-	// project.json is the durable ownership marker. A runtime directory on
-	// its own is not enough to authorize template hydration.
-	if metadataPresent {
-		return true, nil
+	return metadata || len(entries) > 0 && allLegacyRuntimeFiles(entries), nil
+}
+
+func allLegacyRuntimeFiles(entries []os.DirEntry) bool {
+	for _, entry := range entries {
+		if entry.Name() != "docker-compose.yml" && entry.Name() != ".env" && entry.Name() != ".env.functions" {
+			return false
+		}
 	}
-	// A legacy runtime-only tree can be safely hydrated while it is migrated;
-	// any persistent/user directory above caused an early false return.
-	return true, nil
+	return true
 }
 
 // CleanupAbandonedRuntimeCandidates removes pre-commit candidate directories

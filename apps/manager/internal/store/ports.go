@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -18,6 +19,22 @@ func (s *Store) ReservedPort(ctx context.Context, projectID, kind string) (int, 
 		return 0, fmt.Errorf("read port reservation: %w", err)
 	}
 	return port, nil
+}
+
+// PortInUse includes both last-good allocations and pending configuration
+// candidates. Callers use it only while choosing a candidate; admission is
+// still the authoritative transaction that reserves the selected value.
+func (s *Store) PortInUse(ctx context.Context, port int) (bool, error) {
+	var used int
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM port_allocations WHERE port=?
+		UNION ALL
+		SELECT 1 FROM configuration_reservations WHERE resource_kind=? AND resource_key=?
+	)`, port, "port:"+strconv.Itoa(port), strconv.Itoa(port)).Scan(&used)
+	if err != nil {
+		return false, fmt.Errorf("check port candidate: %w", err)
+	}
+	return used == 1, nil
 }
 
 // TryReservePorts atomically claims a set of ports. A conflict rolls back all

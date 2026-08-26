@@ -36,3 +36,10 @@ func TestLoadRejectsPublishedExampleToken(t *testing.T) {
 		t.Fatal("Load accepted example token")
 	}
 }
+
+func TestLoadRejectsPublishedZeroToken(t *testing.T) {
+	t.Setenv("MANAGER_TOKEN", strings.Repeat("0", 32))
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted published zero token")
+	}
+}

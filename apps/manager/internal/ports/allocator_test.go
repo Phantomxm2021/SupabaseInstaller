@@ -55,6 +55,26 @@ func TestAllocatorReservesSelectedPortsAtomically(t *testing.T) {
 	}
 }
 
+func TestAllocatorCandidateManyDoesNotMutateCanonicalAllocations(t *testing.T) {
+	database := openPortStore(t)
+	createPortProject(t, database, "bee")
+	allocator := NewAllocator(database, 18001, 18003, fakeProbe{})
+	candidate, err := allocator.CandidateMany(context.Background(), "bee", []Kind{KindAPI, KindStudio})
+	if err != nil {
+		t.Fatalf("CandidateMany() error = %v", err)
+	}
+	if candidate[KindAPI] != 18001 || candidate[KindStudio] != 18002 {
+		t.Fatalf("candidate ports = %#v, want API=18001 Studio=18002", candidate)
+	}
+	var count int
+	if err := database.DB().QueryRow(`SELECT COUNT(*) FROM port_allocations WHERE project_id=?`, "bee").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("CandidateMany() changed canonical allocations: %d rows", count)
+	}
+}
+
 type fakeProbe struct{ busy map[int]bool }
 
 func (probe fakeProbe) Available(port int) bool { return !probe.busy[port] }

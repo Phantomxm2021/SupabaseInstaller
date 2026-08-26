@@ -224,6 +224,18 @@ func TestConfigurationValidationStrictInputs(t *testing.T) {
 	}
 }
 
+func TestValidateStoredConfigurationAcceptsConsumedSecretActions(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", Port: 587, Username: "mailer", PasswordSet: true, SenderEmail: "mailer@example.com", SenderName: "Mailer"}
+	cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true, ClientID: "client", SecretSet: true}}
+	if err := ValidateStoredConfiguration(cfg); err != nil {
+		t.Fatalf("stored canonical validation = %v", err)
+	}
+	if err := ValidateConfiguration(cfg); err == nil {
+		t.Fatal("command validation accepted an empty configured action")
+	}
+}
+
 func TestValidateConfigurationDependencies(t *testing.T) {
 	cases := []struct {
 		name   string

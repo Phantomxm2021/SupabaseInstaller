@@ -13,12 +13,14 @@ On Docker Desktop, `PROJECT_ROOT` must be an absolute shared host path.
 ## Start
 
 ```sh
-cp deploy/.env.example deploy/.env
 mkdir -p /Users/Shared/supabase-manager/projects
 umask 077
 MASTER_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 PROVISIONER_TOKEN="$(openssl rand -hex 32)"
-sed -e "s#^MASTER_ENCRYPTION_KEY=.*#MASTER_ENCRYPTION_KEY=$MASTER_ENCRYPTION_KEY#" -e "s#^PROVISIONER_TOKEN=.*#PROVISIONER_TOKEN=$PROVISIONER_TOKEN#" deploy/.env.example > deploy/.env
+install -m 600 /dev/null deploy/.env
+sed -e "s#^MASTER_ENCRYPTION_KEY=.*#MASTER_ENCRYPTION_KEY=$MASTER_ENCRYPTION_KEY#" -e "s#^PROVISIONER_TOKEN=.*#PROVISIONER_TOKEN=$PROVISIONER_TOKEN#" deploy/.env.example > deploy/.env.tmp
+chmod 600 deploy/.env.tmp
+mv deploy/.env.tmp deploy/.env
 unset MASTER_ENCRYPTION_KEY PROVISIONER_TOKEN
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build --wait
 ```

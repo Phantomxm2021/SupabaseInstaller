@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -30,7 +31,7 @@ func Load() (Config, error) {
 		return Config{}, errors.New("MASTER_ENCRYPTION_KEY is required")
 	}
 	key, err := base64.StdEncoding.DecodeString(keyText)
-	if err != nil || len(key) != 32 {
+	if err != nil || len(key) != 32 || bytes.Equal(key, make([]byte, 32)) {
 		return Config{}, fmt.Errorf("MASTER_ENCRYPTION_KEY must be base64-encoded 32 bytes")
 	}
 	token := os.Getenv("PROVISIONER_TOKEN")

@@ -197,6 +197,36 @@ func TestStageRuntimeFilesRefusesHydrationOverExistingUserTree(t *testing.T) {
 	}
 }
 
+func TestStageRuntimeFilesRefusesHydrationOverUserSymlinkWithoutWrites(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("symlinked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(project, "user-target")
+	if err := os.WriteFile(target, []byte("untouched"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(project, "functions")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := root.StageRuntimeFiles("symlinked", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")}); err == nil {
+		t.Fatal("hydration accepted a user symlink")
+	}
+	if got := string(mustRead(t, target)); got != "untouched" {
+		t.Fatalf("symlink target changed after rejected hydration: %q", got)
+	}
+	if info, err := os.Lstat(filepath.Join(project, "functions")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("user symlink changed after rejected hydration: info=%v err=%v", info, err)
+	}
+}
+
 func TestStageRuntimeFilesRestoreSwitchesToPriorGeneration(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
@@ -274,6 +304,9 @@ func TestStageRuntimeFilesPreservesStableVolumeDataAcrossGenerations(t *testing.
 	if err := os.MkdirAll(filepath.Join(project, "volumes", "storage"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(project, "volumes", "db", "_supabase.sql"), []byte("embedded template"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(project, "volumes", "db", "sentinel"), []byte("db-data"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -311,6 +344,9 @@ func TestStageRuntimeFilesMigratesLegacyRootRuntimeFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(project, "volumes", "storage"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "volumes", "db", "_supabase.sql"), []byte("embedded template"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(project, "functions"), 0o700); err != nil {
@@ -381,15 +417,12 @@ func TestStageRuntimeFilesSkipsNonRegularLegacyRuntimeEntries(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(project, ".env.functions"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, commit, err := root.StageRuntimeFiles("legacy", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")})
-	if err != nil {
-		t.Fatal(err)
+	_, _, err = root.StageRuntimeFiles("legacy", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")})
+	if err == nil {
+		t.Fatal("non-regular legacy entry unexpectedly accepted")
 	}
-	if err := commit(); err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(filepath.Join(project, ".env.functions")); err != nil || !info.IsDir() {
-		t.Fatalf("non-regular legacy entry was removed or changed: info=%v err=%v", info, err)
+	if info, statErr := os.Stat(filepath.Join(project, ".env.functions")); statErr != nil || !info.IsDir() {
+		t.Fatalf("non-regular legacy entry was removed or changed: info=%v err=%v", info, statErr)
 	}
 }
 

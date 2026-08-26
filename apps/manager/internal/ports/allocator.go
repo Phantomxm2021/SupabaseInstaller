@@ -119,6 +119,56 @@ func (a *Allocator) ReserveMany(ctx context.Context, projectID string, kinds []K
 	return nil, ErrExhausted
 }
 
+// CandidateMany chooses the ports an update would need without changing the
+// canonical allocation table. The selected values are protected by the
+// configuration admission transaction; this method is deliberately only a
+// read/allocate hint so a render failure cannot steal a last-good port.
+func (a *Allocator) CandidateMany(ctx context.Context, projectID string, kinds []Kind) (map[Kind]int, error) {
+	allocated := make(map[Kind]int, len(kinds))
+	missing := make([]Kind, 0, len(kinds))
+	used := make(map[int]bool, len(kinds))
+	for _, kind := range kinds {
+		if _, seen := allocated[kind]; seen {
+			continue
+		}
+		port, err := a.store.ReservedPort(ctx, projectID, string(kind))
+		if err == nil {
+			allocated[kind] = port
+			used[port] = true
+			continue
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+		missing = append(missing, kind)
+	}
+	if len(missing) == 0 {
+		return allocated, nil
+	}
+	rangeSize := a.max - a.min + 1
+	for offset := 0; offset < rangeSize; offset++ {
+		port := a.min + offset
+		if used[port] || !a.probe.Available(port) {
+			continue
+		}
+		inUse, err := a.store.PortInUse(ctx, port)
+		if err != nil {
+			return nil, err
+		}
+		if inUse {
+			continue
+		}
+		kind := missing[0]
+		allocated[kind] = port
+		used[port] = true
+		missing = missing[1:]
+		if len(missing) == 0 {
+			return allocated, nil
+		}
+	}
+	return nil, ErrExhausted
+}
+
 func (a *Allocator) ReleaseProject(ctx context.Context, projectID string) error {
 	return a.store.ReleaseProjectPorts(ctx, projectID)
 }
