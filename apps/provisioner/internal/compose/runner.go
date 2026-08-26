@@ -35,6 +35,20 @@ type Runner struct {
 	executor Executor
 }
 
+// RotateDatabasePassword changes the postgres role using fixed argv and psql
+// variables. Neither password is interpolated into a shell command or output.
+func (r *Runner) RotateDatabasePassword(ctx context.Context, project ProjectRef, oldPassword, newPassword string) error {
+	if oldPassword == "" || newPassword == "" {
+		return fmt.Errorf("database password values are required")
+	}
+	args := append(r.baseArgs(project), "exec", "-T", "-e", "PGPASSWORD="+oldPassword, "db", "psql", "-U", "postgres", "-d", "postgres", "-v", "new_password="+newPassword, "-c", "ALTER ROLE postgres PASSWORD :'new_password'")
+	output, err := r.executor.Run(ctx, "docker", args, nil)
+	if err != nil {
+		return fmt.Errorf("database password update failed; output length=%d", len(output))
+	}
+	return nil
+}
+
 // composeServices is the closed set emitted by the pinned renderer. Reconcile
 // never accepts arbitrary compose arguments from a request.
 var composeServices = map[string]struct{}{

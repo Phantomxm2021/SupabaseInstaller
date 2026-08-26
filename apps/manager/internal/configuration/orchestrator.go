@@ -8,7 +8,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"supabase-manager/apps/manager/internal/operation"
@@ -22,6 +25,10 @@ type Provisioner interface {
 	Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error)
 }
 
+type PasswordRotationProvisioner interface {
+	RotateDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) (contracts.RotateDatabasePasswordResponse, error)
+}
+
 type Orchestrator struct {
 	store       *store.Store
 	operations  *operation.Service
@@ -30,6 +37,8 @@ type Orchestrator struct {
 	cipher      *managersecrets.Cipher
 	now         func() time.Time
 	id          func() string
+	locksMu     sync.Mutex
+	locks       map[string]chan struct{}
 }
 
 func (o *Orchestrator) Get(ctx context.Context, projectID string) (store.ConfigurationSnapshot, error) {
@@ -44,7 +53,7 @@ func (o *Orchestrator) Get(ctx context.Context, projectID string) (store.Configu
 // arguments are *ConfigurationService, Provisioner, *Cipher, func() time.Time,
 // and func() string.
 func NewOrchestrator(database *store.Store, operations *operation.Service, args ...any) *Orchestrator {
-	o := &Orchestrator{store: database, operations: operations, now: time.Now, id: randomID}
+	o := &Orchestrator{store: database, operations: operations, now: time.Now, id: randomID, locks: make(map[string]chan struct{})}
 	for _, arg := range args {
 		switch value := arg.(type) {
 		case *project.ConfigurationService:
@@ -84,16 +93,46 @@ func (o *Orchestrator) QueuePatch(ctx context.Context, projectID string, patch c
 	if o.configs == nil || o.operations == nil {
 		return operation.Operation{}, store.ConfigurationSnapshot{}, errors.New("configuration orchestrator is unavailable")
 	}
+	o.acquire(projectID)
 	snapshot, err := o.configs.Patch(ctx, projectID, patch)
 	if err != nil {
+		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, err
 	}
 	queued, err := o.operations.Create(ctx, projectID, operation.TypeUpdateConfig)
 	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, err
+	}
+	if err := o.store.BindOperationConfiguration(ctx, queued.ID, projectID, snapshot, o.now()); err != nil {
+		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, err
 	}
 	return queued, snapshot, nil
 }
+
+func (o *Orchestrator) acquire(projectID string) {
+	o.locksMu.Lock()
+	lock := o.locks[projectID]
+	if lock == nil {
+		lock = make(chan struct{}, 1)
+		o.locks[projectID] = lock
+	}
+	o.locksMu.Unlock()
+	lock <- struct{}{}
+}
+func (o *Orchestrator) release(projectID string) {
+	o.locksMu.Lock()
+	lock := o.locks[projectID]
+	o.locksMu.Unlock()
+	if lock != nil {
+		select {
+		case <-lock:
+		default:
+		}
+	}
+}
+func (o *Orchestrator) Release(projectID string) { o.release(projectID) }
 
 // Queue is the concise command-style alias used by API adapters.
 func (o *Orchestrator) Queue(ctx context.Context, projectID string, patch contracts.ConfigurationPatch) (operation.Operation, store.ConfigurationSnapshot, error) {
@@ -104,8 +143,10 @@ func (o *Orchestrator) QueueDatabasePasswordRotation(ctx context.Context, projec
 	if o.configs == nil || o.operations == nil || o.cipher == nil {
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", errors.New("configuration orchestrator is unavailable")
 	}
+	o.acquire(projectID)
 	current, err := o.configs.Get(ctx, projectID)
 	if err != nil {
+		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
 	}
 	// Rotating the runtime password is represented by a durable desired revision,
@@ -113,14 +154,21 @@ func (o *Orchestrator) QueueDatabasePasswordRotation(ctx context.Context, projec
 	// successfully updated PostgreSQL and its dependents.
 	next, err := o.configs.Save(ctx, projectID, current.Revision, current.Configuration)
 	if err != nil {
+		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
 	}
 	newPassword, err := randomSecret()
 	if err != nil {
+		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
 	}
 	queued, err := o.operations.Create(ctx, projectID, operation.TypeUpdateConfig)
 	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
+	}
+	if err := o.store.BindOperationConfiguration(ctx, queued.ID, projectID, next, o.now()); err != nil {
+		o.release(projectID)
 		return operation.Operation{}, store.ConfigurationSnapshot{}, "", err
 	}
 	return queued, next, newPassword, nil
@@ -149,12 +197,15 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			}
 		}
 		if step == "RECONCILE_SERVICES" {
-			secrets, runtime, err := o.hydrate(ctx, currentProject.ID, snapshot.Configuration)
+			secrets, _, err := o.hydrate(ctx, currentProject.ID, snapshot.Configuration)
 			if err != nil {
 				return o.fail(ctx, queued, step, errors.New("runtime reconciliation failed"), false)
 			}
-			secrets.DatabasePassword = newPassword
-			result, reconcileErr := o.provisioner.Reconcile(ctx, contracts.ReconcileProjectRequest{OperationID: queued.ID, IdempotencyKey: queued.ID + ":rotate", ProjectID: currentProject.ID, ProjectName: currentProject.Name, Slug: currentProject.Slug, ExpectedRevision: snapshot.Revision - 1, NextRevision: snapshot.Revision, APIPort: snapshot.Configuration.Network.APIPort, Configuration: snapshot.Configuration, Secrets: secrets, RuntimeSecrets: runtime})
+			rotator, ok := o.provisioner.(PasswordRotationProvisioner)
+			if !ok {
+				return o.fail(ctx, queued, step, errors.New("database password rotation unavailable"), false)
+			}
+			result, reconcileErr := rotator.RotateDatabasePassword(ctx, contracts.RotateDatabasePasswordRequest{OperationID: queued.ID, IdempotencyKey: queued.ID + ":rotate", ProjectID: currentProject.ID, ProjectName: currentProject.Name, Slug: currentProject.Slug, ExpectedRevision: snapshot.Revision - 1, NextRevision: snapshot.Revision, OldPassword: secrets.DatabasePassword, NewPassword: newPassword})
 			if reconcileErr != nil {
 				return o.fail(ctx, queued, step, errors.New("runtime reconciliation failed"), reconcileRollback(reconcileErr))
 			}
@@ -167,10 +218,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			if err != nil {
 				return o.fail(ctx, queued, step, errors.New("database password rotation failed"), true)
 			}
-			if err := o.store.PutSecret(ctx, currentProject.ID, "database-password", envelope); err != nil {
-				return o.fail(ctx, queued, step, errors.New("database password rotation failed"), true)
-			}
-			if err := o.store.MarkConfigurationGood(ctx, currentProject.ID, snapshot.Revision); err != nil {
+			if err := o.store.PublishConfigurationSecret(ctx, currentProject.ID, snapshot.Revision, "database-password", envelope, o.now()); err != nil {
 				return o.fail(ctx, queued, step, err, false)
 			}
 		}
@@ -197,11 +245,16 @@ func reconcileRollback(err error) bool {
 // reported with a generic message; the Provisioner response is typed and
 // redacted, and operation events must never contain rendered environment data.
 func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project, queued operation.Operation, snapshot store.ConfigurationSnapshot) (operation.Operation, error) {
+	defer o.release(currentProject.ID)
 	if o.provisioner == nil {
 		return queued, errors.New("configuration provisioner is unavailable")
 	}
-	if err := o.operations.Start(ctx, queued.ID); err != nil {
-		return queued, err
+	if queued.Status == operation.Queued {
+		if err := o.operations.Start(ctx, queued.ID); err != nil {
+			return queued, err
+		}
+	} else if queued.Status != operation.Running {
+		return queued, errors.New("configuration operation is not runnable")
 	}
 	steps := []string{"VALIDATE_CONFIGURATION", "SAVE_CONFIGURATION", "RENDER_RUNTIME", "RECONCILE_SERVICES", "VERIFY_SERVICES", "MARK_CONFIGURATION_GOOD"}
 	for i, name := range steps[:3] {
@@ -232,8 +285,10 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 	}
 	result, reconcileErr := o.provisioner.Reconcile(ctx, request)
 	if reconcileErr != nil {
-		var failure *contracts.ReconcileFailure
-		rolledBack := errors.As(reconcileErr, &failure) && failure.RollbackSucceeded
+		rolledBack := reconcileRollback(reconcileErr)
+		if rolledBack {
+			_ = o.store.RestoreSecretsRevision(ctx, currentProject.ID, snapshot.Revision)
+		}
 		return o.fail(ctx, queued, "RECONCILE_SERVICES", errors.New("runtime reconciliation failed"), rolledBack)
 	}
 	if err := o.operations.CompleteStep(ctx, queued.ID, "RECONCILE_SERVICES", 70); err != nil {
@@ -243,6 +298,9 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 		return queued, err
 	}
 	if result.ProjectID != "" && result.ProjectID != currentProject.ID {
+		return o.fail(ctx, queued, "VERIFY_SERVICES", errors.New("runtime verification failed"), false)
+	}
+	if result.OperationID != queued.ID || result.ProjectID != currentProject.ID || result.Revision != snapshot.Revision || !sameServices(result.EnabledServices, enabledServices(snapshot.Configuration)) {
 		return o.fail(ctx, queued, "VERIFY_SERVICES", errors.New("runtime verification failed"), false)
 	}
 	if err := o.operations.CompleteStep(ctx, queued.ID, "VERIFY_SERVICES", 85); err != nil {
@@ -261,6 +319,84 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 		return queued, err
 	}
 	return o.operations.Get(ctx, queued.ID)
+}
+
+// Resume restarts queued/running UPDATE_CONFIG operations after a Manager
+// restart. The callback keeps project lookup outside this package boundary.
+func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, string) (contracts.Project, error)) error {
+	active, err := o.operations.ListActive(ctx, operation.TypeUpdateConfig)
+	if err != nil {
+		return err
+	}
+	for _, queued := range active {
+		p, err := lookup(ctx, queued.ProjectID)
+		if err != nil {
+			_ = o.operations.Fail(ctx, queued.ID, "RESUME", errors.New("project unavailable during operation resume"))
+			continue
+		}
+		snapshot, err := o.store.GetOperationConfiguration(ctx, queued.ID)
+		if err != nil {
+			snapshot, err = o.store.GetDesiredConfiguration(ctx, queued.ProjectID)
+		}
+		if err != nil {
+			_ = o.operations.Fail(ctx, queued.ID, "RESUME", errors.New("configuration unavailable during operation resume"))
+			continue
+		}
+		o.acquire(queued.ProjectID)
+		go func(op operation.Operation, project contracts.Project, snap store.ConfigurationSnapshot) {
+			_, _ = o.Run(context.Background(), project, op, snap)
+		}(queued, p, snapshot)
+	}
+	return nil
+}
+
+func enabledServices(cfg contracts.ProjectConfiguration) []string {
+	result := []string{}
+	add := func(name string, enabled bool) {
+		if enabled {
+			result = append(result, name)
+		}
+	}
+	add("db", cfg.Services.Database)
+	add("api-gw", cfg.Services.Gateway)
+	add("auth", cfg.Services.Auth)
+	add("rest", cfg.Services.REST)
+	add("meta", cfg.Services.PostgresMeta)
+	add("studio", cfg.Services.Studio)
+	add("realtime", cfg.Services.Realtime)
+	add("storage", cfg.Services.Storage)
+	add("imgproxy", cfg.Services.Imgproxy)
+	add("functions", cfg.Services.Functions)
+	add("supavisor", cfg.Services.Supavisor)
+	add("analytics", cfg.Services.Logs)
+	add("vector", cfg.Services.Vector)
+	sort.Strings(result)
+	return result
+}
+
+func sameServices(left, right []string) bool {
+	left = canonicalServices(left)
+	right = canonicalServices(right)
+	a, b := append([]string(nil), left...), append([]string(nil), right...)
+	sort.Strings(a)
+	sort.Strings(b)
+	return reflect.DeepEqual(a, b)
+}
+
+func canonicalServices(values []string) []string {
+	result := make([]string, 0, len(values))
+	gateway := false
+	for _, value := range values {
+		if value == "api-gw" || value == "envoy" || value == "kong" || value == "caddy" {
+			gateway = true
+		} else {
+			result = append(result, value)
+		}
+	}
+	if gateway {
+		result = append(result, "api-gw")
+	}
+	return result
 }
 
 func (o *Orchestrator) fail(ctx context.Context, queued operation.Operation, step string, cause error, rollback bool) (operation.Operation, error) {

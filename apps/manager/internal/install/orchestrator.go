@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -84,10 +85,14 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 		configuration.Revision = 1
 	}
 	if reconcileProvisioner, ok := orchestrator.provisioner.(ReconcileProvisioner); ok {
+		runtimeSecrets, hydrationErr := orchestrator.hydrateConfiguredSecrets(ctx, project.ID, configuration)
+		if hydrationErr != nil {
+			return orchestrator.rollback(ctx, project, current.ID, "HYDRATE_SECRETS", hydrationErr)
+		}
 		reconcile := contracts.ReconcileProjectRequest{
 			OperationID: current.ID, IdempotencyKey: current.ID + ":reconcile", ProjectID: project.ID,
 			ProjectName: project.Name, Slug: project.Slug, ExpectedRevision: 0, NextRevision: 1,
-			APIPort: apiPort, Configuration: configuration, Secrets: generated,
+			APIPort: apiPort, Configuration: configuration, Secrets: generated, RuntimeSecrets: runtimeSecrets,
 		}
 		if err := orchestrator.step(ctx, current.ID, "RECONCILE_RUNTIME", 35, func() error { _, err := reconcileProvisioner.Reconcile(ctx, reconcile); return err }); err != nil {
 			return orchestrator.rollback(ctx, project, current.ID, "RECONCILE_RUNTIME", err)
@@ -126,6 +131,51 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 		return current, err
 	}
 	return orchestrator.operations.Get(ctx, current.ID)
+}
+
+func (orchestrator *Orchestrator) hydrateConfiguredSecrets(ctx context.Context, projectID string, cfg contracts.ProjectConfiguration) (map[string]string, error) {
+	runtime := make(map[string]string)
+	if orchestrator.cipher == nil {
+		return runtime, errors.New("secret cipher is unavailable")
+	}
+	add := func(kind, runtimeKind string, required bool) error {
+		if !required {
+			return nil
+		}
+		envelope, err := orchestrator.store.GetSecret(ctx, projectID, kind)
+		if errors.Is(err, store.ErrNotFound) {
+			return errors.New("required configured secret is unavailable")
+		}
+		if err != nil {
+			return err
+		}
+		plain, err := orchestrator.cipher.Decrypt(projectID, kind, envelope)
+		if err != nil {
+			return err
+		}
+		runtime[runtimeKind] = string(plain)
+		return nil
+	}
+	if err := add("smtp.password", "smtp.password", cfg.Auth.SMTP.Enabled && cfg.Auth.SMTP.PasswordSet); err != nil {
+		return nil, err
+	}
+	if err := add("phone.secret", "phone.secret", cfg.Auth.Phone.Enabled && cfg.Auth.Phone.SecretSet); err != nil {
+		return nil, err
+	}
+	for provider, value := range cfg.Auth.OAuth {
+		if err := add("oauth."+provider+".secret", "oauth."+provider+".secret", value.Enabled && value.SecretSet); err != nil {
+			return nil, err
+		}
+	}
+	if err := add("storage.secretAccessKey", "storage.secretAccessKey", cfg.Services.Storage && cfg.Storage.SecretAccessKeySet); err != nil {
+		return nil, err
+	}
+	for _, variable := range cfg.Functions.Variables {
+		if err := add("functions."+variable.Name, "functions."+variable.Name, cfg.Services.Functions && variable.ValueSet); err != nil {
+			return nil, err
+		}
+	}
+	return runtime, nil
 }
 
 func (orchestrator *Orchestrator) step(ctx context.Context, operationID, name string, progress int, action func() error) error {
@@ -214,7 +264,7 @@ func enabledComposeServices(services contracts.Services) []string {
 		result = append(result, "functions")
 	}
 	if services.Supavisor {
-		result = append(result, "pooler")
+		result = append(result, "supavisor")
 	}
 	if services.Logs {
 		result = append(result, "analytics", "vector")

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -139,7 +140,17 @@ func sessionToken(request *http.Request) (string, bool) {
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, 1<<20))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(target)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("request contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func writeJSON(response http.ResponseWriter, status int, payload any) {

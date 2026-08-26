@@ -57,6 +57,29 @@ type ReconcileProjectResponse struct {
 	Error             *APIError `json:"error,omitempty"`
 }
 
+// RotateDatabasePasswordRequest is a narrowly scoped sensitive RPC. The
+// Provisioner receives values only over the authenticated private channel and
+// never includes them in responses, logs, or operation events.
+type RotateDatabasePasswordRequest struct {
+	OperationID      string `json:"operationId"`
+	IdempotencyKey   string `json:"idempotencyKey"`
+	ProjectID        string `json:"projectId"`
+	ProjectName      string `json:"projectName"`
+	Slug             string `json:"slug"`
+	ExpectedRevision int64  `json:"expectedRevision"`
+	NextRevision     int64  `json:"nextRevision"`
+	OldPassword      string `json:"oldPassword"`
+	NewPassword      string `json:"newPassword"`
+}
+
+type RotateDatabasePasswordResponse struct {
+	OperationID string    `json:"operationId"`
+	ProjectID   string    `json:"projectId"`
+	Revision    int64     `json:"revision"`
+	RolledBack  bool      `json:"rolledBack"`
+	Error       *APIError `json:"error,omitempty"`
+}
+
 type ProjectSecrets struct {
 	DatabasePassword           string `json:"databasePassword"`
 	JWTSecret                  string `json:"jwtSecret"`

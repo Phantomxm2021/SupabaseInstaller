@@ -78,6 +78,14 @@ func (c *Client) Reconcile(ctx context.Context, input contracts.ReconcileProject
 	return output, nil
 }
 
+func (c *Client) RotateDatabasePassword(ctx context.Context, input contracts.RotateDatabasePasswordRequest) (contracts.RotateDatabasePasswordResponse, error) {
+	var output contracts.RotateDatabasePasswordResponse
+	if err := c.post(ctx, "/internal/v1/projects/rotate-database-password", input, &output); err != nil {
+		return contracts.RotateDatabasePasswordResponse{}, err
+	}
+	return output, nil
+}
+
 func (c *Client) post(ctx context.Context, path string, input, output any) error {
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -98,21 +106,22 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 		var envelope contracts.ErrorEnvelope
 		_ = json.Unmarshal(payload, &envelope)
+		rollbackComplete := false
 		if envelope.Error.Code == "" {
 			var reconcile contracts.ReconcileProjectResponse
 			if json.Unmarshal(payload, &reconcile) == nil && reconcile.Error != nil {
 				envelope.Error = *reconcile.Error
-				return &ClientError{Code: envelope.Error.Code, Message: envelope.Error.Message, Status: response.StatusCode, RollbackComplete: reconcile.RolledBack}
+				rollbackComplete = reconcile.RolledBack
 			}
 		}
 		code, message := envelope.Error.Code, envelope.Error.Message
-		if code == "" {
-			code = "PROVISIONER_ERROR"
+		allowed := map[string]string{"STALE_CONFIG_REVISION": "Project configuration revision is stale", "INVALID_CONFIG_REVISION": "Project configuration revision is invalid", "RECONCILE_FAILED": "Project runtime reconciliation failed", "ROTATE_DATABASE_PASSWORD_FAILED": "Database password rotation failed", "INVALID_REQUEST": "Provisioner request is invalid", "LIFECYCLE_FAILED": "Project lifecycle operation failed", "INSPECT_FAILED": "Project inspection failed"}
+		local, ok := allowed[code]
+		if !ok {
+			code, local = "PROVISIONER_ERROR", "Provisioner request failed"
 		}
-		if message == "" {
-			message = "Provisioner request failed"
-		}
-		return &ClientError{Code: code, Message: message, Status: response.StatusCode}
+		message = local
+		return &ClientError{Code: code, Message: message, Status: response.StatusCode, RollbackComplete: rollbackComplete}
 	}
 	if output != nil && response.StatusCode != http.StatusNoContent {
 		if err := json.NewDecoder(response.Body).Decode(output); err != nil {

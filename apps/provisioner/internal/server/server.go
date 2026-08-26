@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	provisionerauth "supabase-manager/apps/provisioner/internal/auth"
@@ -36,6 +37,7 @@ func New(options Options) http.Handler {
 	private.HandleFunc("POST /internal/v1/projects/lifecycle", service.lifecycle)
 	private.HandleFunc("POST /internal/v1/projects/inspect", service.inspect)
 	private.HandleFunc("POST /internal/v1/projects/reconcile", service.reconcile)
+	private.HandleFunc("POST /internal/v1/projects/rotate-database-password", service.rotateDatabasePassword)
 	root := http.NewServeMux()
 	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
 	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
@@ -161,12 +163,58 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 	writeJSON(response, http.StatusOK, result)
 }
 
+type passwordRotationBackend interface {
+	RotateDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) (contracts.RotateDatabasePasswordResponse, error)
+}
+
+func (s *server) rotateDatabasePassword(response http.ResponseWriter, request *http.Request) {
+	backend, ok := s.backend.(passwordRotationBackend)
+	if !ok {
+		writeError(response, http.StatusServiceUnavailable, "ROTATION_UNAVAILABLE", "Database password rotation is unavailable")
+		return
+	}
+	var input contracts.RotateDatabasePasswordRequest
+	if err := decodeJSON(response, request, &input); err != nil || input.OperationID == "" || input.IdempotencyKey == "" || input.ProjectID == "" || input.Slug == "" || input.OldPassword == "" || input.NewPassword == "" {
+		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed password rotation request is required")
+		return
+	}
+	result, err := backend.RotateDatabasePassword(request.Context(), input)
+	if errors.Is(err, contracts.ErrStaleConfigRevision) {
+		writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
+		return
+	}
+	if errors.Is(err, contracts.ErrInvalidReconcileRevision) {
+		writeError(response, http.StatusBadRequest, "INVALID_CONFIG_REVISION", "Next revision must advance the typed configuration snapshot")
+		return
+	}
+	if err != nil {
+		var failure *contracts.ReconcileFailure
+		if errors.As(err, &failure) {
+			writeJSON(response, http.StatusUnprocessableEntity, result)
+			return
+		}
+		writeError(response, http.StatusUnprocessableEntity, "ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation failed")
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
+}
+
 var errStaleRevision = errors.New("stale config revision")
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, 1<<20))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(target)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("request contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func writeJSON(response http.ResponseWriter, status int, payload any) {

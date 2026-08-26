@@ -210,17 +210,29 @@ func (h configurationHandlers) queue(w http.ResponseWriter, r *http.Request, pat
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 		defer cancel()
-		if h.options.Projects != nil {
-			p, e := h.options.Projects.Get(ctx, r.PathValue("id"))
-			if e == nil {
-				_, _ = h.options.Orchestrator.Run(ctx, p, queued, snapshot)
-			}
+		if h.options.Projects == nil {
+			h.options.Orchestrator.Release(r.PathValue("id"))
+			return
+		}
+		p, e := h.options.Projects.Get(ctx, r.PathValue("id"))
+		if e == nil {
+			_, _ = h.options.Orchestrator.Run(ctx, p, queued, snapshot)
+		} else {
+			h.options.Orchestrator.Release(r.PathValue("id"))
 		}
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]any{"projectId": r.PathValue("id"), "operationId": queued.ID, "revision": snapshot.Revision})
 }
 
 func (h configurationHandlers) handleConfigError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
+		return
+	}
+	if errors.Is(err, store.ErrConfigurationConflict) {
+		writeError(w, http.StatusConflict, "CONFIGURATION_CONFLICT", "Configuration conflicts with another project")
+		return
+	}
 	if errors.Is(err, project.ErrStaleConfiguration) || errors.Is(err, store.ErrStaleConfiguration) {
 		writeError(w, http.StatusConflict, "CONFIGURATION_STALE", "Project configuration revision is stale")
 		return
@@ -254,6 +266,12 @@ func (h configurationHandlers) reveal(w http.ResponseWriter, r *http.Request) {
 	if err := h.options.Auth.VerifyPassword(r.Context(), identity, input.Password); err != nil {
 		writeError(w, http.StatusUnauthorized, "RECENT_AUTH_REQUIRED", "Administrator password confirmation is required")
 		return
+	}
+	if h.options.Projects != nil {
+		if _, err := h.options.Projects.Get(r.Context(), r.PathValue("id")); err != nil {
+			h.handleConfigError(w, err)
+			return
+		}
 	}
 	if h.options.Orchestrator == nil {
 		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Project configuration is unavailable")
@@ -304,11 +322,14 @@ func (h configurationHandlers) rotate(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 		defer cancel()
 		if h.options.Projects == nil {
+			h.options.Orchestrator.Release(r.PathValue("id"))
 			return
 		}
 		p, e := h.options.Projects.Get(ctx, r.PathValue("id"))
 		if e == nil {
 			_, _ = h.options.Orchestrator.RunDatabasePasswordRotation(ctx, p, queued, snapshot, newPassword)
+		} else {
+			h.options.Orchestrator.Release(r.PathValue("id"))
 		}
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]any{"projectId": r.PathValue("id"), "operationId": queued.ID, "revision": snapshot.Revision})

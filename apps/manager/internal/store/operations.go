@@ -55,6 +55,27 @@ FROM operations WHERE id = ?`, id).Scan(
 	return operation, nil
 }
 
+func (s *Store) ListActiveOperations(ctx context.Context, typ contracts.OperationType) ([]contracts.Operation, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM operations WHERE type = ? AND status IN (?, ?) ORDER BY created_at, id`, typ, contracts.OperationQueued, contracts.OperationRunning)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []contracts.Operation
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		op, err := s.GetOperation(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, op)
+	}
+	return result, rows.Err()
+}
+
 type OperationUpdate struct {
 	Status       contracts.OperationStatus
 	CurrentStep  string

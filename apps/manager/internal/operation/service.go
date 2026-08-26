@@ -105,6 +105,10 @@ func (s *Service) Get(ctx context.Context, id string) (Operation, error) {
 	return s.store.GetOperation(ctx, id)
 }
 
+func (s *Service) ListActive(ctx context.Context, typ Type) ([]Operation, error) {
+	return s.store.ListActiveOperations(ctx, typ)
+}
+
 func (s *Service) requireStatus(ctx context.Context, id string, status Status) (Operation, error) {
 	operation, err := s.store.GetOperation(ctx, id)
 	if err != nil {

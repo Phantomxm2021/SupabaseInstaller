@@ -43,7 +43,7 @@ func (s *ConfigurationService) Save(ctx context.Context, projectID string, expec
 }
 
 func (s *ConfigurationService) Patch(ctx context.Context, projectID string, patch contracts.ConfigurationPatch) (store.ConfigurationSnapshot, error) {
-	base, err := s.store.GetConfiguration(ctx, projectID)
+	base, err := s.store.GetDesiredConfiguration(ctx, projectID)
 	if err != nil {
 		return store.ConfigurationSnapshot{}, err
 	}
