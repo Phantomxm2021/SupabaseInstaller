@@ -3,7 +3,6 @@ package render
 import (
 	"bytes"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 
@@ -14,13 +13,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Input is the complete, redacted desired state plus private values needed to
-// render it. Domain and SiteURL remain for old prepare callers.
+// Input is the complete desired state plus private values needed to render it.
 type Input struct {
 	ProjectID       string
 	Slug            string
-	Domain          string
-	SiteURL         string
 	APIPort         int
 	Configuration   contracts.ProjectConfiguration
 	Secrets         provisionersecrets.ProjectSecrets
@@ -36,29 +32,6 @@ type OutputFiles struct {
 	EnabledComposeServices []string
 }
 
-// Lightweight is retained as a compatibility shim. Project is the sole
-// authoritative renderer used by new reconciliation code.
-func Lightweight(input Input) (OutputFiles, error) {
-	if input.Configuration.General.SupabaseVersion == "" {
-		input.Configuration.General.SupabaseVersion = "self-hosted/v0.8.0"
-	}
-	if input.Configuration.General.Domain == "" {
-		input.Configuration.General.Domain = input.Domain
-	}
-	if input.Configuration.General.SiteURL == "" {
-		input.Configuration.General.SiteURL = input.SiteURL
-	}
-	if input.Configuration.Services == (contracts.Services{}) {
-		input.Configuration.Services = contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true}
-	}
-	if reflect.DeepEqual(input.Configuration.Auth, contracts.AuthConfig{}) {
-		// Preserve the old Lightweight request contract while Project enforces
-		// the explicit global signup invariants for typed configurations.
-		input.Configuration.Auth = contracts.AuthConfig{Enabled: true, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}}
-	}
-	return Project(input)
-}
-
 func Project(input Input) (OutputFiles, error) {
 	if input.APIPort == 0 {
 		input.APIPort = input.Configuration.Network.APIPort
@@ -71,12 +44,6 @@ func Project(input Input) (OutputFiles, error) {
 	}
 	if input.Configuration.General.SupabaseVersion != "self-hosted/v0.8.0" {
 		return OutputFiles{}, fmt.Errorf("general.supabaseVersion: unsupported pinned version %q", input.Configuration.General.SupabaseVersion)
-	}
-	if input.Configuration.General.Domain == "" {
-		input.Configuration.General.Domain = input.Domain
-	}
-	if input.Configuration.General.SiteURL == "" {
-		input.Configuration.General.SiteURL = input.SiteURL
 	}
 	if input.Configuration.General.Domain == "" || input.Configuration.General.SiteURL == "" {
 		return OutputFiles{}, fmt.Errorf("domain and site URL are required")

@@ -19,20 +19,6 @@ type ReconcileFailure struct {
 func (e *ReconcileFailure) Error() string { return "runtime reconciliation failed" }
 func (e *ReconcileFailure) Unwrap() error { return e.Cause }
 
-type PrepareProjectRequest struct {
-	OperationID      string         `json:"operationId"`
-	IdempotencyKey   string         `json:"idempotencyKey"`
-	ProjectID        string         `json:"projectId"`
-	ProjectName      string         `json:"projectName"`
-	Slug             string         `json:"slug"`
-	ExpectedRevision int64          `json:"expectedRevision"`
-	NextRevision     int64          `json:"nextRevision"`
-	Domain           string         `json:"domain"`
-	SiteURL          string         `json:"siteUrl"`
-	APIPort          int            `json:"apiPort"`
-	Secrets          ProjectSecrets `json:"secrets"`
-}
-
 type ReconcileProjectRequest struct {
 	OperationID      string               `json:"operationId"`
 	IdempotencyKey   string               `json:"idempotencyKey"`
@@ -45,6 +31,7 @@ type ReconcileProjectRequest struct {
 	Configuration    ProjectConfiguration `json:"configuration"`
 	Secrets          ProjectSecrets       `json:"secrets"`
 	RuntimeSecrets   map[string]string    `json:"runtimeSecrets,omitempty"`
+	Fence            int64                `json:"fence,omitempty"`
 }
 
 type ReconcileProjectResponse struct {
@@ -61,19 +48,22 @@ type ReconcileProjectResponse struct {
 // Provisioner receives values only over the authenticated private channel and
 // never includes them in responses, logs, or operation events.
 type RotateDatabasePasswordRequest struct {
-	OperationKind    string               `json:"operationKind"`
-	OperationID      string               `json:"operationId"`
-	IdempotencyKey   string               `json:"idempotencyKey"`
-	ProjectID        string               `json:"projectId"`
-	ProjectName      string               `json:"projectName"`
-	Slug             string               `json:"slug"`
-	ExpectedRevision int64                `json:"expectedRevision"`
-	NextRevision     int64                `json:"nextRevision"`
-	OldPassword      string               `json:"oldPassword"`
-	NewPassword      string               `json:"newPassword"`
-	Configuration    ProjectConfiguration `json:"configuration"`
-	Secrets          ProjectSecrets       `json:"secrets"`
-	RuntimeSecrets   map[string]string    `json:"runtimeSecrets,omitempty"`
+	OperationKind        string               `json:"operationKind"`
+	OperationID          string               `json:"operationId"`
+	IdempotencyKey       string               `json:"idempotencyKey"`
+	ProjectID            string               `json:"projectId"`
+	ProjectName          string               `json:"projectName"`
+	Slug                 string               `json:"slug"`
+	ExpectedRevision     int64                `json:"expectedRevision"`
+	NextRevision         int64                `json:"nextRevision"`
+	OldPassword          string               `json:"oldPassword"`
+	NewPassword          string               `json:"newPassword"`
+	Configuration        ProjectConfiguration `json:"configuration"`
+	Secrets              ProjectSecrets       `json:"secrets"`
+	RuntimeSecrets       map[string]string    `json:"runtimeSecrets,omitempty"`
+	Fence                int64                `json:"fence,omitempty"`
+	OldRuntimeGeneration string               `json:"oldRuntimeGeneration,omitempty"`
+	NewRuntimeGeneration string               `json:"newRuntimeGeneration,omitempty"`
 }
 
 type RotateDatabasePasswordResponse struct {
@@ -98,15 +88,6 @@ type ProjectSecrets struct {
 	S3ProtocolAccessKeyID      string `json:"s3ProtocolAccessKeyId"`
 	S3ProtocolAccessKeySecret  string `json:"s3ProtocolAccessKeySecret"`
 	PoolerTenantID             string `json:"poolerTenantId"`
-}
-
-type PrepareProjectResponse struct {
-	OperationID    string `json:"operationId"`
-	IdempotencyKey string `json:"idempotencyKey"`
-	ProjectID      string `json:"projectId"`
-	Slug           string `json:"slug"`
-	ProjectDir     string `json:"projectDir"`
-	Revision       int64  `json:"revision"`
 }
 
 type LifecycleAction string

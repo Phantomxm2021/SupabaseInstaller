@@ -21,6 +21,7 @@ type ConfigurationSnapshot struct {
 	Revision         int64                          `json:"revision"`
 	LastGoodRevision int64                          `json:"lastGoodRevision"`
 	Configuration    contracts.ProjectConfiguration `json:"configuration"`
+	Fence            int64                          `json:"-"`
 }
 
 // SecretMutation is an already-encrypted change applied in the same transaction
@@ -34,6 +35,110 @@ type SecretMutation struct {
 type ConfigurationLease struct {
 	Owner string
 	Fence int64
+}
+
+// ConfigurationAdmission is the single durable admission boundary for a
+// configuration command. The lease, revision, encrypted mutations, operation
+// event and exact command payload are committed (or rolled back) together.
+type ConfigurationAdmission struct {
+	Operation        contracts.Operation
+	ProjectID        string
+	Owner            string
+	ExpectedRevision int64
+	Configuration    contracts.ProjectConfiguration
+	OperationKind    string
+	Mutations        []SecretMutation
+	OperationSecrets map[string]secrets.Envelope
+	Now              time.Time
+	LeaseTTL         time.Duration
+}
+
+func (s *Store) AdmitConfiguration(ctx context.Context, input ConfigurationAdmission) (ConfigurationSnapshot, ConfigurationLease, error) {
+	if input.OperationKind == "" {
+		input.OperationKind = "UPDATE_CONFIG"
+	}
+	if input.LeaseTTL <= 0 {
+		input.LeaseTTL = 45 * time.Minute
+	}
+	if input.Now.IsZero() {
+		input.Now = time.Now()
+	}
+	redacted := redactConfiguration(input.Configuration)
+	redacted.Revision = input.ExpectedRevision + 1
+	payload, err := json.Marshal(redacted)
+	if err != nil {
+		return ConfigurationSnapshot{}, ConfigurationLease{}, fmt.Errorf("encode configuration: %w", err)
+	}
+	var snapshot ConfigurationSnapshot
+	var lease ConfigurationLease
+	err = s.InTx(ctx, func(tx *sql.Tx) error {
+		expires := input.Now.Add(input.LeaseTTL)
+		res, err := tx.ExecContext(ctx, `INSERT INTO project_configuration_leases(project_id, owner, fence, acquired_at, expires_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(project_id) DO UPDATE SET owner=excluded.owner, fence=project_configuration_leases.fence+1, acquired_at=excluded.acquired_at, expires_at=excluded.expires_at WHERE project_configuration_leases.expires_at <= excluded.acquired_at`, input.ProjectID, input.Owner, formatTime(input.Now), formatTime(expires))
+		if err != nil {
+			return fmt.Errorf("admit configuration lease: %w", err)
+		}
+		count, _ := res.RowsAffected()
+		if count != 1 {
+			return ErrConfigurationBusy
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT fence FROM project_configuration_leases WHERE project_id=? AND owner=?`, input.ProjectID, input.Owner).Scan(&lease.Fence); err != nil {
+			return err
+		}
+		lease.Owner = input.Owner
+		var current int64
+		if err := tx.QueryRowContext(ctx, `SELECT config_revision FROM projects WHERE id=?`, input.ProjectID).Scan(&current); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if current != input.ExpectedRevision {
+			return fmt.Errorf("%w: expected %d, current %d", ErrStaleConfiguration, input.ExpectedRevision, current)
+		}
+		next := input.ExpectedRevision + 1
+		if _, err := tx.ExecContext(ctx, `INSERT INTO operations(id, project_id, type, status, progress, created_at) VALUES (?, ?, ?, ?, 0, ?)`, input.Operation.ID, input.ProjectID, input.Operation.Type, input.Operation.Status, formatTime(input.Operation.CreatedAt)); err != nil {
+			return fmt.Errorf("create admitted operation: %w", err)
+		}
+		if err := appendOperationEvent(ctx, tx, input.Operation.ID, "OPERATION_QUEUED", json.RawMessage(`{"status":"QUEUED"}`), input.Operation.CreatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE projects SET config_revision=?, updated_at=? WHERE id=? AND config_revision=?`, next, formatTime(input.Now), input.ProjectID, input.ExpectedRevision); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_configs(project_id,section,revision,config_json,created_at) VALUES(?, 'aggregate', ?, ?, ?)`, input.ProjectID, next, string(payload), formatTime(input.Now)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_versions(project_id,revision,kind,envelope_version,nonce,ciphertext) SELECT project_id, ?, kind, envelope_version, nonce, ciphertext FROM project_secrets WHERE project_id=?`, next, input.ProjectID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_snapshot_markers(project_id,revision,present) VALUES(?,?,CASE WHEN EXISTS(SELECT 1 FROM project_secrets WHERE project_id=?) THEN 1 ELSE 0 END)`, input.ProjectID, next, input.ProjectID); err != nil {
+			return err
+		}
+		for _, mutation := range input.Mutations {
+			if mutation.Delete {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id=? AND kind=?`, input.ProjectID, mutation.Kind); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id,kind,envelope_version,nonce,ciphertext,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id,kind) DO UPDATE SET envelope_version=excluded.envelope_version,nonce=excluded.nonce,ciphertext=excluded.ciphertext,updated_at=excluded.updated_at`, input.ProjectID, mutation.Kind, mutation.Envelope.Version, mutation.Envelope.Nonce, mutation.Envelope.Ciphertext, formatTime(input.Now)); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO operation_configurations(operation_id,project_id,revision,config_json,operation_kind,fence,created_at) VALUES(?,?,?,?,?,?,?)`, input.Operation.ID, input.ProjectID, next, string(payload), input.OperationKind, lease.Fence, formatTime(input.Now)); err != nil {
+			return err
+		}
+		for kind, envelope := range input.OperationSecrets {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO operation_secrets(operation_id,kind,envelope_version,nonce,ciphertext) VALUES(?,?,?,?,?)`, input.Operation.ID, kind, envelope.Version, envelope.Nonce, envelope.Ciphertext); err != nil {
+				return err
+			}
+		}
+		snapshot = ConfigurationSnapshot{ProjectID: input.ProjectID, Revision: next, LastGoodRevision: input.ExpectedRevision, Configuration: redacted, Fence: lease.Fence}
+		return nil
+	})
+	if err != nil {
+		return ConfigurationSnapshot{}, ConfigurationLease{}, err
+	}
+	return snapshot, lease, nil
 }
 
 // AcquireConfigurationLease is retained for callers that only need a boolean;
@@ -81,6 +186,12 @@ func (s *Store) RenewConfigurationLease(ctx context.Context, projectID, owner st
 func (s *Store) ReleaseConfigurationLeaseOwned(ctx context.Context, projectID, owner string, fence int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id = ? AND owner = ? AND fence = ?`, projectID, owner, fence)
 	return err
+}
+
+func (s *Store) OwnsConfigurationLease(ctx context.Context, projectID, owner string, fence int64, now time.Time) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_configuration_leases WHERE project_id=? AND owner=? AND fence=? AND expires_at > ?`, projectID, owner, fence, formatTime(now)).Scan(&count)
+	return count == 1, err
 }
 
 func (s *Store) GetConfiguration(ctx context.Context, projectID string) (ConfigurationSnapshot, error) {
@@ -144,10 +255,6 @@ func (s *Store) saveConfiguration(ctx context.Context, projectID string, expecte
 	if err != nil {
 		return ConfigurationSnapshot{}, fmt.Errorf("encode configuration: %w", err)
 	}
-	servicesJSON, err := json.Marshal(cfg.Services)
-	if err != nil {
-		return ConfigurationSnapshot{}, fmt.Errorf("encode services: %w", err)
-	}
 	var result ConfigurationSnapshot
 	err = s.InTx(ctx, func(tx *sql.Tx) error {
 		var conflictID string
@@ -199,39 +306,9 @@ func (s *Store) saveConfiguration(ctx context.Context, projectID string, expecte
 		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_snapshot_markers(project_id, revision, present) VALUES (?, ?, CASE WHEN EXISTS (SELECT 1 FROM project_secrets WHERE project_id = ?) THEN 1 ELSE 0 END)`, projectID, next, projectID); err != nil {
 			return fmt.Errorf("mark encrypted secret snapshot: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE projects SET domain = ?, site_url = ?, supabase_version = ?, services_json = ?, updated_at = ? WHERE id = ?`, cfg.General.Domain, cfg.General.SiteURL, cfg.General.SupabaseVersion, string(servicesJSON), formatTime(now), projectID); err != nil {
-			return fmt.Errorf("update project projection: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM project_services WHERE project_id = ?`, projectID); err != nil {
-			return fmt.Errorf("replace service projection: %w", err)
-		}
-		for _, service := range projectServiceProjection(cfg.Services) {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO project_services(project_id, service, enabled, status) VALUES (?, ?, ?, 'UNKNOWN')`, projectID, service.name, service.enabled); err != nil {
-				return fmt.Errorf("store service projection %s: %w", service.name, err)
-			}
-		}
-		for _, port := range []struct {
-			kind    string
-			port    int
-			enabled bool
-		}{
-			{kind: "API", port: cfg.Network.APIPort, enabled: true},
-			{kind: "STUDIO", port: cfg.Network.StudioPort, enabled: cfg.Services.Studio},
-			{kind: "DATABASE", port: cfg.Network.DirectDatabasePort, enabled: cfg.Services.DirectDB},
-			{kind: "POOLER", port: cfg.Network.PoolerPort, enabled: cfg.Services.Supavisor},
-			{kind: "POOLER_TRANSACTION", port: cfg.Pooler.TransactionPort, enabled: cfg.Services.Supavisor},
-			{kind: "POOLER_SESSION", port: cfg.Pooler.SessionPort, enabled: cfg.Services.Supavisor},
-		} {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM port_allocations WHERE project_id = ? AND kind = ?`, projectID, port.kind); err != nil {
-				return fmt.Errorf("replace port projection %s: %w", port.kind, err)
-			}
-			if port.port == 0 || !port.enabled {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO port_allocations(port, project_id, kind, created_at) VALUES (?, ?, ?, ?)`, port.port, projectID, port.kind, formatTime(now)); err != nil {
-				return fmt.Errorf("store port projection %s: %w", port.kind, err)
-			}
-		}
+		// Canonical project/service/port rows are applied only by
+		// MarkConfigurationGood after Provisioner health succeeds. This desired
+		// snapshot transaction must never make an unhealthy revision look live.
 		for _, mutation := range mutations {
 			if mutation.Delete {
 				if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id = ? AND kind = ?`, projectID, mutation.Kind); err != nil {
@@ -292,16 +369,60 @@ func (s *Store) RestoreSecretsRevision(ctx context.Context, projectID string, re
 	})
 }
 
+// RestoreConfigurationState atomically returns the project's desired/canonical
+// projection to its last-known-good revision and restores the encrypted set
+// captured before the failed revision was mutated. The failed snapshot remains
+// immutable in project_configs for audit and can be inspected by operation ID.
+func (s *Store) RestoreConfigurationState(ctx context.Context, projectID string, failedRevision int64) error {
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var lastGood int64
+		var raw string
+		if err := tx.QueryRowContext(ctx, `SELECT last_good_revision FROM projects WHERE id=?`, projectID).Scan(&lastGood); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT config_json FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, projectID, lastGood).Scan(&raw); err != nil {
+			return err
+		}
+		var cfg contracts.ProjectConfiguration
+		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id=?`, projectID); err != nil {
+			return err
+		}
+		var present int
+		if err := tx.QueryRowContext(ctx, `SELECT present FROM project_secret_snapshot_markers WHERE project_id=? AND revision=?`, projectID, failedRevision).Scan(&present); err != nil {
+			return err
+		}
+		if present != 0 {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id,kind,envelope_version,nonce,ciphertext,updated_at) SELECT project_id,kind,envelope_version,nonce,ciphertext,? FROM project_secret_versions WHERE project_id=? AND revision=?`, formatTime(time.Now()), projectID, failedRevision); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE projects SET config_revision=?, updated_at=? WHERE id=?`, lastGood, formatTime(time.Now()), projectID); err != nil {
+			return err
+		}
+		if err := updateCanonicalProjectionTx(ctx, tx, projectID, cfg, time.Now()); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 func (s *Store) BindOperationConfiguration(ctx context.Context, operationID, projectID string, snapshot ConfigurationSnapshot, now time.Time) error {
-	return s.BindOperationConfigurationKind(ctx, operationID, projectID, snapshot, "UPDATE_CONFIG", now)
+	return s.BindOperationConfigurationKindWithFence(ctx, operationID, projectID, snapshot, "UPDATE_CONFIG", snapshot.Fence, now)
 }
 
 func (s *Store) BindOperationConfigurationKind(ctx context.Context, operationID, projectID string, snapshot ConfigurationSnapshot, kind string, now time.Time) error {
+	return s.BindOperationConfigurationKindWithFence(ctx, operationID, projectID, snapshot, kind, snapshot.Fence, now)
+}
+
+func (s *Store) BindOperationConfigurationKindWithFence(ctx context.Context, operationID, projectID string, snapshot ConfigurationSnapshot, kind string, fence int64, now time.Time) error {
 	payload, err := json.Marshal(snapshot.Configuration)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO operation_configurations(operation_id, project_id, revision, config_json, operation_kind, created_at) VALUES (?, ?, ?, ?, ?, ?)`, operationID, projectID, snapshot.Revision, string(payload), kind, formatTime(now))
+	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO operation_configurations(operation_id, project_id, revision, config_json, operation_kind, fence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, operationID, projectID, snapshot.Revision, string(payload), kind, fence, formatTime(now))
 	return err
 }
 
@@ -322,7 +443,7 @@ func (s *Store) GetOperationKind(ctx context.Context, operationID string) (strin
 func (s *Store) GetOperationConfiguration(ctx context.Context, operationID string) (ConfigurationSnapshot, error) {
 	var snapshot ConfigurationSnapshot
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT project_id, revision, config_json FROM operation_configurations WHERE operation_id = ?`, operationID).Scan(&snapshot.ProjectID, &snapshot.Revision, &raw)
+	err := s.db.QueryRowContext(ctx, `SELECT project_id, revision, config_json, fence FROM operation_configurations WHERE operation_id = ?`, operationID).Scan(&snapshot.ProjectID, &snapshot.Revision, &raw, &snapshot.Fence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConfigurationSnapshot{}, ErrNotFound
 	}
@@ -377,8 +498,53 @@ func (s *Store) MarkConfigurationGood(ctx context.Context, projectID string, rev
 		if _, err := tx.ExecContext(ctx, `UPDATE projects SET last_good_revision = ? WHERE id = ?`, revision, projectID); err != nil {
 			return fmt.Errorf("mark configuration good: %w", err)
 		}
+		var raw string
+		if err := tx.QueryRowContext(ctx, `SELECT config_json FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, projectID, revision).Scan(&raw); err != nil {
+			return err
+		}
+		var cfg contracts.ProjectConfiguration
+		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+			return err
+		}
+		if err := updateCanonicalProjectionTx(ctx, tx, projectID, cfg, time.Now()); err != nil {
+			return err
+		}
 		return nil
 	})
+}
+
+func updateCanonicalProjectionTx(ctx context.Context, tx *sql.Tx, projectID string, cfg contracts.ProjectConfiguration, now time.Time) error {
+	servicesJSON, err := json.Marshal(cfg.Services)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE projects SET domain=?, site_url=?, supabase_version=?, services_json=?, updated_at=? WHERE id=?`, cfg.General.Domain, cfg.General.SiteURL, cfg.General.SupabaseVersion, string(servicesJSON), formatTime(now), projectID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM project_services WHERE project_id=?`, projectID); err != nil {
+		return err
+	}
+	for _, service := range projectServiceProjection(cfg.Services) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_services(project_id,service,enabled,status) VALUES(?,?,?,'UNKNOWN')`, projectID, service.name, service.enabled); err != nil {
+			return err
+		}
+	}
+	for _, port := range []struct {
+		kind    string
+		port    int
+		enabled bool
+	}{{"API", cfg.Network.APIPort, true}, {"STUDIO", cfg.Network.StudioPort, cfg.Services.Studio}, {"DATABASE", cfg.Network.DirectDatabasePort, cfg.Services.DirectDB}, {"POOLER", cfg.Network.PoolerPort, cfg.Services.Supavisor}, {"POOLER_TRANSACTION", cfg.Pooler.TransactionPort, cfg.Services.Supavisor}, {"POOLER_SESSION", cfg.Pooler.SessionPort, cfg.Services.Supavisor}} {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM port_allocations WHERE project_id=? AND kind=?`, projectID, port.kind); err != nil {
+			return err
+		}
+		if !port.enabled || port.port == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO port_allocations(port,project_id,kind,created_at) VALUES(?,?,?,?)`, port.port, projectID, port.kind, formatTime(now)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) PublishConfigurationSecret(ctx context.Context, projectID string, revision int64, kind string, envelope secrets.Envelope, now time.Time) error {

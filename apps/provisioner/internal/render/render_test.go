@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -703,86 +702,5 @@ func TestRenderServiceSelection(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestLightweightRenderUsesPinnedImagesAndUniqueComposeName(t *testing.T) {
-	output, err := Lightweight(Input{
-		ProjectID: "project-1", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com",
-		APIPort: 18001, TemplateCompose: []byte(testCompose),
-	})
-	if err != nil {
-		t.Fatalf("Lightweight() error = %v", err)
-	}
-	if !strings.Contains(output.Env, "SUPABASE_PUBLIC_URL=https://bee.example.com") {
-		t.Fatalf(".env missing public URL: %s", output.Env)
-	}
-	if strings.Contains(output.Compose, ":latest") {
-		t.Fatal("Compose contains an unpinned latest image")
-	}
-	for _, disabled := range []string{"realtime:", "storage:", "analytics:"} {
-		if strings.Contains(output.Compose, disabled) {
-			t.Fatalf("Lightweight Compose contains disabled service %s", disabled)
-		}
-	}
-	if strings.Contains(output.Compose, "analytics") {
-		t.Fatal("Lightweight Compose retained dependency on disabled analytics")
-	}
-	if output.ComposeProjectName != "supabase-manager-bee" {
-		t.Fatalf("ComposeProjectName = %q", output.ComposeProjectName)
-	}
-}
-
-func TestLightweightRejectsLatestImage(t *testing.T) {
-	compose := strings.Replace(testCompose, "supabase/gotrue:v2.177.0", "supabase/gotrue:latest", 1)
-	_, err := Lightweight(Input{Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", APIPort: 18001, TemplateCompose: []byte(compose)})
-	if err == nil || !strings.Contains(err.Error(), "latest") {
-		t.Fatalf("Lightweight() error = %v, want latest rejection", err)
-	}
-}
-
-func TestRenderRejectsRegistryPortWithoutTag(t *testing.T) {
-	compose := strings.Replace(testCompose, "supabase/gotrue:v2.177.0", "registry:5000/gotrue", 1)
-	_, err := Lightweight(Input{Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", APIPort: 18001, TemplateCompose: []byte(compose)})
-	if err == nil || !strings.Contains(err.Error(), "unpinned") {
-		t.Fatal("registry-port image without tag was accepted")
-	}
-}
-
-func TestEmbeddedOfficialTemplateRendersOnlyLightweightServices(t *testing.T) {
-	output, err := Lightweight(Input{Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", APIPort: 18001})
-	if err != nil {
-		t.Fatalf("Lightweight() with embedded template error = %v", err)
-	}
-	var document struct {
-		Services map[string]any `yaml:"services"`
-	}
-	if err := yaml.Unmarshal([]byte(output.Compose), &document); err != nil {
-		t.Fatalf("decode rendered Compose: %v", err)
-	}
-	for _, required := range []string{"api-gw", "auth", "db", "meta", "rest", "studio"} {
-		if _, ok := document.Services[required]; !ok {
-			t.Fatalf("embedded Lightweight Compose missing %s", required)
-		}
-	}
-	for _, disabled := range []string{"realtime", "storage", "imgproxy", "functions", "supavisor"} {
-		if _, ok := document.Services[disabled]; ok {
-			t.Fatalf("embedded Lightweight Compose contains %s", disabled)
-		}
-	}
-	if strings.Contains(output.Compose, "container_name:") {
-		t.Fatal("rendered Compose retains global container names that break project isolation")
-	}
-	envKeys := map[string]bool{}
-	for _, line := range strings.Split(output.Env, "\n") {
-		if key, _, ok := strings.Cut(line, "="); ok && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			envKeys[strings.TrimSpace(key)] = true
-		}
-	}
-	requiredVariable := regexp.MustCompile(`\$\{([A-Z0-9_]+)\}`)
-	for _, match := range requiredVariable.FindAllStringSubmatch(output.Compose, -1) {
-		if !envKeys[match[1]] {
-			t.Fatalf("rendered .env does not define required Compose variable %s", match[1])
-		}
 	}
 }

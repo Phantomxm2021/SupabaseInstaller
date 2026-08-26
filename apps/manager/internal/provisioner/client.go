@@ -50,14 +50,6 @@ func NewClient(baseURL, token string, client *http.Client) *Client {
 	return &Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: client}
 }
 
-func (c *Client) Prepare(ctx context.Context, input contracts.PrepareProjectRequest) (contracts.PrepareProjectResponse, error) {
-	var output contracts.PrepareProjectResponse
-	if err := c.post(ctx, "/internal/v1/projects/prepare", input, &output); err != nil {
-		return contracts.PrepareProjectResponse{}, err
-	}
-	return output, nil
-}
-
 func (c *Client) Lifecycle(ctx context.Context, input contracts.LifecycleRequest) error {
 	return c.post(ctx, "/internal/v1/projects/lifecycle", input, nil)
 }

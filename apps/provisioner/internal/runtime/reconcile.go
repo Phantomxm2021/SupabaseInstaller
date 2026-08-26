@@ -38,6 +38,9 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if metadata.Revision != request.ExpectedRevision {
 			return contracts.ErrStaleConfigRevision
 		}
+		if request.Fence > 0 && metadata.Fence > request.Fence {
+			return contracts.ErrStaleConfigRevision
+		}
 		if request.NextRevision <= metadata.Revision || request.Configuration.Revision != request.NextRevision {
 			return contracts.ErrInvalidReconcileRevision
 		}
@@ -150,6 +153,9 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.NextRevision, EnabledServices: newServices, RecreatedServices: intersect(affectedServices(previousConfig, request.Configuration), newServices)}
 		encoded, _ := json.Marshal(result)
 		metadata.ProjectID, metadata.ProjectName, metadata.Revision = request.ProjectID, request.ProjectName, request.NextRevision
+		if request.Fence > 0 {
+			metadata.Fence = request.Fence
+		}
 		metadata.Configuration = request.Configuration
 		metadata.Configuration.Revision = request.NextRevision
 		metadata.EnabledServices = append([]string(nil), newServices...)

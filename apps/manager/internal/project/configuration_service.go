@@ -50,9 +50,20 @@ func (s *ConfigurationService) Save(ctx context.Context, projectID string, expec
 }
 
 func (s *ConfigurationService) Patch(ctx context.Context, projectID string, patch contracts.ConfigurationPatch) (store.ConfigurationSnapshot, error) {
-	base, err := s.store.GetDesiredConfiguration(ctx, projectID)
+	cfg, err := s.PreparePatch(ctx, projectID, patch)
 	if err != nil {
 		return store.ConfigurationSnapshot{}, err
+	}
+	return s.save(ctx, projectID, patch.ExpectedRevision, cfg)
+}
+
+// PreparePatch computes and validates a mutation without writing. Queueing
+// uses this to place the exact encrypted mutation and command payload in the
+// same SQLite transaction as the revision and operation row.
+func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID string, patch contracts.ConfigurationPatch) (contracts.ProjectConfiguration, error) {
+	base, err := s.store.GetDesiredConfiguration(ctx, projectID)
+	if err != nil {
+		return contracts.ProjectConfiguration{}, err
 	}
 	cfg := base.Configuration
 	if patch.Configuration != nil {
@@ -85,7 +96,15 @@ func (s *ConfigurationService) Patch(ctx context.Context, projectID string, patc
 	if patch.Network != nil {
 		cfg.Network = *patch.Network
 	}
-	return s.save(ctx, projectID, patch.ExpectedRevision, cfg)
+	normalizeRetainedSecrets(&cfg)
+	if err := ValidateConfiguration(cfg); err != nil {
+		return contracts.ProjectConfiguration{}, err
+	}
+	return cfg, nil
+}
+
+func (s *ConfigurationService) PrepareSecretMutations(ctx context.Context, projectID string, cfg *contracts.ProjectConfiguration) ([]store.SecretMutation, error) {
+	return s.secretMutations(ctx, projectID, cfg)
 }
 
 // Update and ApplyPatch are aliases kept for handlers that use command-style

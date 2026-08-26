@@ -9,7 +9,6 @@ import (
 
 	provisionerauth "supabase-manager/apps/provisioner/internal/auth"
 	"supabase-manager/apps/provisioner/internal/projectfs"
-	"supabase-manager/apps/provisioner/internal/render"
 	"supabase-manager/internal/contracts"
 )
 
@@ -33,7 +32,6 @@ type server struct {
 func New(options Options) http.Handler {
 	service := &server{projectFS: options.ProjectFS, backend: options.Backend}
 	private := http.NewServeMux()
-	private.HandleFunc("POST /internal/v1/projects/prepare", service.prepare)
 	private.HandleFunc("POST /internal/v1/projects/lifecycle", service.lifecycle)
 	private.HandleFunc("POST /internal/v1/projects/inspect", service.inspect)
 	private.HandleFunc("POST /internal/v1/projects/reconcile", service.reconcile)
@@ -43,57 +41,6 @@ func New(options Options) http.Handler {
 	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
 	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
 	return root
-}
-
-func (s *server) prepare(response http.ResponseWriter, request *http.Request) {
-	var input contracts.PrepareProjectRequest
-	if err := decodeJSON(response, request, &input); err != nil || input.OperationID == "" || input.IdempotencyKey == "" || input.ProjectID == "" {
-		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed prepare request is required")
-		return
-	}
-	var prepared contracts.PrepareProjectResponse
-	metadata, err := s.projectFS.UpdateMetadata(input.Slug, func(metadata *projectfs.Metadata) error {
-		if stored, ok := metadata.Idempotency[input.IdempotencyKey]; ok {
-			return json.Unmarshal(stored, &prepared)
-		}
-		if metadata.Revision != input.ExpectedRevision {
-			return errStaleRevision
-		}
-		rendered, err := render.Lightweight(render.Input{
-			ProjectID: input.ProjectID, Slug: input.Slug, Domain: input.Domain, SiteURL: input.SiteURL,
-			APIPort: input.APIPort, Secrets: input.Secrets,
-		})
-		if err != nil {
-			return err
-		}
-		if err := s.projectFS.WriteRuntimeFiles(input.Slug, []byte(rendered.Compose), []byte(rendered.Env)); err != nil {
-			return err
-		}
-		projectDir, err := s.projectFS.ProjectPath(input.Slug)
-		if err != nil {
-			return err
-		}
-		prepared = contracts.PrepareProjectResponse{
-			OperationID: input.OperationID, IdempotencyKey: input.IdempotencyKey, ProjectID: input.ProjectID,
-			Slug: input.Slug, ProjectDir: projectDir, Revision: input.NextRevision,
-		}
-		encoded, _ := json.Marshal(prepared)
-		metadata.ProjectID = input.ProjectID
-		metadata.ProjectName = input.ProjectName
-		metadata.Revision = input.NextRevision
-		metadata.Idempotency[input.IdempotencyKey] = encoded
-		return nil
-	})
-	if errors.Is(err, errStaleRevision) {
-		writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
-		return
-	}
-	if err != nil {
-		writeError(response, http.StatusUnprocessableEntity, "PREPARE_FAILED", err.Error())
-		return
-	}
-	prepared.Revision = metadata.Revision
-	writeJSON(response, http.StatusCreated, prepared)
 }
 
 func (s *server) lifecycle(response http.ResponseWriter, request *http.Request) {

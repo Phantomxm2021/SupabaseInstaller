@@ -71,3 +71,39 @@ func TestRotateDatabasePasswordHealthFailureRestoresOldRoleAndReportsRollback(t 
 		t.Fatalf("role recovery calls = %#v", runner.rotations)
 	}
 }
+
+func TestRollbackDatabasePasswordKeepsCompensatedOldGenerationCurrent(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &rotationTestRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := root.CurrentRuntimeGeneration("bee")
+	req := contracts.RotateDatabasePasswordRequest{OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: "rotate-ext", IdempotencyKey: "rotate-ext-key", ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", ExpectedRevision: 1, NextRevision: 2, OldPassword: "db-password", NewPassword: "new-db-password", Configuration: baseConfig(), Secrets: contracts.ProjectSecrets{DatabasePassword: "new-db-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}}
+	if _, err := backend.RotateDatabasePassword(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	newRef, _ := root.CurrentRuntimeGeneration("bee")
+	rollback := req
+	rollback.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
+	rollback.IdempotencyKey = "rotate-ext-rollback"
+	rollback.OldPassword, rollback.NewPassword = req.NewPassword, req.OldPassword
+	if err := backend.RollbackDatabasePassword(context.Background(), rollback); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := root.CurrentRuntimeGeneration("bee")
+	if final.ComposeFile != old.ComposeFile || final.ComposeFile == newRef.ComposeFile {
+		t.Fatalf("current generation after rollback=%q, old=%q new=%q", final.ComposeFile, old.ComposeFile, newRef.ComposeFile)
+	}
+	metadata, _ := root.Metadata("bee")
+	if metadata.Revision != 1 {
+		t.Fatalf("metadata revision=%d want 1", metadata.Revision)
+	}
+	if err := backend.RollbackDatabasePassword(context.Background(), rollback); err != nil {
+		t.Fatalf("idempotent rollback: %v", err)
+	}
+}

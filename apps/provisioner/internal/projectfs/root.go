@@ -28,7 +28,33 @@ type Metadata struct {
 	Idempotency     map[string]json.RawMessage     `json:"idempotency"`
 	Configuration   contracts.ProjectConfiguration `json:"configuration,omitempty"`
 	EnabledServices []string                       `json:"enabledServices,omitempty"`
+	// Fence is the Manager lease generation which owns the published runtime.
+	// A zero value is retained for metadata written by pre-fencing versions.
+	Fence    int64            `json:"fence,omitempty"`
+	Rotation *RotationJournal `json:"rotation,omitempty"`
 }
+
+// RotationJournal is deliberately password-free. It is written at every
+// cross-system boundary so a Provisioner restart can identify the last durable
+// phase and resume/compensate without guessing which generation is active.
+type RotationJournal struct {
+	OperationID      string `json:"operationId"`
+	Phase            string `json:"phase"`
+	OldGeneration    string `json:"oldGeneration,omitempty"`
+	NewGeneration    string `json:"newGeneration,omitempty"`
+	ExpectedRevision int64  `json:"expectedRevision"`
+	NextRevision     int64  `json:"nextRevision"`
+}
+
+var ErrMetadataPublication = errors.New("metadata publication failed")
+
+type MetadataPublicationError struct {
+	Publish           error
+	RollbackSucceeded bool
+}
+
+func (e *MetadataPublicationError) Error() string { return e.Publish.Error() }
+func (e *MetadataPublicationError) Unwrap() error { return e.Publish }
 
 func (r *Root) DeleteProjectData(slug string) error {
 	// Lock order is metadataMu -> runtimeMu. Runtime paths never acquire
@@ -90,12 +116,50 @@ func (r *Root) CurrentRuntimeFiles(slug string) (RuntimeRef, error) {
 // symlink after a later commit.
 func (r *Root) CurrentRuntimeGeneration(slug string) (RuntimeRef, error) {
 	ref, err := r.CurrentRuntimeFiles(slug)
-	if err != nil { return RuntimeRef{}, err }
+	if err != nil {
+		return RuntimeRef{}, err
+	}
 	target, err := os.Readlink(filepath.Join(ref.ProjectDir, ".manager-runtime", "current"))
-	if errors.Is(err, os.ErrNotExist) { return ref, nil }
-	if err != nil { return RuntimeRef{}, err }
+	if errors.Is(err, os.ErrNotExist) {
+		return ref, nil
+	}
+	if err != nil {
+		return RuntimeRef{}, err
+	}
 	generation := filepath.Join(ref.ProjectDir, ".manager-runtime", filepath.FromSlash(target))
 	return RuntimeRef{ProjectDir: ref.ProjectDir, ComposeFile: filepath.Join(generation, "docker-compose.yml"), EnvFile: filepath.Join(generation, ".env"), FunctionsFile: filepath.Join(generation, ".env.functions")}, nil
+}
+
+// RuntimeGeneration returns an immutable generation by its journaled name.
+// Unlike the current symlink this reference remains stable across pointer
+// changes and is used by rotation compensation.
+func (r *Root) RuntimeGeneration(slug, name string) (RuntimeRef, error) {
+	base, err := r.ProjectPath(slug)
+	if err != nil {
+		return RuntimeRef{}, err
+	}
+	if !regexp.MustCompile(`^generation-[0-9]+$`).MatchString(name) {
+		return RuntimeRef{}, fmt.Errorf("invalid runtime generation")
+	}
+	generation := filepath.Join(base, ".manager-runtime", "generations", name)
+	if _, err := os.Stat(generation); err != nil {
+		return RuntimeRef{}, err
+	}
+	return RuntimeRef{ProjectDir: base, ComposeFile: filepath.Join(generation, "docker-compose.yml"), EnvFile: filepath.Join(generation, ".env"), FunctionsFile: filepath.Join(generation, ".env.functions")}, nil
+}
+
+func (r *Root) SelectRuntimeGeneration(slug, name string) error {
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	base, err := r.ProjectPath(slug)
+	if err != nil {
+		return err
+	}
+	runtimeRoot := filepath.Join(base, ".manager-runtime")
+	if _, err := r.RuntimeGeneration(slug, name); err != nil {
+		return err
+	}
+	return r.switchRuntimePointer(runtimeRoot, filepath.Join(runtimeRoot, "current"), name)
 }
 
 func (r *Root) RuntimeComposePath(slug string) (string, error) {
@@ -905,8 +969,9 @@ func (r *Root) UpdateMetadataWithRollback(slug string, mutate func(*Metadata) er
 	if writeErr := r.writeMetadata(slug, metadata); writeErr != nil {
 		if rollback != nil {
 			if rollbackErr := rollback(); rollbackErr != nil {
-				return Metadata{}, errors.Join(writeErr, rollbackErr)
+				return Metadata{}, &MetadataPublicationError{Publish: errors.Join(writeErr, rollbackErr), RollbackSucceeded: false}
 			}
+			return Metadata{}, &MetadataPublicationError{Publish: writeErr, RollbackSucceeded: true}
 		}
 		return Metadata{}, writeErr
 	}
@@ -972,4 +1037,11 @@ func (r *Root) writeMetadata(slug string, metadata Metadata) error {
 		return fmt.Errorf("publish metadata: %w", err)
 	}
 	return nil
+}
+
+// WriteMetadataForPhase is used only by the rotation journal while an outer
+// metadata transaction already owns metadataMu. Callers outside that callback
+// must use UpdateMetadata instead.
+func (r *Root) WriteMetadataForPhase(slug string, metadata Metadata) error {
+	return r.writeMetadata(slug, metadata)
 }

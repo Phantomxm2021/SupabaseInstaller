@@ -90,6 +90,12 @@ INSERT INTO projects (
 				return fmt.Errorf("create encrypted secret %s: %w", mutation.Kind, err)
 			}
 		}
+		// Revision 1 is an immutable pre-mutation snapshot too. Without these
+		// rows a rollback of the first configuration operation would restore an
+		// intentionally empty set even when creation supplied encrypted secrets.
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO project_secret_versions(project_id, revision, kind, envelope_version, nonce, ciphertext) SELECT project_id, 1, kind, envelope_version, nonce, ciphertext FROM project_secrets WHERE project_id = ?`, project.ID); err != nil {
+			return fmt.Errorf("snapshot initial encrypted secrets: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_snapshot_markers(project_id, revision, present) VALUES (?, 1, CASE WHEN EXISTS (SELECT 1 FROM project_secrets WHERE project_id = ?) THEN 1 ELSE 0 END)`, project.ID, project.ID); err != nil {
 			return fmt.Errorf("create initial secret snapshot marker: %w", err)
 		}

@@ -36,11 +36,11 @@ func TestInstallPersistsEncryptedUniqueSecretsBeforePrepare(t *testing.T) {
 	if err != nil || result.Status != operation.Succeeded {
 		t.Fatalf("Install() = %#v, %v", result, err)
 	}
-	if provisioner.prepare.Secrets.DatabasePassword == "" || provisioner.prepare.Secrets.JWTSecret == "" {
-		t.Fatalf("prepare request missing generated secrets: %#v", provisioner.prepare)
+	if provisioner.reconcile.Secrets.DatabasePassword == "" || provisioner.reconcile.Secrets.JWTSecret == "" {
+		t.Fatalf("reconcile request missing generated secrets: %#v", provisioner.reconcile)
 	}
 	stored, err := orchestrator.store.GetSecret(context.Background(), project.ID, "database-password")
-	if err != nil || bytes.Contains(stored.Ciphertext, []byte(provisioner.prepare.Secrets.DatabasePassword)) {
+	if err != nil || bytes.Contains(stored.Ciphertext, []byte(provisioner.reconcile.Secrets.DatabasePassword)) {
 		t.Fatalf("stored database secret is not encrypted: %v", err)
 	}
 }
@@ -65,15 +65,15 @@ func TestHydrateConfiguredSecretsSkipsDisabledAuthConsumers(t *testing.T) {
 }
 
 type fakeProvisioner struct {
-	prepare        contracts.PrepareProjectRequest
+	reconcile      contracts.ReconcileProjectRequest
 	failStart      error
 	runtimeRemoved bool
 	dataRemoved    bool
 }
 
-func (fake *fakeProvisioner) Prepare(_ context.Context, request contracts.PrepareProjectRequest) (contracts.PrepareProjectResponse, error) {
-	fake.prepare = request
-	return contracts.PrepareProjectResponse{ProjectID: request.ProjectID, Slug: request.Slug, Revision: request.NextRevision}, nil
+func (fake *fakeProvisioner) Reconcile(_ context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	fake.reconcile = request
+	return contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.NextRevision, EnabledServices: []string{"db", "api-gw", "auth", "rest", "meta", "studio"}}, nil
 }
 
 func (fake *fakeProvisioner) Lifecycle(_ context.Context, request contracts.LifecycleRequest) error {

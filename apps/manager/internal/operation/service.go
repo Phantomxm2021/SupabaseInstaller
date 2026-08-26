@@ -18,14 +18,25 @@ type Service struct {
 	now   func() time.Time
 }
 
+// NewQueuedOperation allocates the stable identity used by Store admission.
+// It does not write anything; callers pass the returned value to the atomic
+// admission transaction.
+func (s *Service) NewQueuedOperation(projectID string, operationType Type) (Operation, error) {
+	op := Operation{ID: s.id(), ProjectID: projectID, Type: operationType, Status: Queued, CreatedAt: s.now()}
+	if op.ID == "" {
+		return Operation{}, fmt.Errorf("operation ID generator returned an empty ID")
+	}
+	return op, nil
+}
+
 func NewService(store *store.Store, id func() string, now func() time.Time) *Service {
 	return &Service{store: store, id: id, now: now}
 }
 
 func (s *Service) Create(ctx context.Context, projectID string, operationType Type) (Operation, error) {
-	operation := Operation{ID: s.id(), ProjectID: projectID, Type: operationType, Status: Queued, CreatedAt: s.now()}
-	if operation.ID == "" {
-		return Operation{}, fmt.Errorf("operation ID generator returned an empty ID")
+	operation, err := s.NewQueuedOperation(projectID, operationType)
+	if err != nil {
+		return Operation{}, err
 	}
 	if err := s.store.CreateOperation(ctx, operation, "OPERATION_QUEUED", json.RawMessage(`{"status":"QUEUED"}`)); err != nil {
 		return Operation{}, err

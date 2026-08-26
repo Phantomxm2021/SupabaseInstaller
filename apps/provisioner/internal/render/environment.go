@@ -42,12 +42,6 @@ func renderEnvironment(input Input) (string, string, error) {
 		return "", "", err
 	}
 	domain, siteURL := cfg.General.Domain, cfg.General.SiteURL
-	if domain == "" {
-		domain = input.Domain
-	}
-	if siteURL == "" {
-		siteURL = input.SiteURL
-	}
 	values := map[string]string{
 		"ANON_KEY": input.Secrets.AnonKey, "API_EXTERNAL_URL": "https://" + domain + "/auth/v1",
 		"DASHBOARD_PASSWORD": input.Secrets.DashboardPassword, "JWT_SECRET": input.Secrets.JWTSecret,

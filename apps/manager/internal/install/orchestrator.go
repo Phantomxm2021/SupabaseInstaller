@@ -14,15 +14,9 @@ import (
 )
 
 type Provisioner interface {
-	Prepare(ctx context.Context, request contracts.PrepareProjectRequest) (contracts.PrepareProjectResponse, error)
+	Reconcile(ctx context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error)
 	Lifecycle(ctx context.Context, request contracts.LifecycleRequest) error
 	Inspect(ctx context.Context, request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error)
-}
-
-// ReconcileProvisioner is implemented by the current private RPC client. The
-// legacy Prepare methods remain optional for old test doubles and deployments.
-type ReconcileProvisioner interface {
-	Reconcile(ctx context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error)
 }
 
 type SecretGenerator interface {
@@ -84,28 +78,17 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 		configuration = snapshot.Configuration
 		configuration.Revision = 1
 	}
-	if reconcileProvisioner, ok := orchestrator.provisioner.(ReconcileProvisioner); ok {
-		runtimeSecrets, hydrationErr := orchestrator.hydrateConfiguredSecrets(ctx, project.ID, configuration)
-		if hydrationErr != nil {
-			return orchestrator.rollback(ctx, project, current.ID, "HYDRATE_SECRETS", hydrationErr)
-		}
-		reconcile := contracts.ReconcileProjectRequest{
-			OperationID: current.ID, IdempotencyKey: current.ID + ":reconcile", ProjectID: project.ID,
-			ProjectName: project.Name, Slug: project.Slug, ExpectedRevision: 0, NextRevision: 1,
-			APIPort: apiPort, Configuration: configuration, Secrets: generated, RuntimeSecrets: runtimeSecrets,
-		}
-		if err := orchestrator.step(ctx, current.ID, "RECONCILE_RUNTIME", 35, func() error { _, err := reconcileProvisioner.Reconcile(ctx, reconcile); return err }); err != nil {
-			return orchestrator.rollback(ctx, project, current.ID, "RECONCILE_RUNTIME", err)
-		}
-	} else {
-		prepare := contracts.PrepareProjectRequest{
-			OperationID: current.ID, IdempotencyKey: current.ID + ":prepare", ProjectID: project.ID, ProjectName: project.Name,
-			Slug: project.Slug, ExpectedRevision: 0, NextRevision: 1, Domain: project.Domain, SiteURL: project.SiteURL,
-			APIPort: apiPort, Secrets: generated,
-		}
-		if err := orchestrator.step(ctx, current.ID, "PREPARE_SUPABASE", 35, func() error { _, err := orchestrator.provisioner.Prepare(ctx, prepare); return err }); err != nil {
-			return orchestrator.rollback(ctx, project, current.ID, "PREPARE_SUPABASE", err)
-		}
+	runtimeSecrets, hydrationErr := orchestrator.hydrateConfiguredSecrets(ctx, project.ID, configuration)
+	if hydrationErr != nil {
+		return orchestrator.rollback(ctx, project, current.ID, "HYDRATE_SECRETS", hydrationErr)
+	}
+	reconcile := contracts.ReconcileProjectRequest{
+		OperationID: current.ID, IdempotencyKey: current.ID + ":reconcile", ProjectID: project.ID,
+		ProjectName: project.Name, Slug: project.Slug, ExpectedRevision: 0, NextRevision: 1,
+		APIPort: apiPort, Configuration: configuration, Secrets: generated, RuntimeSecrets: runtimeSecrets,
+	}
+	if err := orchestrator.step(ctx, current.ID, "RECONCILE_RUNTIME", 35, func() error { _, err := orchestrator.provisioner.Reconcile(ctx, reconcile); return err }); err != nil {
+		return orchestrator.rollback(ctx, project, current.ID, "RECONCILE_RUNTIME", err)
 	}
 	if err := orchestrator.step(ctx, current.ID, "START_RUNTIME", 70, func() error {
 		return orchestrator.provisioner.Lifecycle(ctx, contracts.LifecycleRequest{OperationID: current.ID, IdempotencyKey: current.ID + ":start", ProjectID: project.ID, Slug: project.Slug, Action: contracts.LifecycleStart})
@@ -225,10 +208,6 @@ func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID 
 		}
 	}
 	return nil
-}
-
-func lightweightServiceNames() []string {
-	return []string{"db", "auth", "rest", "meta", "studio", "api-gw"}
 }
 
 func enabledComposeServices(services contracts.Services) []string {
