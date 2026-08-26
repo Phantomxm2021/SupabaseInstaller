@@ -22,6 +22,26 @@ it('creates the first administrator and displays recovery codes once', async () 
   expect(screen.getAllByRole('listitem')).toHaveLength(10)
 })
 
+it('associates every setup field with a description and its validation error', async () => {
+  const user = userEvent.setup()
+  vi.stubGlobal('fetch', vi.fn())
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}><MemoryRouter><SetupPage /></MemoryRouter></QueryClientProvider>)
+  const username = screen.getByLabelText('Username')
+  const password = screen.getByLabelText('Password')
+  const confirm = screen.getByLabelText('Confirm password')
+  expect(username).toHaveAttribute('aria-describedby')
+  expect(password).toHaveAttribute('aria-describedby')
+  expect(confirm).toHaveAttribute('aria-describedby')
+  await user.type(username, 'x')
+  await user.type(password, 'short')
+  await user.type(confirm, 'different')
+  await user.click(screen.getByRole('button', { name: 'Create administrator' }))
+  for (const field of [username, password, confirm]) {
+    expect(field).toHaveAttribute('aria-invalid', 'true')
+    expect(field.getAttribute('aria-describedby')).toMatch(/error/)
+  }
+})
+
 it('explains the minimum password length instead of showing a generic error', async () => {
   const fetchMock = vi.fn()
   vi.stubGlobal('fetch', fetchMock)

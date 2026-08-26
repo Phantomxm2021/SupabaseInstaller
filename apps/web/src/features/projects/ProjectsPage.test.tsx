@@ -18,3 +18,9 @@ it('shows project health and the new project action', async () => {
   expect(screen.getByRole('table')).toHaveAttribute('data-slot', 'table')
   expect(screen.getByText('Healthy')).toHaveAttribute('data-slot', 'badge')
 })
+
+it('announces project query failures as alerts', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: 'Projects unavailable' } }), { status: 503 })))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><ProjectsPage /></MemoryRouter></QueryClientProvider>)
+  expect(await screen.findByRole('alert')).toHaveTextContent('Projects unavailable')
+})

@@ -17,3 +17,9 @@ it('renders safe account and control-plane fields without exposing CSRF data', a
   expect(screen.queryByText('csrfToken')).not.toBeInTheDocument()
   expect(screen.queryByText('do-not-render-this')).not.toBeInTheDocument()
 })
+
+it('announces session failures with the shadcn alert primitive', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: 'Session unavailable' } }), { status: 503 })))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><ManagerSettingsPage /></MemoryRouter></QueryClientProvider>)
+  expect(await screen.findByRole('alert')).toHaveTextContent('Session unavailable')
+})

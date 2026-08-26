@@ -9,6 +9,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../../components/ui/alert-dialog'
+import { Field, FieldLabel } from '../../components/ui/field'
+import { Input } from '../../components/ui/input'
+import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group'
 
 type DeleteMode = 'runtime' | 'data'
 
@@ -44,15 +47,12 @@ export function DeleteProjectDialog({
           <AlertDialogTitle>Delete {project.name}</AlertDialogTitle>
           <AlertDialogDescription>Choose whether to remove only the containers or also erase the project data.</AlertDialogDescription>
         </AlertDialogHeader>
-        <fieldset className="delete-options">
-          <legend className="sr-only">Delete mode</legend>
-          <label><input type="radio" name="delete-mode" checked={mode === 'runtime'} onChange={() => setMode('runtime')} /> Delete runtime only</label>
-          <label><input type="radio" name="delete-mode" checked={mode === 'data'} onChange={() => setMode('data')} /> Delete runtime and data</label>
-        </fieldset>
+        <RadioGroup aria-label="Delete mode" name="delete-mode" value={mode} onValueChange={(value) => setMode(value as DeleteMode)} className="gap-2">
+          <Field orientation="horizontal" className="items-center rounded-lg border p-3"><RadioGroupItem id="delete-runtime" value="runtime" /><FieldLabel htmlFor="delete-runtime">Delete runtime only</FieldLabel></Field>
+          <Field orientation="horizontal" className="items-center rounded-lg border p-3"><RadioGroupItem id="delete-data" value="data" /><FieldLabel htmlFor="delete-data">Delete runtime and data</FieldLabel></Field>
+        </RadioGroup>
         {mode === 'data' && (
-          <label>Type {project.name} to confirm
-            <input aria-label={`Type ${project.name} to confirm`} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" />
-          </label>
+          <Field><FieldLabel htmlFor="delete-confirmation">Type {project.name} to confirm</FieldLabel><Input id="delete-confirmation" aria-label={`Type ${project.name} to confirm`} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /></Field>
         )}
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onClose}>Cancel</AlertDialogCancel>

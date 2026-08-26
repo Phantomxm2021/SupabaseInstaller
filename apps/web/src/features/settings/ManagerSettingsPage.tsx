@@ -3,6 +3,7 @@ import { ShieldCheck, ServerCog, UserCircle } from 'lucide-react'
 import { sessionQueryOptions } from '../../api/session'
 import { Badge } from '../../components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card'
+import { Alert } from '../../components/ui/alert'
 
 type SafeSession = {
   username: string
@@ -18,7 +19,7 @@ export function ManagerSettingsPage() {
   })
 
   if (session.isLoading) return <main className="page"><p className="muted">Loading settings…</p></main>
-  if (session.error) return <main className="page"><div className="alert error">{session.error.message}</div></main>
+  if (session.error) return <main className="page"><Alert variant="destructive">{session.error.message}</Alert></main>
 
   const account = session.data
   return (
