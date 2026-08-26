@@ -19,3 +19,11 @@ npm run build --workspace apps/web                                           PAS
 git diff --check                                                             PASS
 ```
 
+## Round 1 correction
+
+- Replaced the single pass-through configuration form with independently owned General, Services, Auth, SMTP, OAuth, Storage, Realtime, Functions, Database, Pooler, Network, and Secrets section forms under `features/project/configuration`.
+- OAuth saves now target one provider at `PATCH /configuration/oauth/{provider}`; Services is the sole owner of service switches and Manager synchronizes Auth/Direct DB compatibility projections.
+- Added typed section resolvers, conditional phone-provider fields, explicit secret retain/replace/remove handling (including storage backend transitions and configured Functions-variable removal), truthful dirty-only save controls and restart/recreate previews.
+- Added actual Project URL/Anon Key response fields, in-memory reveal/copy/timeout controls, durable rotation operation panel handoff, and first-class Configuration/legacy Logs/Backups navigation.
+
+Round 1 verification: `npm test --workspace apps/web -- --run`, `npm run build --workspace apps/web`, `GOCACHE=/tmp/supabase-installer-task8-round1-go-cache go test ./apps/manager/internal/httpapi ./apps/manager/internal/project`, and `git diff --check` passed.

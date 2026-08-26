@@ -60,7 +60,20 @@ func (h configurationHandlers) get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "CONFIGURATION_GET_FAILED", "Unable to read project configuration")
 		return
 	}
-	writeJSON(w, http.StatusOK, snapshot)
+	// Project URL and anon key are the two public client outputs. Keep all
+	// administrator secrets redacted while making these values useful to the
+	// installed-project API & Secrets section.
+	response := struct {
+		store.ConfigurationSnapshot
+		ProjectURL string `json:"projectUrl"`
+		AnonKey    string `json:"anonKey"`
+	}{ConfigurationSnapshot: snapshot, ProjectURL: "https://" + snapshot.Configuration.General.Domain}
+	if h.options.Orchestrator != nil {
+		if anon, revealErr := h.options.Orchestrator.Reveal(r.Context(), r.PathValue("id"), "anonKey"); revealErr == nil {
+			response.AnonKey = anon
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 type sectionPatch struct {

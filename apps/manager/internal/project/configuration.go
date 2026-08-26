@@ -346,7 +346,11 @@ func phoneRequiredFields(provider string) []string {
 func validateStorage(storage contracts.StorageConfig, validation *ValidationError) {
 	switch storage.Backend {
 	case contracts.StorageBackendLocal:
-		if storage.Bucket != "" || storage.Region != "" || storage.Endpoint != "" || storage.AccountID != "" || storage.AccessKeyID != "" || storage.SecretAccessKeySet || storage.SecretAccessKey.Action != "" {
+		// A backend transition may carry an explicit remove command for the
+		// previous encrypted key. secretMutations applies that command after
+		// validation, so it must remain valid here.
+		removingPreviousKey := storage.SecretAccessKeySet && storage.SecretAccessKey.Action == "remove"
+		if storage.Bucket != "" || storage.Region != "" || storage.Endpoint != "" || storage.AccountID != "" || storage.AccessKeyID != "" || (storage.SecretAccessKeySet && !removingPreviousKey) || (storage.SecretAccessKey.Action != "" && !removingPreviousKey) {
 			validation.add("storage.backend", "local storage cannot include object-storage credentials")
 		}
 	case contracts.StorageBackendS3, contracts.StorageBackendAWSS3, contracts.StorageBackendR2:

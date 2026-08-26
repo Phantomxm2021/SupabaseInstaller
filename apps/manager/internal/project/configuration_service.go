@@ -77,6 +77,11 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	}
 	if patch.Services != nil {
 		cfg.Services = *patch.Services
+		// Service switches are authoritative. Keep legacy subsection booleans
+		// coherent without requiring the Services request to carry redacted
+		// Auth/Database secret leaves.
+		cfg.Auth.Enabled = cfg.Services.Auth
+		cfg.Database.DirectPort = cfg.Services.DirectDB
 	}
 	if patch.Auth != nil {
 		cfg.Auth = *patch.Auth

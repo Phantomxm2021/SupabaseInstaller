@@ -1,0 +1,10 @@
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useEffect } from 'react'
+import { useForm, type Resolver } from 'react-hook-form'
+import type { NetworkConfig } from '../../../api/types'
+import { networkSchema } from './schema'
+import { SectionCard, ReadOnlyField, SectionSaveButton } from './fields'
+export function NetworkSection({ initial, onSave }: { initial: NetworkConfig; onSave: (value: NetworkConfig, dirty: unknown) => void }) {
+  const form = useForm<NetworkConfig>({ resolver: zodResolver(networkSchema) as Resolver<NetworkConfig>, defaultValues: initial }); useEffect(() => { form.reset(initial) }, [initial, form]); const network = form.watch()
+  return <form id="configuration-network-form" onSubmit={form.handleSubmit((value) => onSave(value, form.formState.dirtyFields))} className="space-y-5"><SectionCard title="Gateway & Network" description="Gateway selection and HTTPS mode are typed. Manager-allocated ports are read-only."><div className="grid gap-4 md:grid-cols-2"><div><label htmlFor="network-gateway" className="text-sm font-medium">Gateway</label><select id="network-gateway" className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm" {...form.register('gateway')}><option value="envoy">Envoy (recommended)</option><option value="kong">Kong (advanced)</option></select></div><div><label htmlFor="network-https-mode" className="text-sm font-medium">HTTPS mode</label><select id="network-https-mode" className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm" {...form.register('httpsMode')}><option value="external">External reverse proxy</option><option value="caddy">Caddy managed</option></select></div><ReadOnlyField label="API port" value={String(network.apiPort || 'Manager allocated')} /><ReadOnlyField label="Studio port" value={String(network.studioPort || 'Manager allocated')} /><ReadOnlyField label="Direct database port" value={String(network.directDatabasePort || 'Disabled')} /><ReadOnlyField label="Pooler port" value={String(network.poolerPort || 'Manager allocated')} /></div></SectionCard><SectionSaveButton label="Gateway & Network" disabled={!form.formState.isDirty} /></form>
+}
