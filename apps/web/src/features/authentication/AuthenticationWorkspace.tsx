@@ -12,6 +12,7 @@ import { useConfigurationMutation } from '../project/configuration/useConfigurat
 import { AuthenticationNavigation } from './navigation'
 import { SignInProvidersPage } from './SignInProvidersPage'
 import { EmailsPage } from './EmailsPage'
+import { EmailTemplateEditorPage } from './EmailTemplateEditorPage'
 import { MultiFactorPage } from './MultiFactorPage'
 import { RateLimitsPage } from './RateLimitsPage'
 
@@ -47,6 +48,10 @@ export function SignInProvidersRoute() {
 
 export function EmailsRoute() {
   return <EmailsPage />
+}
+
+export function EmailTemplateEditorRoute() {
+  return <EmailTemplateEditorPage />
 }
 
 export function RateLimitsRoute() {

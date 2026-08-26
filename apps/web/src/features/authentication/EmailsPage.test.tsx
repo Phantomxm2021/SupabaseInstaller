@@ -12,20 +12,20 @@ const context: AuthenticationWorkspaceContext = {
   projectId: 'bee', revision: 1,
   general: { domain: 'bee.example.test', siteUrl: 'https://bee.example.test', supabaseVersion: '2.0.0' },
   services: { auth: true } as Services,
-  auth: { enabled: true, jwtExpiry: 3600, disableSignup: false, email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false }, phone: { enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} }, anonymousSignIn: false, redirectUrls: [], oauth: {}, smtp, rateLimits: { emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 }, mfa: { totpEnrollEnabled: true, totpVerifyEnabled: true, phoneEnrollEnabled: false, phoneVerifyEnabled: false, maxEnrolledFactors: 10, phoneOtpLength: 6 } },
+  auth: { enabled: true, jwtExpiry: 3600, disableSignup: false, email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false }, phone: { enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} }, anonymousSignIn: false, redirectUrls: [], oauth: {}, smtp, mailer: { templates: { confirmation: { subject: 'Confirm your signup', body: '<p>{{ .ConfirmationURL }}</p>' }, invite: { subject: 'Invitation', body: '<p>{{ .ConfirmationURL }}</p>' }, magicLink: { subject: 'Magic link', body: '<p>{{ .ConfirmationURL }}</p>' }, emailChange: { subject: 'Confirm email change', body: '<p>{{ .ConfirmationURL }}</p>' }, recovery: { subject: 'Reset password', body: '<p>{{ .ConfirmationURL }}</p>' }, reauthentication: { subject: 'Confirm reauthentication', body: '<p>{{ .Token }}</p>' } }, notifications: { passwordChanged: { enabled: false, template: { subject: 'Password changed', body: '<p>{{ .Email }}</p>' } }, emailChanged: { enabled: false, template: { subject: 'Email changed', body: '<p>{{ .Email }}</p>' } }, phoneChanged: { enabled: false, template: { subject: 'Phone changed', body: '<p>{{ .Email }}</p>' } }, identityLinked: { enabled: false, template: { subject: 'Identity linked', body: '<p>{{ .Email }}</p>' } }, identityUnlinked: { enabled: false, template: { subject: 'Identity unlinked', body: '<p>{{ .Email }}</p>' } }, mfaFactorEnrolled: { enabled: false, template: { subject: 'MFA added', body: '<p>{{ .Email }}</p>' } }, mfaFactorUnenrolled: { enabled: false, template: { subject: 'MFA removed', body: '<p>{{ .Email }}</p>' } } } }, rateLimits: { emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 }, mfa: { totpEnrollEnabled: true, totpVerifyEnabled: true, phoneEnrollEnabled: false, phoneVerifyEnabled: false, maxEnrolledFactors: 10, phoneOtpLength: 6 } },
   requestSave: vi.fn(),
 }
 
 describe('EmailsPage', () => {
-  it('renders template rows and makes their runtime limitation explicit in a sheet', async () => {
+  it('renders authentication and security template groups with navigable rows', async () => {
     const user = userEvent.setup()
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><EmailsPage context={context} /></MemoryRouter></QueryClientProvider>)
     expect(screen.getByRole('heading', { name: 'Emails' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Templates' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Confirm sign up/i })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /Confirm sign up/i }))
-    expect(screen.getByRole('dialog')).toHaveTextContent('Template editing is not available')
-    expect(screen.getByRole('dialog')).toHaveTextContent('does not expose typed template fields')
+    expect(screen.getByRole('link', { name: /Confirm sign up/i })).toHaveAttribute('href', '/projects/bee/authentication/emails/confirm-signup')
+    expect(screen.getByRole('heading', { name: 'Security' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Enable password changed notification' })).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
   })
 
   it('shows an SMTP form and queues a dirty SMTP update through the workspace confirmation path', async () => {
@@ -54,6 +54,6 @@ describe('EmailsPage', () => {
     await user.click(screen.getByRole('tab', { name: 'Templates' }))
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Discard SMTP changes?')
     await user.click(screen.getByRole('button', { name: 'Discard changes' }))
-    expect(screen.getByRole('button', { name: /Confirm sign up/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Confirm sign up/i })).toBeInTheDocument()
   })
 })
