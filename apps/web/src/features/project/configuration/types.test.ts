@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { RedactedProjectConfiguration } from '../../../api/types'
+import type { RedactedProjectConfiguration, Services } from '../../../api/types'
 import { normalizeRedactedConfiguration, sectionImpact, affectedServices } from './types'
 import { normalizeConfigurationValue } from './useConfigurationMutation'
 import { storageSchema, smtpSchema, oauthProviderSchema, authSchema, functionsSchema } from './schema'
@@ -71,5 +71,23 @@ describe('configuration projection normalization', () => {
     const services = { auth: true } as import('../../../api/types').Services
     expect(sectionImpact('smtp', { enabled: false }, services, { enabled: true })).toBe('recreate')
     expect(sectionImpact('smtp', { enabled: false }, services, { enabled: false })).toBe('none')
+  })
+
+  it('does not request runtime work when a general owner is disabled', () => {
+    const disabled = { gateway: false, auth: false, studio: false } as Services
+    expect(affectedServices('general', { domain: true }, undefined, disabled)).toEqual([])
+    expect(sectionImpact('general', { domain: 'new.example.com' }, disabled)).toBe('none')
+  })
+
+  it('does not request runtime work when Network owner is disabled', () => {
+    const disabled = { gateway: false } as Services
+    expect(affectedServices('network', { gateway: true }, undefined, disabled)).toEqual([])
+    expect(sectionImpact('network', { gateway: 'envoy' }, disabled)).toBe('none')
+  })
+
+  it('does not request runtime work when Pooler owner is disabled', () => {
+    const disabled = { supavisor: false } as Services
+    expect(affectedServices('pooler', { poolSize: true }, undefined, disabled)).toEqual([])
+    expect(sectionImpact('pooler', { poolSize: 20 }, disabled)).toBe('none')
   })
 })

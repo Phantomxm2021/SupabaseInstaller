@@ -8,6 +8,8 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import type { SecretAction, SecretInput, UpdateSecretInput } from '../../../api/types'
 
+export type SectionSave<T> = (input: { value: T; dirty: unknown; setError: (name: string, message: string) => void }) => void
+
 export function SectionCard({ title, description, children }: { title: string; description: string; children: ReactNode }) {
   return <Card><CardHeader><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader><CardContent className="space-y-5">{children}</CardContent></Card>
 }

@@ -12,6 +12,8 @@ it('shows the failed step and offers recovery actions', async () => {
   expect(screen.getByText('Auth unhealthy')).toBeVisible()
   expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
   expect(screen.getByRole('button', { name: 'Rollback' })).toBeEnabled()
+  expect(screen.getByRole('progressbar')).toHaveAttribute('data-slot', 'progress')
+  expect(screen.getByRole('status')).toHaveTextContent('Start Auth')
 })
 
 it('awaits project invalidation and navigates exactly once with the operation project id', async () => {

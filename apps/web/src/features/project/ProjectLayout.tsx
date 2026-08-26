@@ -1,5 +1,6 @@
 import { Activity, Braces, Database, FileClock, HardDrive, KeyRound, LayoutDashboard, LockKeyhole, Network, Radio, ScrollText, Settings, ShieldCheck, Waypoints } from 'lucide-react'
 import { NavLink, Outlet, useLocation, useParams } from 'react-router-dom'
+import { Card, CardContent } from '@/components/ui/card'
 
 const navigation = [
   ['overview', 'Overview', LayoutDashboard], ['configuration', 'Configuration', Settings], ['configuration?section=services', 'Services', Activity], ['configuration?section=auth', 'Authentication', ShieldCheck],
@@ -15,5 +16,5 @@ export function ProjectLayout() {
 }
 
 export function ComingSoonPage() {
-  return <main className="page"><div className="empty-state panel"><h3>This project module is coming next</h3><p>The runtime is already managed from Overview.</p></div></main>
+  return <main className="page"><Card><CardContent className="empty-state"><h3>This project module is coming next</h3><p>The runtime is already managed from Overview.</p></CardContent></Card></main>
 }

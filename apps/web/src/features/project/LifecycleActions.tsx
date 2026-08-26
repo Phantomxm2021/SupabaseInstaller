@@ -7,6 +7,8 @@ import { apiFetch } from '../../api/client'
 import type { Project } from '../../api/types'
 import { toast } from 'sonner'
 import { DeleteProjectDialog } from './DeleteProjectDialog'
+import { Button } from '@/components/ui/button'
+import { Alert } from '@/components/ui/alert'
 
 type LifecycleAction = 'start' | 'stop' | 'restart'
 
@@ -47,15 +49,15 @@ export function LifecycleActions({ project }: { project: Project }) {
   return (
     <div className="lifecycle-wrap">
       <div className="lifecycle-actions">
-        {project.status === 'STOPPED' && <button className="button primary" disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('start')}><Play size={15} /> Start project</button>}
+        {project.status === 'STOPPED' && <Button disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('start')}><Play className="size-4" /> {lifecycle.isPending ? 'Starting…' : 'Start project'}</Button>}
         {['RUNNING', 'DEGRADED'].includes(project.status) && <>
-          <button className="button secondary" disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('stop')}><Pause size={15} /> Stop</button>
-          <button className="button secondary" disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('restart')}><RotateCw size={15} /> Restart</button>
+          <Button variant="secondary" disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('stop')}><Pause className="size-4" /> Stop</Button>
+          <Button variant="secondary" disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('restart')}><RotateCw className="size-4" /> Restart</Button>
         </>}
-        <button className="button danger" type="button" onClick={() => setDeleteOpen(true)}><Trash2 size={15} /> Delete</button>
+        <Button variant="destructive" type="button" onClick={() => setDeleteOpen(true)}><Trash2 className="size-4" /> Delete</Button>
       </div>
       {message && <span className="action-status" role="status">{message}</span>}
-      {(lifecycle.error || remove.error) && <div className="alert error">{(lifecycle.error ?? remove.error)?.message}</div>}
+      {(lifecycle.error || remove.error) && <Alert variant="destructive">{(lifecycle.error ?? remove.error)?.message}</Alert>}
       <DeleteProjectDialog project={project} open={deleteOpen} busy={remove.isPending} onClose={() => setDeleteOpen(false)} onDelete={(mode, confirmation) => remove.mutate({ mode, confirmation })} />
     </div>
   )

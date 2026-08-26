@@ -2,31 +2,14 @@ import { useMutation } from '@tanstack/react-query'
 import { Database } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
+import { Alert } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { apiFetch, setCSRFToken } from '../../api/client'
-
 interface LoginForm { username: string; password: string }
-
 export function LoginPage() {
-  const navigate = useNavigate()
-  const form = useForm<LoginForm>({ defaultValues: { username: '', password: '' } })
-  const login = useMutation({
-    mutationFn: (values: LoginForm) => apiFetch<{ csrfToken: string }>('/api/session', { method: 'POST', body: JSON.stringify(values) }),
-    onSuccess: (session) => { setCSRFToken(session.csrfToken); navigate('/projects', { replace: true }) },
-  })
-  return (
-    <main className="auth-layout">
-      <section className="auth-card">
-        <div className="brand-row"><span className="brand-mark"><Database size={22} /></span><span>Supabase Manager</span></div>
-        <p className="eyebrow">Server administration</p>
-        <h1>Welcome back</h1>
-        <p className="muted">Sign in to manage your self-hosted projects.</p>
-        <form onSubmit={form.handleSubmit((values) => login.mutate(values))}>
-          <label>Username<input autoComplete="username" required {...form.register('username')} /></label>
-          <label>Password<input type="password" autoComplete="current-password" required {...form.register('password')} /></label>
-          {login.error && <div className="alert error">{login.error.message}</div>}
-          <button className="button primary full" disabled={login.isPending}>{login.isPending ? 'Signing in…' : 'Sign in'}</button>
-        </form>
-      </section>
-    </main>
-  )
+  const navigate = useNavigate(); const form = useForm<LoginForm>({ defaultValues: { username: '', password: '' } }); const login = useMutation({ mutationFn: (values: LoginForm) => apiFetch<{ csrfToken: string }>('/api/session', { method: 'POST', body: JSON.stringify(values) }), onSuccess: (session) => { setCSRFToken(session.csrfToken); navigate('/projects', { replace: true }) } })
+  return <main className="auth-layout"><Card className="w-full max-w-md"><CardHeader><div className="mb-4 flex items-center gap-2 font-semibold"><span className="inline-flex size-9 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary"><Database className="size-5" /></span>Supabase Manager</div><p className="eyebrow">Server administration</p><CardTitle>Welcome back</CardTitle><CardDescription>Sign in to manage your self-hosted projects.</CardDescription></CardHeader><CardContent><form onSubmit={form.handleSubmit((values) => login.mutate(values))} className="space-y-4"><Field><FieldLabel htmlFor="login-username">Username</FieldLabel><Input id="login-username" autoComplete="username" required {...form.register('username')} /></Field><Field><FieldLabel htmlFor="login-password">Password</FieldLabel><Input id="login-password" type="password" autoComplete="current-password" required {...form.register('password')} /><FieldDescription>Your administrator credentials are used only for this session.</FieldDescription></Field>{login.error && <Alert variant="destructive">{login.error.message}</Alert>}<Button className="w-full" disabled={login.isPending}>{login.isPending ? 'Signing in…' : 'Sign in'}</Button></form></CardContent></Card></main>
 }

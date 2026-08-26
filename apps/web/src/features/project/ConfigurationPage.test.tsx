@@ -81,6 +81,8 @@ it('renders authoritative API field errors', async () => {
   await user.click(screen.getByRole('button', { name: 'Save General' }))
   await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
   expect(await screen.findByText(/domain: Domain is already used/)).toBeVisible()
+  expect(screen.getByLabelText('Domain')).toHaveAttribute('aria-invalid', 'true')
+  expect(screen.getByText('Domain is already used')).toBeVisible()
 })
 
 it('can disable an enabled OAuth provider and sends its provider endpoint', async () => {
@@ -132,4 +134,19 @@ it('closes only public dependents when Gateway is disabled', async () => {
   expect(screen.getByRole('switch', { name: 'Supavisor' })).toHaveAttribute('data-checked')
   expect(screen.getByRole('switch', { name: 'Logs / Logflare' })).toHaveAttribute('data-checked')
   expect(screen.getByRole('switch', { name: 'Direct PostgreSQL port' })).toHaveAttribute('data-checked')
+  expect(screen.getByRole('switch', { name: 'postgres-meta' })).toHaveAttribute('data-checked')
+})
+
+it('shows an accessible error on the Phone provider when phone auth blocks submit', async () => {
+  const user = userEvent.setup()
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(redactedSnapshot()), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+  renderConfiguration('auth')
+  const phone = await screen.findByRole('switch', { name: 'Enable Phone Auth' })
+  await user.click(phone)
+  await user.click(screen.getByRole('button', { name: 'Save Authentication' }))
+  const provider = screen.getByRole('combobox', { name: 'Phone provider' })
+  expect(provider).toHaveAttribute('aria-invalid', 'true')
+  expect(provider).toHaveAttribute('aria-describedby')
+  expect(screen.getByText('Choose a supported phone provider')).toBeVisible()
 })

@@ -14,4 +14,7 @@ it('shows project health and the new project action', async () => {
   expect(await screen.findByText('Bee')).toBeVisible()
   expect(screen.getByText('Healthy')).toBeVisible()
   expect(screen.getByRole('link', { name: 'New project' })).toHaveAttribute('href', '/projects/new')
+  expect(screen.getByTestId('projects-card')).toHaveAttribute('data-slot', 'card')
+  expect(screen.getByRole('table')).toHaveAttribute('data-slot', 'table')
+  expect(screen.getByText('Healthy')).toHaveAttribute('data-slot', 'badge')
 })

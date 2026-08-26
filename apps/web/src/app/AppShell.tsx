@@ -21,6 +21,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
+import { Badge } from '../components/ui/badge'
 
 export function AppShell() {
   const navigate = useNavigate()
@@ -69,7 +70,7 @@ export function AppShell() {
       <SidebarInset>
         <header className="topbar">
           <ResponsiveSidebarTrigger />
-          <div><HardDrive size={16} /> Local Docker host</div><span className="badge neutral">Installer Core</span>
+          <div><HardDrive size={16} /> Local Docker host</div><Badge variant="outline">Installer Core</Badge>
         </header>
         <div className="content-shell"><Outlet /></div>
       </SidebarInset>

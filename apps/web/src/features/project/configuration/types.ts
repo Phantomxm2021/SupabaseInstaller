@@ -53,7 +53,12 @@ export function sectionImpact(section: ConfigurationSection, value: unknown, ser
     const owner = section === 'smtp' || section === 'oauth' || section === 'auth' ? 'auth' : section
     if (!(services as unknown as Record<string, boolean>)[owner]) return 'none'
   }
-  if (section === 'general' || section === 'network' || section === 'services' || section === 'database' || section === 'pooler') return 'recreate'
+  if (section === 'general' || section === 'network' || section === 'pooler') {
+    const owner = section === 'general' ? ['gateway', 'auth', 'studio'] : section === 'network' ? ['gateway'] : ['supavisor']
+    if (services && !owner.some((name) => Boolean((services as unknown as Record<string, boolean>)[name]))) return 'none'
+    return 'recreate'
+  }
+  if (section === 'services' || section === 'database') return 'recreate'
   if (section === 'smtp' || section === 'oauth' || section === 'auth' || section === 'storage' || section === 'realtime' || section === 'functions') return 'recreate'
   return 'none'
 }

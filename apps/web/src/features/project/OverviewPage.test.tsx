@@ -21,4 +21,6 @@ it('starts a stopped project through a durable operation', async () => {
 
   expect(mutationPath).toBe('/api/projects/bee/start')
   expect(await screen.findByText('Starting project')).toBeVisible()
+  expect(screen.getByTestId('overview-services-card')).toHaveAttribute('data-slot', 'card')
+  expect(screen.getByRole('table')).toHaveAttribute('data-slot', 'table')
 })

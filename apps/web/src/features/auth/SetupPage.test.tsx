@@ -41,3 +41,12 @@ it('explains the minimum password length instead of showing a generic error', as
   expect(screen.queryByText('Invalid input')).not.toBeInTheDocument()
   expect(fetchMock).not.toHaveBeenCalled()
 })
+
+it('uses shadcn field semantics with an accessible password description', () => {
+  vi.stubGlobal('fetch', vi.fn())
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SetupPage /></MemoryRouter></QueryClientProvider>)
+  expect(screen.getByTestId('setup-card')).toHaveAttribute('data-slot', 'card')
+  const password = screen.getByLabelText('Password')
+  expect(password).toHaveAttribute('data-slot', 'input')
+  expect(password).toHaveAccessibleDescription('Use 12 or more characters.')
+})

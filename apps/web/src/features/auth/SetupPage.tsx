@@ -4,68 +4,16 @@ import { Check, Copy, Database, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
+import { Alert } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { apiFetch } from '../../api/client'
-
-const schema = z.object({
-  username: z.string().min(3).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]+$/),
-  password: z.string().min(12, 'Password must contain at least 12 characters'),
-  confirmPassword: z.string(),
-}).refine((value) => value.password === value.confirmPassword, { message: 'Passwords do not match', path: ['confirmPassword'] })
-
+const schema = z.object({ username: z.string().min(3).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]+$/), password: z.string().min(12, 'Password must contain at least 12 characters'), confirmPassword: z.string() }).refine((value) => value.password === value.confirmPassword, { message: 'Passwords do not match', path: ['confirmPassword'] })
 type SetupForm = z.infer<typeof schema>
-
 export function SetupPage() {
-  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([])
-  const [copied, setCopied] = useState(false)
-  const form = useForm<SetupForm>({ resolver: zodResolver(schema), defaultValues: { username: '', password: '', confirmPassword: '' } })
-  const setup = useMutation({
-    mutationFn: (values: SetupForm) => apiFetch<{ recoveryCodes: string[] }>('/api/setup', { method: 'POST', body: JSON.stringify({ username: values.username, password: values.password }) }),
-    onSuccess: (result) => setRecoveryCodes(result.recoveryCodes),
-  })
-
-  if (recoveryCodes.length > 0) {
-    return (
-      <main className="auth-layout">
-        <section className="auth-card recovery-card">
-          <div className="brand-mark"><ShieldCheck size={22} /></div>
-          <p className="eyebrow">Account recovery</p>
-          <h1>Save your recovery codes</h1>
-          <p className="muted">These codes are shown once. Store them somewhere private before continuing.</p>
-          <ul className="recovery-grid">
-            {recoveryCodes.map((code) => <li key={code}><code>{code}</code></li>)}
-          </ul>
-          <button className="button secondary full" type="button" onClick={async () => { await navigator.clipboard?.writeText(recoveryCodes.join('\n')); setCopied(true) }}>
-            {copied ? <Check size={16} /> : <Copy size={16} />} {copied ? 'Copied' : 'Copy all codes'}
-          </button>
-          <a className="button primary full" href="/login">Continue to sign in</a>
-        </section>
-      </main>
-    )
-  }
-
-  return (
-    <main className="auth-layout">
-      <section className="auth-card">
-        <div className="brand-row"><span className="brand-mark"><Database size={22} /></span><span>Supabase Manager</span></div>
-        <p className="eyebrow">First-time setup</p>
-        <h1>Create the administrator</h1>
-        <p className="muted">This account controls every Supabase runtime on this server.</p>
-        <form onSubmit={form.handleSubmit((values) => setup.mutate(values))}>
-          <label>Username<input autoComplete="username" {...form.register('username')} /></label>
-          <FieldError message={form.formState.errors.username?.message} />
-          <label>Password<input type="password" autoComplete="new-password" minLength={12} aria-describedby="password-hint" {...form.register('password')} /></label>
-          <span className="field-hint" id="password-hint">Use 12 or more characters.</span>
-          <FieldError message={form.formState.errors.password?.message} />
-          <label>Confirm password<input type="password" autoComplete="new-password" {...form.register('confirmPassword')} /></label>
-          <FieldError message={form.formState.errors.confirmPassword?.message} />
-          {setup.error && <div className="alert error">{setup.error.message}</div>}
-          <button className="button primary full" disabled={setup.isPending} type="submit">{setup.isPending ? 'Creating…' : 'Create administrator'}</button>
-        </form>
-      </section>
-    </main>
-  )
-}
-
-function FieldError({ message }: { message?: string }) {
-  return message ? <span className="field-error">{message}</span> : null
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]); const [copied, setCopied] = useState(false); const form = useForm<SetupForm>({ resolver: zodResolver(schema), defaultValues: { username: '', password: '', confirmPassword: '' } }); const setup = useMutation({ mutationFn: (values: SetupForm) => apiFetch<{ recoveryCodes: string[] }>('/api/setup', { method: 'POST', body: JSON.stringify({ username: values.username, password: values.password }) }), onSuccess: (result) => setRecoveryCodes(result.recoveryCodes) })
+  if (recoveryCodes.length > 0) return <main className="auth-layout"><Card className="w-full max-w-md"><CardHeader><span className="mb-3 inline-flex size-10 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary"><ShieldCheck className="size-5" /></span><p className="eyebrow">Account recovery</p><h1 className="text-base font-medium">Save your recovery codes</h1><CardDescription>These codes are shown once. Store them somewhere private before continuing.</CardDescription></CardHeader><CardContent><ul className="grid grid-cols-2 gap-2 p-0" aria-label="Recovery codes">{recoveryCodes.map((code) => <li className="rounded-md border bg-muted p-2 text-center" key={code}><code>{code}</code></li>)}</ul><Button className="mt-5 w-full" variant="secondary" type="button" onClick={async () => { await navigator.clipboard?.writeText(recoveryCodes.join('\n')); setCopied(true) }}>{copied ? <Check className="size-4" /> : <Copy className="size-4" />} {copied ? 'Copied' : 'Copy all codes'}</Button><Button className="mt-3 w-full" nativeButton={false} render={<a href="/login" />}>Continue to sign in</Button></CardContent></Card></main>
+  return <main className="auth-layout"><Card data-testid="setup-card" className="w-full max-w-md"><CardHeader><div className="mb-4 flex items-center gap-2 font-semibold"><span className="inline-flex size-9 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary"><Database className="size-5" /></span>Supabase Manager</div><p className="eyebrow">First-time setup</p><CardTitle>Create the administrator</CardTitle><CardDescription>This account controls every Supabase runtime on this server.</CardDescription></CardHeader><CardContent><form onSubmit={form.handleSubmit((values) => setup.mutate(values))} className="space-y-4"><Field data-invalid={Boolean(form.formState.errors.username)}><FieldLabel htmlFor="setup-username">Username</FieldLabel><Input id="setup-username" autoComplete="username" aria-invalid={Boolean(form.formState.errors.username)} {...form.register('username')} />{form.formState.errors.username && <FieldError>{form.formState.errors.username.message}</FieldError>}</Field><Field data-invalid={Boolean(form.formState.errors.password)}><FieldLabel htmlFor="setup-password">Password</FieldLabel><Input id="setup-password" type="password" autoComplete="new-password" minLength={12} aria-describedby="password-hint" aria-invalid={Boolean(form.formState.errors.password)} {...form.register('password')} /><FieldDescription id="password-hint">Use 12 or more characters.</FieldDescription>{form.formState.errors.password && <FieldError>{form.formState.errors.password.message}</FieldError>}</Field><Field data-invalid={Boolean(form.formState.errors.confirmPassword)}><FieldLabel htmlFor="setup-confirm-password">Confirm password</FieldLabel><Input id="setup-confirm-password" type="password" autoComplete="new-password" aria-invalid={Boolean(form.formState.errors.confirmPassword)} {...form.register('confirmPassword')} />{form.formState.errors.confirmPassword && <FieldError>{form.formState.errors.confirmPassword.message}</FieldError>}</Field>{setup.error && <Alert variant="destructive">{setup.error.message}</Alert>}<Button className="w-full" disabled={setup.isPending} type="submit">{setup.isPending ? 'Creating…' : 'Create administrator'}</Button></form></CardContent></Card></main>
 }

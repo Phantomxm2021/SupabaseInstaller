@@ -1,16 +1,6 @@
 import { Check, Minus } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { Services } from '../../api/types'
-
-const serviceNames: Array<[keyof Services, string]> = [
-  ['database', 'Postgres database'], ['gateway', 'API gateway'], ['auth', 'Authentication'], ['rest', 'REST API'],
-  ['studio', 'Studio'], ['postgresMeta', 'Postgres Meta'], ['realtime', 'Realtime'], ['storage', 'Storage'],
-  ['imgproxy', 'Image proxy'], ['functions', 'Edge Functions'], ['supavisor', 'Supavisor'], ['logs', 'Logs'], ['vector', 'Vector'], ['directDb', 'Direct database access'],
-]
-
-export function ServiceTable({ services }: { services: Services }) {
-  return (
-    <div className="service-table">
-      {serviceNames.map(([key, label]) => <div className="service-row" key={key}><span>{label}</span><span className={services[key] ? 'service-enabled' : 'service-disabled'}>{services[key] ? <><Check size={14} /> Enabled</> : <><Minus size={14} /> Disabled</>}</span></div>)}
-    </div>
-  )
-}
+const serviceNames: Array<[keyof Services, string]> = [['database', 'Postgres database'], ['gateway', 'API gateway'], ['auth', 'Authentication'], ['rest', 'REST API'], ['studio', 'Studio'], ['postgresMeta', 'Postgres Meta'], ['realtime', 'Realtime'], ['storage', 'Storage'], ['imgproxy', 'Image proxy'], ['functions', 'Edge Functions'], ['supavisor', 'Supavisor'], ['logs', 'Logs'], ['vector', 'Vector'], ['directDb', 'Direct database access']]
+export function ServiceTable({ services }: { services: Services }) { return <Table aria-label="Project services"><TableHeader><TableRow><TableHead>Service</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>{serviceNames.map(([key, label]) => <TableRow key={key}><TableCell>{label}</TableCell><TableCell><Badge variant={services[key] ? 'default' : 'outline'}>{services[key] ? <><Check className="size-3" /> Enabled</> : <><Minus className="size-3" /> Disabled</>}</Badge></TableCell></TableRow>)}</TableBody></Table> }

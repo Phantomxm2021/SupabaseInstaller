@@ -1,47 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, Box, Cpu, Database, HardDrive, MemoryStick, Plus } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { Badge } from '@/components/ui/badge'
+import { buttonVariants } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { apiFetch } from '../../api/client'
 import type { Project } from '../../api/types'
-
 export function ProjectsPage() {
   const query = useQuery({ queryKey: ['projects'], queryFn: () => apiFetch<{ projects: Project[] }>('/api/projects') })
-  return (
-    <main className="page">
-      <div className="page-heading">
-        <div><p className="eyebrow">Runtime orchestration</p><h1>Projects</h1><p className="muted">Independent official Supabase stacks on this server.</p></div>
-        <Link className="button primary" to="/projects/new"><Plus size={16} /> New project</Link>
-      </div>
-      <section className="host-grid" aria-label="Host resources">
-        <Metric icon={<Cpu />} label="CPU" value="—" detail="Live metrics after deployment" />
-        <Metric icon={<MemoryStick />} label="Memory" value="—" detail="Available memory" />
-        <Metric icon={<HardDrive />} label="Disk" value="—" detail="Project data volume" />
-      </section>
-      <section className="panel project-panel">
-        <div className="panel-heading"><div><h2>All projects</h2><p>{query.data?.projects.length ?? 0} configured runtimes</p></div></div>
-        {query.isLoading && <div className="empty-state">Loading projects…</div>}
-        {query.error && <div className="alert error">{query.error.message}</div>}
-        {query.data?.projects.length === 0 && <div className="empty-state"><Box size={28} /><h3>No projects yet</h3><p>Create a Lightweight project with three fields.</p></div>}
-        <div className="project-list">
-          {query.data?.projects.map((project) => (
-            <Link className="project-row" to={`/projects/${project.id}/overview`} key={project.id}>
-              <span className="project-icon"><Database size={19} /></span>
-              <span className="project-main"><strong>{project.name}</strong><small>https://{project.domain}</small></span>
-              <span className={`badge ${project.health.toLowerCase()}`}>{labelHealth(project.health)}</span>
-              <span className="version">{project.supabaseVersion}</span>
-              <ArrowRight size={17} />
-            </Link>
-          ))}
-        </div>
-      </section>
-    </main>
-  )
+  return <main className="page"><div className="page-heading"><div><p className="eyebrow">Runtime orchestration</p><h1>Projects</h1><p className="muted">Independent official Supabase stacks on this server.</p></div><Link className={buttonVariants()} to="/projects/new"><Plus className="size-4" /> New project</Link></div><section className="host-grid" aria-label="Host resources"><Metric icon={<Cpu />} label="CPU" value="—" detail="Live metrics after deployment" /><Metric icon={<MemoryStick />} label="Memory" value="—" detail="Available memory" /><Metric icon={<HardDrive />} label="Disk" value="—" detail="Project data volume" /></section><Card data-testid="projects-card"><CardHeader><CardTitle>All projects</CardTitle><CardDescription>{query.data?.projects.length ?? 0} configured runtimes</CardDescription></CardHeader><CardContent className="p-0">{query.isLoading && <div className="empty-state">Loading projects…</div>}{query.error && <div className="p-4 text-sm text-destructive">{query.error.message}</div>}{query.data?.projects.length === 0 && <div className="empty-state"><Box className="size-7" /><h3>No projects yet</h3><p>Create a Lightweight project with three fields.</p></div>}<Table><TableHeader><TableRow><TableHead>Project</TableHead><TableHead>Health</TableHead><TableHead>Version</TableHead><TableHead className="text-right">Open</TableHead></TableRow></TableHeader><TableBody>{query.data?.projects.map((project) => <TableRow key={project.id}><TableCell><Link className="flex items-center gap-3" to={`/projects/${project.id}/overview`}><span className="inline-flex size-8 items-center justify-center rounded-md border text-primary"><Database className="size-4" /></span><span><strong className="block">{project.name}</strong><small className="text-muted-foreground">https://{project.domain}</small></span></Link></TableCell><TableCell><Badge variant={project.health === 'HEALTHY' ? 'default' : project.health === 'UNHEALTHY' ? 'destructive' : 'outline'}>{labelHealth(project.health)}</Badge></TableCell><TableCell className="font-mono text-xs text-muted-foreground">{project.supabaseVersion}</TableCell><TableCell className="text-right"><Link aria-label={`Open ${project.name}`} to={`/projects/${project.id}/overview`}><ArrowRight className="ml-auto size-4" /></Link></TableCell></TableRow>)}</TableBody></Table></CardContent></Card></main>
 }
-
-function Metric({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail: string }) {
-  return <div className="metric-card"><span className="metric-icon">{icon}</span><div><small>{label}</small><strong>{value}</strong><p>{detail}</p></div></div>
-}
-
-function labelHealth(health: Project['health']) {
-  return health.charAt(0) + health.slice(1).toLowerCase()
-}
+function Metric({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail: string }) { return <Card size="sm"><CardContent className="flex items-center gap-3"><span className="inline-flex size-9 items-center justify-center rounded-md bg-muted text-muted-foreground">{icon}</span><div><small className="block text-xs uppercase text-muted-foreground">{label}</small><strong className="block text-lg">{value}</strong><p className="m-0 text-xs text-muted-foreground">{detail}</p></div></CardContent></Card> }
+function labelHealth(health: Project['health']) { return health.charAt(0) + health.slice(1).toLowerCase() }

@@ -66,3 +66,13 @@ it('shows an error toast and stays on the project when deletion fails', async ()
   expect(timeline).toEqual(['toast:error'])
   expect(screen.getByTestId('location')).toHaveTextContent('/projects/bee')
 })
+
+it('uses shadcn buttons and exposes busy lifecycle state', async () => {
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)))
+  const project = { id: 'bee', name: 'Bee', status: 'STOPPED', health: 'STOPPED', services: {} } as never
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><LifecycleActions project={project} /></MemoryRouter></QueryClientProvider>)
+  const start = screen.getByRole('button', { name: 'Start project' })
+  expect(start).toHaveAttribute('data-slot', 'button')
+  await userEvent.setup().click(start)
+  expect(start).toBeDisabled()
+})
