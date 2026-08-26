@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { AppShell } from './AppShell'
@@ -59,6 +59,43 @@ it('keeps Sidebar and SidebarInset as direct provider children', () => {
   expect(wrapper?.children).toHaveLength(2)
   expect(wrapper?.children[0]).toHaveAttribute('data-slot', 'sidebar')
   expect(wrapper?.children[1]).toHaveAttribute('data-slot', 'sidebar-inset')
+})
+
+it('renders project navigation in the single global Sidebar on project routes', () => {
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/configuration?section=services']}><AppShell /></MemoryRouter></QueryClientProvider>)
+  expect(document.querySelectorAll('[data-slot="sidebar"]')).toHaveLength(1)
+  expect(document.querySelectorAll('[data-slot="sidebar-gap"]')).toHaveLength(1)
+  const projectNavigation = screen.getByRole('navigation', { name: /project navigation/i })
+  expect(within(projectNavigation).getByRole('link', { name: 'Overview' })).toBeVisible()
+  expect(within(projectNavigation).getByRole('link', { name: 'General' })).toBeVisible()
+  expect(within(projectNavigation).getByRole('link', { name: 'Email & SMTP' })).toBeVisible()
+  expect(within(projectNavigation).getByRole('link', { name: 'OAuth Providers' })).toBeVisible()
+  expect(within(projectNavigation).getByRole('link', { name: 'Services' })).toHaveAttribute('aria-current', 'page')
+  expect(document.querySelector('[data-slot="sidebar-container"]')).not.toHaveAttribute('data-state', 'expanded')
+})
+
+it('uses the same global Sidebar Sheet for project navigation on mobile', async () => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/overview']}><AppShell /></MemoryRouter></QueryClientProvider>)
+  expect(screen.queryByRole('navigation', { name: /project navigation/i })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Open sidebar' }))
+  expect(await screen.findByRole('navigation', { name: /project navigation/i })).toBeVisible()
+  expect(screen.getByRole('link', { name: 'General' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Close' })).toBeVisible()
+})
+
+it('updates the global desktop trigger name as the Sidebar changes state', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
+  await user.click(screen.getByRole('button', { name: 'Close sidebar' }))
+  expect(screen.getByRole('button', { name: 'Open sidebar' })).toBeVisible()
+})
+
+it('does not render project navigation outside a canonical project route', () => {
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
+  expect(screen.queryByRole('navigation', { name: /project navigation/i })).not.toBeInTheDocument()
 })
 
 it('refreshes CSRF and uses the refreshed token when signing out', async () => {

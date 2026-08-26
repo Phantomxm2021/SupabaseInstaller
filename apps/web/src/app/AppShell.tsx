@@ -1,11 +1,14 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Boxes, Database, HardDrive, LogOut, ServerCog, UserCircle } from 'lucide-react'
+import { Activity, Boxes, Braces, Database, FileClock, Globe2, HardDrive, KeyRound, LayoutDashboard, LockKeyhole, LogOut, Mail, Network, Radio, ScrollText, ServerCog, Settings, ShieldCheck, UserCircle, Waypoints } from 'lucide-react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { apiFetch, setCSRFToken } from '../api/client'
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -23,10 +26,21 @@ import {
 } from '../components/ui/dropdown-menu'
 import { Badge } from '../components/ui/badge'
 
+const projectNavigation = [
+  ['configuration?section=general', 'General', Settings], ['configuration?section=services', 'Services', Activity], ['configuration?section=auth', 'Authentication', ShieldCheck], ['configuration?section=smtp', 'Email & SMTP', Mail],
+  ['configuration?section=oauth', 'OAuth Providers', Globe2], ['configuration?section=storage', 'Storage', HardDrive], ['configuration?section=realtime', 'Realtime', Radio], ['configuration?section=functions', 'Functions', Braces],
+  ['configuration?section=database', 'Database', Database], ['configuration?section=pooler', 'Connection Pool', Waypoints], ['configuration?section=network', 'Gateway & Network', Network], ['configuration?section=secrets', 'API & Secrets', KeyRound],
+] as const
+
+const runtimeNavigation = [['logs', 'Logs', ScrollText], ['backups', 'Backups', FileClock]] as const
+
 export function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
   const queryClient = useQueryClient()
+  const projectMatch = location.pathname.match(/^\/projects\/([^/]+)(?:\/|$)/)
+  const projectId = projectMatch?.[1]
+  const isProjectRoute = Boolean(projectId) && projectId !== 'new'
   const logout = useMutation({
     mutationFn: () => apiFetch('/api/session', { method: 'DELETE' }),
     onSuccess: () => {
@@ -51,6 +65,30 @@ export function AppShell() {
                 </SidebarMenuItem>
               </SidebarMenu>
             </nav>
+            {isProjectRoute && projectId && <nav aria-label="Project navigation">
+              <SidebarGroup>
+                <SidebarGroupLabel><LockKeyhole /> Project</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    <SidebarMenuItem><SidebarMenuButton isActive={location.pathname.endsWith('/overview')} tooltip="Overview" render={<NavLink to={`/projects/${projectId}/overview`} />}><LayoutDashboard /><span>Overview</span></SidebarMenuButton></SidebarMenuItem>
+                    {projectNavigation.map(([path, label, Icon]) => {
+                      const [pathname, query] = path.split('?')
+                      const expected = new URLSearchParams(query ?? '').get('section')
+                      const active = location.pathname.endsWith(`/${pathname}`) && (expected ? new URLSearchParams(location.search).get('section') === expected : !location.search)
+                      return <SidebarMenuItem key={`${path}-${label}`}><SidebarMenuButton isActive={active} tooltip={label} render={<NavLink to={`/projects/${projectId}/${path}`} />}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>
+                    })}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+              <SidebarGroup>
+                <SidebarGroupLabel>Runtime</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {runtimeNavigation.map(([path, label, Icon]) => <SidebarMenuItem key={path}><SidebarMenuButton isActive={location.pathname.endsWith(`/${path}`)} tooltip={label} render={<NavLink to={`/projects/${projectId}/${path}`} />}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>)}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            </nav>}
           </SidebarContent>
           <div className="sidebar-status">
             <span className="status-dot healthy" /><div><strong>Host online</strong><small>Docker connected</small></div>
