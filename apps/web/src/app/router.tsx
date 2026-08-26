@@ -1,5 +1,5 @@
 import { QueryClient, useQuery } from '@tanstack/react-query'
-import { Navigate, Outlet, createBrowserRouter } from 'react-router-dom'
+import { Navigate, Outlet, createBrowserRouter, useParams } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { sessionQueryOptions } from '../api/session'
 import { LoginPage } from '../features/auth/LoginPage'
@@ -7,6 +7,7 @@ import { SetupPage } from '../features/auth/SetupPage'
 import { ProjectsPage } from '../features/projects/ProjectsPage'
 import { NewProjectPage } from '../features/projects/NewProjectPage'
 import { OverviewPage } from '../features/project/OverviewPage'
+import { ConfigurationPage } from '../features/project/ConfigurationPage'
 import { ComingSoonPage, ProjectLayout } from '../features/project/ProjectLayout'
 import { AppShell } from './AppShell'
 import { ManagerSettingsPage } from '../features/settings/ManagerSettingsPage'
@@ -42,6 +43,18 @@ export function createAppRouter(_queryClient: QueryClient) {
           children: [
             { index: true, element: <Navigate to="overview" replace /> },
             { path: 'overview', element: <OverviewPage /> },
+            { path: 'configuration', element: <ConfigurationPage /> },
+            { path: 'services', element: <LegacyConfigurationRedirect section="services" /> },
+            { path: 'authentication', element: <LegacyConfigurationRedirect section="auth" /> },
+            { path: 'database', element: <LegacyConfigurationRedirect section="database" /> },
+            { path: 'storage', element: <LegacyConfigurationRedirect section="storage" /> },
+            { path: 'realtime', element: <LegacyConfigurationRedirect section="realtime" /> },
+            { path: 'functions', element: <LegacyConfigurationRedirect section="functions" /> },
+            { path: 'pooler', element: <LegacyConfigurationRedirect section="pooler" /> },
+            { path: 'logs', element: <LegacyConfigurationRedirect section="services" /> },
+            { path: 'network', element: <LegacyConfigurationRedirect section="network" /> },
+            { path: 'secrets', element: <LegacyConfigurationRedirect section="secrets" /> },
+            { path: 'settings', element: <LegacyConfigurationRedirect section="general" /> },
             { path: '*', element: <ComingSoonPage /> },
           ],
         },
@@ -49,4 +62,9 @@ export function createAppRouter(_queryClient: QueryClient) {
       ],
     },
   ])
+}
+
+function LegacyConfigurationRedirect({ section }: { section: string }) {
+  const { projectId = '' } = useParams()
+  return <Navigate to={`/projects/${projectId}/configuration?section=${section}`} replace />
 }

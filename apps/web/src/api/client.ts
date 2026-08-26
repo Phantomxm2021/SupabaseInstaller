@@ -5,6 +5,7 @@ export class APIError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly fields?: Record<string, string>,
   ) {
     super(message)
   }
@@ -22,8 +23,8 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
   const response = await fetch(path, { ...init, headers, credentials: 'include' })
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null
-    throw new APIError(response.status, payload?.error?.code ?? 'REQUEST_FAILED', payload?.error?.message ?? 'The request failed')
+    const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string; fields?: Record<string, string> } } | null
+    throw new APIError(response.status, payload?.error?.code ?? 'REQUEST_FAILED', payload?.error?.message ?? 'The request failed', payload?.error?.fields)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>

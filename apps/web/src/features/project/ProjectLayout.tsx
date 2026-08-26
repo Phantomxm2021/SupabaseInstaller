@@ -2,10 +2,10 @@ import { Activity, Braces, Database, FileClock, HardDrive, KeyRound, LayoutDashb
 import { NavLink, Outlet, useParams } from 'react-router-dom'
 
 const navigation = [
-  ['overview', 'Overview', LayoutDashboard], ['services', 'Services', Activity], ['authentication', 'Authentication', ShieldCheck],
-  ['database', 'Database', Database], ['storage', 'Storage', HardDrive], ['realtime', 'Realtime', Radio], ['functions', 'Functions', Braces],
-  ['pooler', 'Connection Pool', Waypoints], ['logs', 'Logs', ScrollText], ['network', 'Network', Network], ['secrets', 'Secrets', KeyRound],
-  ['backups', 'Backups', FileClock], ['settings', 'Settings', Settings],
+  ['overview', 'Overview', LayoutDashboard], ['configuration?section=services', 'Services', Activity], ['configuration?section=auth', 'Authentication', ShieldCheck],
+  ['configuration?section=database', 'Database', Database], ['configuration?section=storage', 'Storage', HardDrive], ['configuration?section=realtime', 'Realtime', Radio], ['configuration?section=functions', 'Functions', Braces],
+  ['configuration?section=pooler', 'Connection Pool', Waypoints], ['configuration?section=network', 'Network', Network], ['configuration?section=secrets', 'Secrets', KeyRound],
+  ['configuration?section=general', 'Project settings', Settings],
 ] as const
 
 export function ProjectLayout() {

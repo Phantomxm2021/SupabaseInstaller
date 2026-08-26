@@ -80,6 +80,10 @@ it('rejects update-only remove action in create configuration', () => {
   expect(projectConfigurationSchema.safeParse(configuration).success).toBe(false)
 })
 
+it('accepts canonical unset marker in update secret schema', () => {
+  expect(updateSecretSchema.safeParse({ action: '' }).success).toBe(true)
+})
+
 it('keeps redacted and update secret truth tables distinct', () => {
   expect(redactedSecretSchema.safeParse({ action: '' }).success).toBe(true)
   expect(redactedSecretSchema.safeParse({ action: 'retain' }).success).toBe(false)

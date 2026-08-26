@@ -90,8 +90,8 @@ func (h configurationHandlers) patch(w http.ResponseWriter, r *http.Request) {
 			h.handleConfigError(w, getErr)
 			return
 		}
-		snapshot.Configuration.Auth.SMTP = patch.Auth.SMTP
-		patch.Auth = &snapshot.Configuration.Auth
+		merged := mergeSMTPAuthPatch(snapshot.Configuration.Auth, patch.Auth.SMTP)
+		patch.Auth = &merged
 	}
 	h.queue(w, r, patch)
 }
@@ -119,8 +119,8 @@ func (h configurationHandlers) patchOAuth(w http.ResponseWriter, r *http.Request
 	if snapshot.Configuration.Auth.OAuth == nil {
 		snapshot.Configuration.Auth.OAuth = map[string]contracts.OAuthProviderConfig{}
 	}
-	snapshot.Configuration.Auth.OAuth[r.PathValue("provider")] = value
-	h.queue(w, r, contracts.ConfigurationPatch{ExpectedRevision: envelope.ExpectedRevision, Auth: &snapshot.Configuration.Auth})
+	merged := mergeOAuthAuthPatch(snapshot.Configuration.Auth, r.PathValue("provider"), value)
+	h.queue(w, r, contracts.ConfigurationPatch{ExpectedRevision: envelope.ExpectedRevision, Auth: &merged})
 }
 
 func sectionValuePatch(section string, expected int64, raw []byte) (contracts.ConfigurationPatch, error) {
@@ -190,6 +190,46 @@ func sectionValuePatch(section string, expected int64, raw []byte) (contracts.Co
 		return p, &project.ValidationError{Fields: map[string]string{"section": "unsupported configuration section"}}
 	}
 	return p, nil
+}
+
+// mergeSMTPAuthPatch builds the Auth section used by the subsection endpoint.
+// The endpoint owns only SMTP; redacted configured OAuth/Phone siblings are
+// marked retain internally so aggregate validation can inspect the stored
+// secrets without treating the redacted marker as a user command.
+func mergeSMTPAuthPatch(base contracts.AuthConfig, incoming contracts.SMTPConfig) contracts.AuthConfig {
+	base.SMTP = incoming
+	markUntouchedAuthSecrets(&base, "smtp")
+	return base
+}
+
+// mergeOAuthAuthPatch builds the Auth section used by one-provider updates.
+// Only the selected provider is incoming; every other configured secret is an
+// internal retain marker. The selected provider's action is never rewritten.
+func mergeOAuthAuthPatch(base contracts.AuthConfig, provider string, incoming contracts.OAuthProviderConfig) contracts.AuthConfig {
+	if base.OAuth == nil {
+		base.OAuth = map[string]contracts.OAuthProviderConfig{}
+	}
+	base.OAuth[provider] = incoming
+	markUntouchedAuthSecrets(&base, "oauth:"+provider)
+	return base
+}
+
+func markUntouchedAuthSecrets(auth *contracts.AuthConfig, owned string) {
+	if owned != "smtp" && auth.SMTP.PasswordSet && auth.SMTP.Password.Action == "" {
+		auth.SMTP.Password.Action = "retain"
+	}
+	if owned != "phone" && auth.Phone.SecretSet && auth.Phone.Secret.Action == "" {
+		auth.Phone.Secret.Action = "retain"
+	}
+	for provider, value := range auth.OAuth {
+		if owned == "oauth:"+provider {
+			continue
+		}
+		if value.SecretSet && value.Secret.Action == "" {
+			value.Secret.Action = "retain"
+			auth.OAuth[provider] = value
+		}
+	}
 }
 
 func decodeRaw(raw []byte, target any) error {
