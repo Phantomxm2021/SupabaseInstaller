@@ -175,7 +175,7 @@ all packages passed
 
 npm test --workspace apps/web -- --run
 Test Files 10 passed (10)
-Tests 43 passed (43)
+Tests 44 passed (44)
 
 npm run build --workspace apps/web
 TypeScript check and Vite build passed (existing chunk-size warning only)

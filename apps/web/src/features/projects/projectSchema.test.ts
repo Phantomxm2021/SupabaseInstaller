@@ -103,3 +103,9 @@ it.each([
   expect(result.success).toBe(false)
   expect(result.success ? [] : result.error.issues.map((issue) => issue.path)).toContainEqual(path)
 })
+
+it('rejects SMTP display-name addresses like Manager validation', () => {
+  const configuration = validProject().configuration as any
+  configuration.auth.smtp = { ...configuration.auth.smtp, enabled: true, host: 'smtp.example.com', username: 'bee', senderEmail: 'Bee <bee@example.com>', senderName: 'Bee', password: { action: 'replace', value: 'secret' } }
+  expect(projectConfigurationSchema.safeParse(configuration).success).toBe(false)
+})
