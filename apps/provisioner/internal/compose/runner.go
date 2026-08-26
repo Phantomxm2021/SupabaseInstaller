@@ -69,7 +69,7 @@ func (r *Runner) RotateDatabasePassword(ctx context.Context, project ProjectRef,
 // composeServices is the closed set emitted by the pinned renderer. Reconcile
 // never accepts arbitrary compose arguments from a request.
 var composeServices = map[string]struct{}{
-	"db": {}, "api-gw": {}, "envoy": {}, "kong": {}, "auth": {}, "rest": {}, "meta": {},
+	"db": {}, "api-gw": {}, "envoy": {}, "kong": {}, "auth": {}, "auth-templates": {}, "rest": {}, "meta": {},
 	"studio": {}, "realtime": {}, "storage": {}, "imgproxy": {}, "functions": {},
 	"supavisor": {}, "db-config": {}, "analytics": {}, "logflare": {}, "vector": {}, "deno-cache": {}, "caddy": {},
 }

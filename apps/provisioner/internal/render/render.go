@@ -28,6 +28,7 @@ type OutputFiles struct {
 	Env                    string
 	FunctionsEnv           string
 	Compose                string
+	MailerTemplates        map[string][]byte
 	ComposeProjectName     string
 	EnabledComposeServices []string
 }
@@ -165,6 +166,11 @@ func Project(input Input) (OutputFiles, error) {
 		if err := injectAuthEnvironment(auth, input); err != nil {
 			return OutputFiles{}, err
 		}
+		filtered["auth-templates"] = map[string]any{
+			"image": "busybox:1.37.0", "restart": "unless-stopped",
+			"command": []string{"httpd", "-f", "-p", "8080", "-h", "/srv/templates"},
+			"volumes": []string{"./.manager-runtime/current/templates:/srv/templates:ro"},
+		}
 	}
 	if err := injectServiceConfiguration(filtered, input); err != nil {
 		return OutputFiles{}, err
@@ -182,7 +188,7 @@ func Project(input Input) (OutputFiles, error) {
 		enabled = append(enabled, name)
 	}
 	sort.Strings(enabled)
-	return OutputFiles{Env: env, FunctionsEnv: functionsEnv, Compose: string(encoded), ComposeProjectName: "supabase-manager-" + input.Slug, EnabledComposeServices: enabled}, nil
+	return OutputFiles{Env: env, FunctionsEnv: functionsEnv, Compose: string(encoded), MailerTemplates: mailerTemplateFiles(input.Configuration.Auth.Mailer), ComposeProjectName: "supabase-manager-" + input.Slug, EnabledComposeServices: enabled}, nil
 }
 
 func validateAuthConfiguration(auth contracts.AuthConfig) error {

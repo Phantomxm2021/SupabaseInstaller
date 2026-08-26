@@ -68,11 +68,11 @@ type SMTPConfig struct {
 	SenderName  string      `json:"senderName"`
 }
 
-// EmailTemplateConfig maps exactly to GoTrue's supported mail configuration:
-// a subject and an optional HTTP(S) URL from which GoTrue loads the template.
+// EmailTemplateConfig is the subject and HTML source delivered to GoTrue through
+// the project-local template service.
 type EmailTemplateConfig struct {
-	Subject     string `json:"subject"`
-	TemplateURL string `json:"templateUrl"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
 }
 
 type EmailTemplatesConfig struct {

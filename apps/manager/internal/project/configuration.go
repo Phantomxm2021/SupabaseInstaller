@@ -64,7 +64,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 }
 
 func defaultMailerTemplate(subject string) contracts.EmailTemplateConfig {
-	return contracts.EmailTemplateConfig{Subject: subject}
+	return contracts.EmailTemplateConfig{Subject: subject, Body: "<!doctype html>\n<html>\n  <body>\n    <h2>" + subject + "</h2>\n  </body>\n</html>"}
 }
 
 func defaultMailerConfig() contracts.MailerConfig {
@@ -358,13 +358,13 @@ func validateMailerTemplate(template contracts.EmailTemplateConfig, field string
 	if strings.ContainsAny(template.Subject, "\r\n") {
 		validation.add(field+".subject", "must not contain a newline")
 	}
-	if template.TemplateURL != "" {
-		parsed, err := url.ParseRequestURI(template.TemplateURL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-			validation.add(field+".templateUrl", "must be an absolute http or https URL")
-		}
+	if len(template.Body) == 0 {
+		validation.add(field+".body", "is required")
+	} else if len(template.Body) > 256*1024 {
+		validation.add(field+".body", "must be at most 256 KiB")
 	}
 	validateMailerTemplateVariables(template.Subject, field+".subject", validation)
+	validateMailerTemplateVariables(template.Body, field+".body", validation)
 }
 
 func validateMailerTemplateVariables(value, field string, validation *ValidationError) {

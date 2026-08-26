@@ -393,11 +393,16 @@ func (s *Store) ResetLegacyAuthConfigurations(ctx context.Context, defaults cont
 		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 			return updated, fmt.Errorf("decode legacy configuration %s: %w", item.id, err)
 		}
-		if cfg.Auth.Mailer != (contracts.MailerConfig{}) {
+		if cfg.Auth.Mailer == (contracts.MailerConfig{}) {
+			cfg.Auth = defaults
+			cfg.Auth.Enabled = cfg.Services.Auth
+		} else if !hasMailerTemplateBodies(cfg.Auth.Mailer) {
+			// The retired URL-only format cannot power the source editor
+			// or the project-local template service. Keep every other Auth setting.
+			cfg.Auth.Mailer = defaults.Mailer
+		} else {
 			continue
 		}
-		cfg.Auth = defaults
-		cfg.Auth.Enabled = cfg.Services.Auth
 		cfg.Revision = item.revision
 		payload, err := json.Marshal(redactConfiguration(cfg))
 		if err != nil {
@@ -418,6 +423,23 @@ func (s *Store) ResetLegacyAuthConfigurations(ctx context.Context, defaults cont
 		updated++
 	}
 	return updated, nil
+}
+
+func hasMailerTemplateBodies(mailer contracts.MailerConfig) bool {
+	templates := []contracts.EmailTemplateConfig{
+		mailer.Templates.Confirmation, mailer.Templates.Invite, mailer.Templates.MagicLink,
+		mailer.Templates.EmailChange, mailer.Templates.Recovery, mailer.Templates.Reauthentication,
+		mailer.Notifications.PasswordChanged.Template, mailer.Notifications.EmailChanged.Template,
+		mailer.Notifications.PhoneChanged.Template, mailer.Notifications.IdentityLinked.Template,
+		mailer.Notifications.IdentityUnlinked.Template, mailer.Notifications.MFAFactorEnrolled.Template,
+		mailer.Notifications.MFAFactorUnenrolled.Template,
+	}
+	for _, template := range templates {
+		if template.Body == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // PersistAllocatedConfiguration records server-owned ports without creating a

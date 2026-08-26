@@ -178,7 +178,7 @@ func mailerEnvironmentValues(mailer contracts.MailerConfig) map[string]string {
 	values := make(map[string]string)
 	setTemplate := func(name string, template contracts.EmailTemplateConfig) {
 		values["MAILER_SUBJECT_"+name] = template.Subject
-		values["MAILER_TEMPLATE_"+name] = template.TemplateURL
+		values["MAILER_TEMPLATE_"+name] = "http://auth-templates:8080/" + strings.ToLower(name) + ".html"
 	}
 	setTemplate("CONFIRMATION", mailer.Templates.Confirmation)
 	setTemplate("INVITE", mailer.Templates.Invite)
@@ -198,6 +198,27 @@ func mailerEnvironmentValues(mailer contracts.MailerConfig) map[string]string {
 	setNotification("MFA_FACTOR_ENROLLED", mailer.Notifications.MFAFactorEnrolled)
 	setNotification("MFA_FACTOR_UNENROLLED", mailer.Notifications.MFAFactorUnenrolled)
 	return values
+}
+
+func mailerTemplateFiles(mailer contracts.MailerConfig) map[string][]byte {
+	files := make(map[string][]byte)
+	set := func(name string, template contracts.EmailTemplateConfig) {
+		files[strings.ToLower(name)+".html"] = []byte(template.Body)
+	}
+	set("CONFIRMATION", mailer.Templates.Confirmation)
+	set("INVITE", mailer.Templates.Invite)
+	set("MAGIC_LINK", mailer.Templates.MagicLink)
+	set("EMAIL_CHANGE", mailer.Templates.EmailChange)
+	set("RECOVERY", mailer.Templates.Recovery)
+	set("REAUTHENTICATION", mailer.Templates.Reauthentication)
+	set("PASSWORD_CHANGED_NOTIFICATION", mailer.Notifications.PasswordChanged.Template)
+	set("EMAIL_CHANGED_NOTIFICATION", mailer.Notifications.EmailChanged.Template)
+	set("PHONE_CHANGED_NOTIFICATION", mailer.Notifications.PhoneChanged.Template)
+	set("IDENTITY_LINKED_NOTIFICATION", mailer.Notifications.IdentityLinked.Template)
+	set("IDENTITY_UNLINKED_NOTIFICATION", mailer.Notifications.IdentityUnlinked.Template)
+	set("MFA_FACTOR_ENROLLED_NOTIFICATION", mailer.Notifications.MFAFactorEnrolled.Template)
+	set("MFA_FACTOR_UNENROLLED_NOTIFICATION", mailer.Notifications.MFAFactorUnenrolled.Template)
+	return files
 }
 
 func rateLimitOrDefault(value, fallback int) int {

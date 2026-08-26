@@ -534,7 +534,7 @@ func (s *sequencedContainerSource) Containers(context.Context, string) ([]health
 		state, healthState = "running", "healthy"
 	}
 	containers := make([]health.Container, 0, 8)
-	for _, service := range []string{"api-gw", "auth", "db", "functions", "meta", "rest", "storage", "studio"} {
+	for _, service := range []string{"api-gw", "auth", "auth-templates", "db", "functions", "meta", "rest", "storage", "studio"} {
 		containers = append(containers, health.Container{Service: service, State: state, Health: healthState})
 	}
 	return containers, nil

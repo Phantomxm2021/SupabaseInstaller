@@ -84,9 +84,10 @@ func (r *Root) DeleteProjectData(slug string) error {
 }
 
 type RuntimeFiles struct {
-	Compose      []byte
-	Env          []byte
-	FunctionsEnv []byte
+	Compose         []byte
+	Env             []byte
+	FunctionsEnv    []byte
+	MailerTemplates map[string][]byte
 }
 
 // legacyRuntimeNames are the only runtime artifacts ever written by older
@@ -261,6 +262,18 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 	candidateFiles := RuntimeFiles{Compose: append([]byte(nil), files.Compose...), Env: append([]byte(nil), files.Env...), FunctionsEnv: append([]byte(nil), files.FunctionsEnv...)}
 	for name, data := range map[string][]byte{"docker-compose.yml": candidateFiles.Compose, ".env": candidateFiles.Env, ".env.functions": candidateFiles.FunctionsEnv} {
 		if err := writeAtomic(candidateDir, name, data, 0o600); err != nil {
+			_ = os.RemoveAll(candidateDir)
+			return RuntimeRef{}, nil, nil, err
+		}
+	}
+	if len(candidateFiles.MailerTemplates) > 0 {
+		if err := os.MkdirAll(filepath.Join(candidateDir, "templates"), 0o700); err != nil {
+			_ = os.RemoveAll(candidateDir)
+			return RuntimeRef{}, nil, nil, fmt.Errorf("create mailer template directory: %w", err)
+		}
+	}
+	for name, data := range candidateFiles.MailerTemplates {
+		if err := writeAtomic(candidateDir, filepath.Join("templates", name), data, 0o600); err != nil {
 			_ = os.RemoveAll(candidateDir)
 			return RuntimeRef{}, nil, nil, err
 		}

@@ -1,53 +1,489 @@
-import { z } from 'zod'
-import { projectConfigurationSchema, SUPABASE_VERSION, OAUTH_PROVIDERS, specialFields, validDomain } from '../../projects/projectSchema'
+import { z } from "zod";
+import {
+  projectConfigurationSchema,
+  SUPABASE_VERSION,
+  OAUTH_PROVIDERS,
+  specialFields,
+  validDomain,
+} from "../../projects/projectSchema";
 
-const secretAction = z.discriminatedUnion('action', [
-  z.object({ action: z.literal(''), value: z.never().optional() }),
-  z.object({ action: z.literal('retain'), value: z.never().optional() }),
-  z.object({ action: z.literal('remove'), value: z.never().optional() }),
-  z.object({ action: z.literal('replace'), value: z.string().trim().min(1, 'A replacement value is required') }),
-])
-const httpURL = z.string().url('Enter an http or https URL').refine((value) => /^https?:\/\//i.test(value), 'Enter an http or https URL')
-const domain = z.string().trim().min(1, 'Domain is required').refine(validDomain, 'Enter a valid DNS hostname')
+const secretAction = z.discriminatedUnion("action", [
+  z.object({ action: z.literal(""), value: z.never().optional() }),
+  z.object({ action: z.literal("retain"), value: z.never().optional() }),
+  z.object({ action: z.literal("remove"), value: z.never().optional() }),
+  z.object({
+    action: z.literal("replace"),
+    value: z.string().trim().min(1, "A replacement value is required"),
+  }),
+]);
+const httpURL = z
+  .string()
+  .url("Enter an http or https URL")
+  .refine((value) => /^https?:\/\//i.test(value), "Enter an http or https URL");
+const domain = z
+  .string()
+  .trim()
+  .min(1, "Domain is required")
+  .refine(validDomain, "Enter a valid DNS hostname");
 
-export const generalSchema = z.object({ domain, siteUrl: httpURL, supabaseVersion: z.literal(SUPABASE_VERSION) })
-export const servicesSchema = projectConfigurationSchema.shape.services
-const emailAuthSchema = z.object({ enabled: z.boolean(), allowSignup: z.boolean(), confirmEmail: z.boolean(), secureEmailChange: z.boolean(), doubleConfirmChanges: z.boolean() })
-const phoneUpdateSchema = z.object({ enabled: z.boolean(), provider: z.string(), secretSet: z.boolean(), secret: secretAction, fields: z.record(z.string(), z.string()) }).superRefine((value, context) => {
-  if (!value.enabled && !value.provider && !value.secretSet && value.secret.action === '') return
-  if (!['twilio', 'messagebird', 'textlocal'].includes(value.provider)) context.addIssue({ code: 'custom', path: ['provider'], message: 'Choose a supported phone provider' })
-  if (value.enabled && value.secretSet && value.secret.action === 'remove') context.addIssue({ code: 'custom', path: ['secret'], message: 'Cannot remove while Phone Auth is enabled' })
-  const required = value.provider === 'twilio' ? ['accountSid', 'messageServiceSid'] : value.provider === 'messagebird' ? ['originator'] : value.provider === 'textlocal' ? ['sender'] : []
-  for (const name of required) if (value.enabled && !value.fields[name]?.trim()) context.addIssue({ code: 'custom', path: ['fields', name], message: 'Required for this provider' })
-  if (value.enabled && !value.secretSet && value.secret.action !== 'replace') context.addIssue({ code: 'custom', path: ['secret'], message: 'Enter a provider secret' })
-})
-const providerUpdateSchema = z.object({ enabled: z.boolean(), clientId: z.string(), secretSet: z.boolean(), secret: secretAction, fields: z.record(z.string(), z.string()) })
-const smtpUpdateSchema = z.object({ enabled: z.boolean(), host: z.string(), port: z.number().int().min(0).max(65535), username: z.string(), passwordSet: z.boolean(), password: secretAction, senderEmail: z.string(), senderName: z.string() }).superRefine((value, context) => {
-  if (value.enabled && value.passwordSet && value.password.action === 'remove') context.addIssue({ code: 'custom', path: ['password'], message: 'Cannot remove while SMTP is enabled' })
-  if (!value.enabled) return
-  if (value.port < 1) context.addIssue({ code: 'custom', path: ['port'], message: 'Port must be between 1 and 65535' })
-  for (const field of ['host', 'username', 'senderName'] as const) if (!value[field].trim()) context.addIssue({ code: 'custom', path: [field], message: 'Required when SMTP is enabled' })
-  if (!z.email().safeParse(value.senderEmail).success) context.addIssue({ code: 'custom', path: ['senderEmail'], message: 'Enter a valid email address' })
-  if (!value.passwordSet && value.password.action !== 'replace') context.addIssue({ code: 'custom', path: ['password'], message: 'Enter an SMTP password' })
-})
-export const rateLimitSchema = z.object({ emailSent: z.number().int().min(1).max(1_000_000), smsSent: z.number().int().min(1).max(1_000_000), tokenRefresh: z.number().int().min(1).max(1_000_000), tokenVerification: z.number().int().min(1).max(1_000_000), anonymousUsers: z.number().int().min(1).max(1_000_000), signupsAndSignins: z.number().int().min(1).max(1_000_000) })
-export const mfaSchema = z.object({ totpEnrollEnabled: z.boolean(), totpVerifyEnabled: z.boolean(), phoneEnrollEnabled: z.boolean(), phoneVerifyEnabled: z.boolean(), maxEnrolledFactors: z.number().int().min(1).max(100), phoneOtpLength: z.number().int().min(4).max(10) })
-const allowedTemplateVariables = ['.ConfirmationURL', '.Token', '.TokenHash', '.SiteURL', '.Email', '.Data', '.RedirectTo'] as const
-export const mailerTemplateSchema = z.object({ subject: z.string().max(255).refine((value) => !/[\r\n]/.test(value), 'Subject must not contain a newline'), templateUrl: z.string().refine((value) => value === '' || httpURL.safeParse(value).success, 'Enter an http or https URL') }).superRefine((value, context) => { const matches = [...value.subject.matchAll(/{{\s*([^{}]+?)\s*}}/g)]; if (value.subject.split('{{').length - 1 !== matches.length || value.subject.split('}}').length - 1 !== matches.length) context.addIssue({ code: 'custom', path: ['subject'], message: 'Invalid Go template action' }); for (const match of matches) if (!(allowedTemplateVariables as readonly string[]).includes(match[1].trim())) context.addIssue({ code: 'custom', path: ['subject'], message: 'Unsupported template variable' }) })
-export const mailerSchema = z.object({ templates: z.object({ confirmation: mailerTemplateSchema, invite: mailerTemplateSchema, magicLink: mailerTemplateSchema, emailChange: mailerTemplateSchema, recovery: mailerTemplateSchema, reauthentication: mailerTemplateSchema }), notifications: z.object({ passwordChanged: z.object({ enabled: z.boolean(), template: mailerTemplateSchema }), emailChanged: z.object({ enabled: z.boolean(), template: mailerTemplateSchema }), phoneChanged: z.object({ enabled: z.boolean(), template: mailerTemplateSchema }), identityLinked: z.object({ enabled: z.boolean(), template: mailerTemplateSchema }), identityUnlinked: z.object({ enabled: z.boolean(), template: mailerTemplateSchema }), mfaFactorEnrolled: z.object({ enabled: z.boolean(), template: mailerTemplateSchema }), mfaFactorUnenrolled: z.object({ enabled: z.boolean(), template: mailerTemplateSchema }) }) })
-export const authSchema = z.object({ enabled: z.boolean(), jwtExpiry: z.number().int().min(0).max(31536000), disableSignup: z.boolean(), email: emailAuthSchema, phone: phoneUpdateSchema, anonymousSignIn: z.boolean(), redirectUrls: z.array(httpURL), oauth: z.record(z.string(), providerUpdateSchema), smtp: smtpUpdateSchema, mailer: mailerSchema, rateLimits: rateLimitSchema, mfa: mfaSchema }).superRefine((value, context) => {
-  if (value.disableSignup !== !value.email.allowSignup) context.addIssue({ code: 'custom', path: ['disableSignup'], message: 'Must match the email signup policy' })
-  if (value.disableSignup && (value.phone.enabled || value.anonymousSignIn || Object.values(value.oauth).some((item) => item.enabled))) context.addIssue({ code: 'custom', path: ['disableSignup'], message: 'Phone, anonymous, and OAuth signup require signup to be enabled' })
-  if (value.email.secureEmailChange !== value.email.doubleConfirmChanges) context.addIssue({ code: 'custom', path: ['email', 'secureEmailChange'], message: 'Secure and double confirmation must match' })
-  for (const [provider, item] of Object.entries(value.oauth)) { if (!(OAUTH_PROVIDERS as readonly string[]).includes(provider)) context.addIssue({ code: 'custom', path: ['oauth', provider], message: 'Unsupported OAuth provider' }); const field = specialFields[provider]; if (item.enabled && field && !item.fields[field]?.trim()) context.addIssue({ code: 'custom', path: ['oauth', provider, 'fields', field], message: 'Required for this provider' }); if (field && item.fields[field] && !httpURL.safeParse(item.fields[field]).success) context.addIssue({ code: 'custom', path: ['oauth', provider, 'fields', field], message: 'Enter an http or https URL' }) }
-})
-export const smtpSchema = smtpUpdateSchema
-export function oauthProviderSchema(provider: string) { return providerUpdateSchema.superRefine((value, context) => { if (value.enabled && value.secretSet && value.secret.action === 'remove') context.addIssue({ code: 'custom', path: ['secret'], message: 'Cannot remove while provider is enabled' }); if (!value.enabled) return; if (!value.clientId.trim()) context.addIssue({ code: 'custom', path: ['clientId'], message: 'Client ID is required when enabled' }); if (!value.secretSet && value.secret.action !== 'replace') context.addIssue({ code: 'custom', path: ['secret'], message: 'Enter a client secret' }); const special = specialFields[provider]; if (special && !value.fields[special]?.trim()) context.addIssue({ code: 'custom', path: ['fields', special], message: 'Required for this provider' }); if (special && value.fields[special] && !httpURL.safeParse(value.fields[special]).success) context.addIssue({ code: 'custom', path: ['fields', special], message: 'Enter an http or https URL' }) }) }
-export const storageSchema = z.object({ backend: z.enum(['local', 's3', 'aws-s3', 'r2']), s3CompatibleApi: z.boolean(), bucket: z.string(), region: z.string(), endpoint: z.string(), accountId: z.string(), accessKeyId: z.string(), secretAccessKeySet: z.boolean(), secretAccessKey: secretAction, forcePathStyle: z.boolean(), localPath: z.string() }).superRefine((value, context) => { if (value.backend === 'local') { if (value.bucket || value.region || value.endpoint || value.accountId || value.accessKeyId || value.forcePathStyle || (value.secretAccessKeySet && value.secretAccessKey.action !== 'remove')) context.addIssue({ code: 'custom', path: ['backend'], message: 'Local storage cannot include object-storage settings' }); return }; if (!value.bucket.trim()) context.addIssue({ code: 'custom', path: ['bucket'], message: 'Bucket is required' }); if (value.backend !== 'r2' && !value.region.trim()) context.addIssue({ code: 'custom', path: ['region'], message: 'Region is required' }); if (!value.accessKeyId.trim()) context.addIssue({ code: 'custom', path: ['accessKeyId'], message: 'Access key ID is required' }); if (value.secretAccessKeySet && value.secretAccessKey.action === 'remove') context.addIssue({ code: 'custom', path: ['secretAccessKey'], message: 'Cannot remove for an enabled object storage backend' }); if (!value.secretAccessKeySet && value.secretAccessKey.action !== 'replace') context.addIssue({ code: 'custom', path: ['secretAccessKey'], message: 'Enter or retain a secret access key' }); if (value.backend === 's3' && !value.endpoint.trim()) context.addIssue({ code: 'custom', path: ['endpoint'], message: 'Endpoint is required for generic S3' }); if (value.endpoint && !httpURL.safeParse(value.endpoint).success) context.addIssue({ code: 'custom', path: ['endpoint'], message: 'Enter an http or https URL' }); if (value.backend === 'r2' && !value.accountId.trim()) context.addIssue({ code: 'custom', path: ['accountId'], message: 'Account ID is required for R2' }); if (value.backend === 'r2' && value.endpoint) context.addIssue({ code: 'custom', path: ['endpoint'], message: 'R2 endpoint is derived from account ID' }) })
-export const realtimeSchema = projectConfigurationSchema.shape.realtime
-const environmentName = /^[A-Z_][A-Z0-9_]*$/; const reservedEnvironmentNames = new Set(['ANON_KEY', 'SERVICE_ROLE_KEY', 'JWT_SECRET', 'SUPABASE_URL', 'SUPABASE_PUBLIC_URL', 'FUNCTIONS_VERIFY_JWT', 'POSTGRES_PASSWORD'])
-export const functionsSchema = z.object({ defaultJwtVerification: z.boolean(), directory: z.string(), variables: z.array(z.object({ name: z.string(), valueSet: z.boolean(), value: secretAction })) }).superRefine((value, context) => value.variables.forEach((item, index) => { if (!environmentName.test(item.name) || reservedEnvironmentNames.has(item.name) || item.name.startsWith('SUPABASE_')) context.addIssue({ code: 'custom', path: ['variables', index, 'name'], message: 'Reserved or invalid environment name' }) }))
-export const databaseSchema = projectConfigurationSchema.shape.database
-export const poolerSchema = projectConfigurationSchema.shape.pooler
-export const networkSchema = projectConfigurationSchema.shape.network
-export { secretAction }
+export const generalSchema = z.object({
+  domain,
+  siteUrl: httpURL,
+  supabaseVersion: z.literal(SUPABASE_VERSION),
+});
+export const servicesSchema = projectConfigurationSchema.shape.services;
+const emailAuthSchema = z.object({
+  enabled: z.boolean(),
+  allowSignup: z.boolean(),
+  confirmEmail: z.boolean(),
+  secureEmailChange: z.boolean(),
+  doubleConfirmChanges: z.boolean(),
+});
+const phoneUpdateSchema = z
+  .object({
+    enabled: z.boolean(),
+    provider: z.string(),
+    secretSet: z.boolean(),
+    secret: secretAction,
+    fields: z.record(z.string(), z.string()),
+  })
+  .superRefine((value, context) => {
+    if (
+      !value.enabled &&
+      !value.provider &&
+      !value.secretSet &&
+      value.secret.action === ""
+    )
+      return;
+    if (!["twilio", "messagebird", "textlocal"].includes(value.provider))
+      context.addIssue({
+        code: "custom",
+        path: ["provider"],
+        message: "Choose a supported phone provider",
+      });
+    if (value.enabled && value.secretSet && value.secret.action === "remove")
+      context.addIssue({
+        code: "custom",
+        path: ["secret"],
+        message: "Cannot remove while Phone Auth is enabled",
+      });
+    const required =
+      value.provider === "twilio"
+        ? ["accountSid", "messageServiceSid"]
+        : value.provider === "messagebird"
+          ? ["originator"]
+          : value.provider === "textlocal"
+            ? ["sender"]
+            : [];
+    for (const name of required)
+      if (value.enabled && !value.fields[name]?.trim())
+        context.addIssue({
+          code: "custom",
+          path: ["fields", name],
+          message: "Required for this provider",
+        });
+    if (value.enabled && !value.secretSet && value.secret.action !== "replace")
+      context.addIssue({
+        code: "custom",
+        path: ["secret"],
+        message: "Enter a provider secret",
+      });
+  });
+const providerUpdateSchema = z.object({
+  enabled: z.boolean(),
+  clientId: z.string(),
+  secretSet: z.boolean(),
+  secret: secretAction,
+  fields: z.record(z.string(), z.string()),
+});
+const smtpUpdateSchema = z
+  .object({
+    enabled: z.boolean(),
+    host: z.string(),
+    port: z.number().int().min(0).max(65535),
+    username: z.string(),
+    passwordSet: z.boolean(),
+    password: secretAction,
+    senderEmail: z.string(),
+    senderName: z.string(),
+  })
+  .superRefine((value, context) => {
+    if (
+      value.enabled &&
+      value.passwordSet &&
+      value.password.action === "remove"
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["password"],
+        message: "Cannot remove while SMTP is enabled",
+      });
+    if (!value.enabled) return;
+    if (value.port < 1)
+      context.addIssue({
+        code: "custom",
+        path: ["port"],
+        message: "Port must be between 1 and 65535",
+      });
+    for (const field of ["host", "username", "senderName"] as const)
+      if (!value[field].trim())
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "Required when SMTP is enabled",
+        });
+    if (!z.email().safeParse(value.senderEmail).success)
+      context.addIssue({
+        code: "custom",
+        path: ["senderEmail"],
+        message: "Enter a valid email address",
+      });
+    if (!value.passwordSet && value.password.action !== "replace")
+      context.addIssue({
+        code: "custom",
+        path: ["password"],
+        message: "Enter an SMTP password",
+      });
+  });
+export const rateLimitSchema = z.object({
+  emailSent: z.number().int().min(1).max(1_000_000),
+  smsSent: z.number().int().min(1).max(1_000_000),
+  tokenRefresh: z.number().int().min(1).max(1_000_000),
+  tokenVerification: z.number().int().min(1).max(1_000_000),
+  anonymousUsers: z.number().int().min(1).max(1_000_000),
+  signupsAndSignins: z.number().int().min(1).max(1_000_000),
+});
+export const mfaSchema = z.object({
+  totpEnrollEnabled: z.boolean(),
+  totpVerifyEnabled: z.boolean(),
+  phoneEnrollEnabled: z.boolean(),
+  phoneVerifyEnabled: z.boolean(),
+  maxEnrolledFactors: z.number().int().min(1).max(100),
+  phoneOtpLength: z.number().int().min(4).max(10),
+});
+const allowedTemplateVariables = [
+  ".ConfirmationURL",
+  ".Token",
+  ".TokenHash",
+  ".SiteURL",
+  ".Email",
+  ".Data",
+  ".RedirectTo",
+] as const;
+export const mailerTemplateSchema = z
+  .object({
+    subject: z
+      .string()
+      .max(255)
+      .refine(
+        (value) => !/[\r\n]/.test(value),
+        "Subject must not contain a newline",
+      ),
+    body: z
+      .string()
+      .min(1, "Template body is required")
+      .max(256 * 1024, "Template body must be at most 256 KiB"),
+  })
+  .superRefine((value, context) => {
+    for (const [field, source] of Object.entries({
+      subject: value.subject,
+      body: value.body,
+    })) {
+      const matches = [...source.matchAll(/{{\s*([^{}]+?)\s*}}/g)];
+      if (
+        source.split("{{").length - 1 !== matches.length ||
+        source.split("}}").length - 1 !== matches.length
+      )
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "Invalid Go template action",
+        });
+      for (const match of matches)
+        if (
+          !(allowedTemplateVariables as readonly string[]).includes(
+            match[1].trim(),
+          )
+        )
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: "Unsupported template variable",
+          });
+    }
+  });
+export const mailerSchema = z.object({
+  templates: z.object({
+    confirmation: mailerTemplateSchema,
+    invite: mailerTemplateSchema,
+    magicLink: mailerTemplateSchema,
+    emailChange: mailerTemplateSchema,
+    recovery: mailerTemplateSchema,
+    reauthentication: mailerTemplateSchema,
+  }),
+  notifications: z.object({
+    passwordChanged: z.object({
+      enabled: z.boolean(),
+      template: mailerTemplateSchema,
+    }),
+    emailChanged: z.object({
+      enabled: z.boolean(),
+      template: mailerTemplateSchema,
+    }),
+    phoneChanged: z.object({
+      enabled: z.boolean(),
+      template: mailerTemplateSchema,
+    }),
+    identityLinked: z.object({
+      enabled: z.boolean(),
+      template: mailerTemplateSchema,
+    }),
+    identityUnlinked: z.object({
+      enabled: z.boolean(),
+      template: mailerTemplateSchema,
+    }),
+    mfaFactorEnrolled: z.object({
+      enabled: z.boolean(),
+      template: mailerTemplateSchema,
+    }),
+    mfaFactorUnenrolled: z.object({
+      enabled: z.boolean(),
+      template: mailerTemplateSchema,
+    }),
+  }),
+});
+export const authSchema = z
+  .object({
+    enabled: z.boolean(),
+    jwtExpiry: z.number().int().min(0).max(31536000),
+    disableSignup: z.boolean(),
+    email: emailAuthSchema,
+    phone: phoneUpdateSchema,
+    anonymousSignIn: z.boolean(),
+    redirectUrls: z.array(httpURL),
+    oauth: z.record(z.string(), providerUpdateSchema),
+    smtp: smtpUpdateSchema,
+    mailer: mailerSchema,
+    rateLimits: rateLimitSchema,
+    mfa: mfaSchema,
+  })
+  .superRefine((value, context) => {
+    if (value.disableSignup !== !value.email.allowSignup)
+      context.addIssue({
+        code: "custom",
+        path: ["disableSignup"],
+        message: "Must match the email signup policy",
+      });
+    if (
+      value.disableSignup &&
+      (value.phone.enabled ||
+        value.anonymousSignIn ||
+        Object.values(value.oauth).some((item) => item.enabled))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["disableSignup"],
+        message:
+          "Phone, anonymous, and OAuth signup require signup to be enabled",
+      });
+    if (value.email.secureEmailChange !== value.email.doubleConfirmChanges)
+      context.addIssue({
+        code: "custom",
+        path: ["email", "secureEmailChange"],
+        message: "Secure and double confirmation must match",
+      });
+    for (const [provider, item] of Object.entries(value.oauth)) {
+      if (!(OAUTH_PROVIDERS as readonly string[]).includes(provider))
+        context.addIssue({
+          code: "custom",
+          path: ["oauth", provider],
+          message: "Unsupported OAuth provider",
+        });
+      const field = specialFields[provider];
+      if (item.enabled && field && !item.fields[field]?.trim())
+        context.addIssue({
+          code: "custom",
+          path: ["oauth", provider, "fields", field],
+          message: "Required for this provider",
+        });
+      if (
+        field &&
+        item.fields[field] &&
+        !httpURL.safeParse(item.fields[field]).success
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["oauth", provider, "fields", field],
+          message: "Enter an http or https URL",
+        });
+    }
+  });
+export const smtpSchema = smtpUpdateSchema;
+export function oauthProviderSchema(provider: string) {
+  return providerUpdateSchema.superRefine((value, context) => {
+    if (value.enabled && value.secretSet && value.secret.action === "remove")
+      context.addIssue({
+        code: "custom",
+        path: ["secret"],
+        message: "Cannot remove while provider is enabled",
+      });
+    if (!value.enabled) return;
+    if (!value.clientId.trim())
+      context.addIssue({
+        code: "custom",
+        path: ["clientId"],
+        message: "Client ID is required when enabled",
+      });
+    if (!value.secretSet && value.secret.action !== "replace")
+      context.addIssue({
+        code: "custom",
+        path: ["secret"],
+        message: "Enter a client secret",
+      });
+    const special = specialFields[provider];
+    if (special && !value.fields[special]?.trim())
+      context.addIssue({
+        code: "custom",
+        path: ["fields", special],
+        message: "Required for this provider",
+      });
+    if (
+      special &&
+      value.fields[special] &&
+      !httpURL.safeParse(value.fields[special]).success
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["fields", special],
+        message: "Enter an http or https URL",
+      });
+  });
+}
+export const storageSchema = z
+  .object({
+    backend: z.enum(["local", "s3", "aws-s3", "r2"]),
+    s3CompatibleApi: z.boolean(),
+    bucket: z.string(),
+    region: z.string(),
+    endpoint: z.string(),
+    accountId: z.string(),
+    accessKeyId: z.string(),
+    secretAccessKeySet: z.boolean(),
+    secretAccessKey: secretAction,
+    forcePathStyle: z.boolean(),
+    localPath: z.string(),
+  })
+  .superRefine((value, context) => {
+    if (value.backend === "local") {
+      if (
+        value.bucket ||
+        value.region ||
+        value.endpoint ||
+        value.accountId ||
+        value.accessKeyId ||
+        value.forcePathStyle ||
+        (value.secretAccessKeySet && value.secretAccessKey.action !== "remove")
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["backend"],
+          message: "Local storage cannot include object-storage settings",
+        });
+      return;
+    }
+    if (!value.bucket.trim())
+      context.addIssue({
+        code: "custom",
+        path: ["bucket"],
+        message: "Bucket is required",
+      });
+    if (value.backend !== "r2" && !value.region.trim())
+      context.addIssue({
+        code: "custom",
+        path: ["region"],
+        message: "Region is required",
+      });
+    if (!value.accessKeyId.trim())
+      context.addIssue({
+        code: "custom",
+        path: ["accessKeyId"],
+        message: "Access key ID is required",
+      });
+    if (value.secretAccessKeySet && value.secretAccessKey.action === "remove")
+      context.addIssue({
+        code: "custom",
+        path: ["secretAccessKey"],
+        message: "Cannot remove for an enabled object storage backend",
+      });
+    if (!value.secretAccessKeySet && value.secretAccessKey.action !== "replace")
+      context.addIssue({
+        code: "custom",
+        path: ["secretAccessKey"],
+        message: "Enter or retain a secret access key",
+      });
+    if (value.backend === "s3" && !value.endpoint.trim())
+      context.addIssue({
+        code: "custom",
+        path: ["endpoint"],
+        message: "Endpoint is required for generic S3",
+      });
+    if (value.endpoint && !httpURL.safeParse(value.endpoint).success)
+      context.addIssue({
+        code: "custom",
+        path: ["endpoint"],
+        message: "Enter an http or https URL",
+      });
+    if (value.backend === "r2" && !value.accountId.trim())
+      context.addIssue({
+        code: "custom",
+        path: ["accountId"],
+        message: "Account ID is required for R2",
+      });
+    if (value.backend === "r2" && value.endpoint)
+      context.addIssue({
+        code: "custom",
+        path: ["endpoint"],
+        message: "R2 endpoint is derived from account ID",
+      });
+  });
+export const realtimeSchema = projectConfigurationSchema.shape.realtime;
+const environmentName = /^[A-Z_][A-Z0-9_]*$/;
+const reservedEnvironmentNames = new Set([
+  "ANON_KEY",
+  "SERVICE_ROLE_KEY",
+  "JWT_SECRET",
+  "SUPABASE_URL",
+  "SUPABASE_PUBLIC_URL",
+  "FUNCTIONS_VERIFY_JWT",
+  "POSTGRES_PASSWORD",
+]);
+export const functionsSchema = z
+  .object({
+    defaultJwtVerification: z.boolean(),
+    directory: z.string(),
+    variables: z.array(
+      z.object({
+        name: z.string(),
+        valueSet: z.boolean(),
+        value: secretAction,
+      }),
+    ),
+  })
+  .superRefine((value, context) =>
+    value.variables.forEach((item, index) => {
+      if (
+        !environmentName.test(item.name) ||
+        reservedEnvironmentNames.has(item.name) ||
+        item.name.startsWith("SUPABASE_")
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["variables", index, "name"],
+          message: "Reserved or invalid environment name",
+        });
+    }),
+  );
+export const databaseSchema = projectConfigurationSchema.shape.database;
+export const poolerSchema = projectConfigurationSchema.shape.pooler;
+export const networkSchema = projectConfigurationSchema.shape.network;
+export { secretAction };

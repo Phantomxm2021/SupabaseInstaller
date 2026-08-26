@@ -91,7 +91,7 @@ func TestConfigurationServiceResetsLegacyAuthConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Configuration.Auth.Mailer.Templates.Confirmation.Subject != "Confirm your signup" || got.Configuration.Auth.Mailer.Notifications.PasswordChanged.Enabled {
+	if got.Configuration.Auth.Mailer.Templates.Confirmation.Subject != "Confirm your signup" || got.Configuration.Auth.Mailer.Templates.Confirmation.Body == "" || got.Configuration.Auth.Mailer.Notifications.PasswordChanged.Enabled {
 		t.Fatalf("legacy Auth was not replaced with current defaults: %#v", got.Configuration.Auth.Mailer)
 	}
 }
@@ -113,7 +113,7 @@ func TestConfigurationServicePersistsMailerTemplatePatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth := cfg.Auth
-	auth.Mailer.Templates.Recovery.TemplateURL = "https://templates.example.com/recovery.html"
+	auth.Mailer.Templates.Recovery.Body = "<p>Recover your account</p>"
 	service := NewConfigurationService(database, cipher, time.Now)
 	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Auth: &auth}); err != nil {
 		t.Fatalf("admit mailer patch: %v", err)
@@ -122,8 +122,8 @@ func TestConfigurationServicePersistsMailerTemplatePatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Configuration.Auth.Mailer.Templates.Recovery.TemplateURL != auth.Mailer.Templates.Recovery.TemplateURL {
-		t.Fatalf("persisted recovery template URL = %q, want %q", got.Configuration.Auth.Mailer.Templates.Recovery.TemplateURL, auth.Mailer.Templates.Recovery.TemplateURL)
+	if got.Configuration.Auth.Mailer.Templates.Recovery.Body != auth.Mailer.Templates.Recovery.Body {
+		t.Fatalf("persisted recovery template body = %q, want %q", got.Configuration.Auth.Mailer.Templates.Recovery.Body, auth.Mailer.Templates.Recovery.Body)
 	}
 }
 

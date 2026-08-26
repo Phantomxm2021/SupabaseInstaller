@@ -176,14 +176,14 @@ func TestRenderCustomAuthAndSMTP(t *testing.T) {
 func TestRenderMailerTemplatesAndNotifications(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Auth.Mailer.Templates.Confirmation = contracts.EmailTemplateConfig{
-		Subject:     "Welcome {{ .Email }}",
-		TemplateURL: "https://templates.example.com/confirmation.html",
+		Subject: "Welcome {{ .Email }}",
+		Body:    "<h1>Welcome {{ .Email }}</h1>",
 	}
 	cfg.Auth.Mailer.Notifications.PasswordChanged = contracts.EmailNotificationConfig{
 		Enabled: true,
 		Template: contracts.EmailTemplateConfig{
-			Subject:     "Password changed",
-			TemplateURL: "https://templates.example.com/password-changed.html",
+			Subject: "Password changed",
+			Body:    "<p>Password changed</p>",
 		},
 	}
 	out, err := Project(Input{Slug: "mailer", APIPort: 18001, Configuration: cfg, TemplateCompose: []byte(testCompose)})
@@ -192,10 +192,10 @@ func TestRenderMailerTemplatesAndNotifications(t *testing.T) {
 	}
 	for _, line := range []string{
 		"MAILER_SUBJECT_CONFIRMATION=Welcome {{ .Email }}",
-		"MAILER_TEMPLATE_CONFIRMATION=https://templates.example.com/confirmation.html",
+		"MAILER_TEMPLATE_CONFIRMATION=http://auth-templates:8080/confirmation.html",
 		"MAILER_NOTIFICATIONS_PASSWORD_CHANGED_ENABLED=true",
 		"MAILER_SUBJECT_PASSWORD_CHANGED_NOTIFICATION=Password changed",
-		"MAILER_TEMPLATE_PASSWORD_CHANGED_NOTIFICATION=https://templates.example.com/password-changed.html",
+		"MAILER_TEMPLATE_PASSWORD_CHANGED_NOTIFICATION=http://auth-templates:8080/password_changed_notification.html",
 		"GOTRUE_MAILER_SUBJECTS_CONFIRMATION: ${MAILER_SUBJECT_CONFIRMATION}",
 		"GOTRUE_MAILER_TEMPLATES_CONFIRMATION: ${MAILER_TEMPLATE_CONFIRMATION}",
 		"GOTRUE_MAILER_NOTIFICATIONS_PASSWORD_CHANGED_ENABLED: ${MAILER_NOTIFICATIONS_PASSWORD_CHANGED_ENABLED}",
@@ -205,6 +205,9 @@ func TestRenderMailerTemplatesAndNotifications(t *testing.T) {
 		if !strings.Contains(out.Env, line) && !strings.Contains(out.Compose, line) {
 			t.Errorf("missing %q", line)
 		}
+	}
+	if got := string(out.MailerTemplates["confirmation.html"]); got != "<h1>Welcome {{ .Email }}</h1>" {
+		t.Fatalf("confirmation template = %q", got)
 	}
 }
 
@@ -562,6 +565,11 @@ func TestRenderGoldenFixtures(t *testing.T) {
 			if err := yaml.Unmarshal([]byte(out.Compose), &actual); err != nil {
 				t.Fatal(err)
 			}
+			actualServices := actual.(map[string]any)["services"].(map[string]any)
+			if _, ok := actualServices["auth-templates"]; !ok {
+				t.Fatal("generated Auth template service is missing")
+			}
+			delete(actualServices, "auth-templates")
 			expectedCanonical, err := yaml.Marshal(expected)
 			if err != nil {
 				t.Fatal(err)
