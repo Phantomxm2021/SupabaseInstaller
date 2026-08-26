@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ShieldCheck, ServerCog, UserCircle } from 'lucide-react'
-import { apiFetch } from '../../api/client'
+import { sessionQueryOptions } from '../../api/session'
 import { Badge } from '../../components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card'
 
@@ -11,13 +11,10 @@ type SafeSession = {
 
 export function ManagerSettingsPage() {
   const session = useQuery({
-    queryKey: ['session'],
-    queryFn: async () => {
-      const response = await apiFetch<SafeSession & Record<string, unknown>>('/api/session')
-      // Deliberately project the response to fields that are safe to display.
-      return { username: response.username, mustChangePassword: response.mustChangePassword }
-    },
+    ...sessionQueryOptions(),
     retry: false,
+    // Deliberately project the shared response to fields that are safe to display.
+    select: (response): SafeSession => ({ username: response.username, mustChangePassword: response.mustChangePassword }),
   })
 
   if (session.isLoading) return <main className="page"><p className="muted">Loading settings…</p></main>

@@ -34,3 +34,15 @@ The final focused suite (navigation, settings/CSRF redaction, deletion confirmat
 - Removed the dead `PREPARE_SUPABASE` UI label.
 
 Commit hash is recorded by `git log` for the accompanying `feat: adopt shadcn shell and fix navigation flows` commit.
+
+## Fix round 1
+
+Addressed all review Important/Minor findings:
+
+- Centralized the `['session']` query and CSRF synchronization; Settings now uses the shared cache with `select` and the regression test refetches before sign out.
+- Switched to the generated `SidebarProvider > Sidebar + SidebarInset` layout, added a focusable mobile trigger, named navigation landmark, and active-route assertion.
+- Migrated legacy muted text to `muted-foreground`, kept surface `muted` semantics, and explicitly configured the fixed-dark Toaster.
+- Delete now awaits cancellation of detail and configuration queries before removing either, invalidates the projects list, then replace-navigates; real API/toast/order coverage is included.
+- Added the delete-mode fieldset legend.
+
+Fix-round verification: focused suite 8 tests passed; full suite 9 files / 14 tests passed; production build and `git diff --check` passed.

@@ -12,6 +12,7 @@ type LifecycleAction = 'start' | 'stop' | 'restart'
 
 export async function refreshProjectQueriesAfterDelete(queryClient: Pick<QueryClient, 'cancelQueries' | 'removeQueries' | 'invalidateQueries'>, projectId: string) {
   await queryClient.cancelQueries({ queryKey: ['project', projectId] })
+  await queryClient.cancelQueries({ queryKey: ['project-configuration', projectId] })
   queryClient.removeQueries({ queryKey: ['project', projectId] })
   queryClient.removeQueries({ queryKey: ['project-configuration', projectId] })
   await queryClient.invalidateQueries({ queryKey: ['projects'] })

@@ -45,6 +45,7 @@ export function DeleteProjectDialog({
           <AlertDialogDescription>Choose whether to remove only the containers or also erase the project data.</AlertDialogDescription>
         </AlertDialogHeader>
         <fieldset className="delete-options">
+          <legend className="sr-only">Delete mode</legend>
           <label><input type="radio" name="delete-mode" checked={mode === 'runtime'} onChange={() => setMode('runtime')} /> Delete runtime only</label>
           <label><input type="radio" name="delete-mode" checked={mode === 'data'} onChange={() => setMode('data')} /> Delete runtime and data</label>
         </fieldset>

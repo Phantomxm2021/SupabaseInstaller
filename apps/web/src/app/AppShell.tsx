@@ -7,10 +7,12 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
+  SidebarInset,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarTrigger,
 } from '../components/ui/sidebar'
 import {
   DropdownMenu,
@@ -38,13 +40,15 @@ export function AppShell() {
             <div className="brand-row sidebar-brand"><span className="brand-mark"><Database size={20} /></span><span>Supabase Manager</span></div>
           </SidebarHeader>
           <SidebarContent>
-            <SidebarMenu aria-label="Main navigation">
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Projects" render={<NavLink to="/projects" />}>
-                  <Boxes /> <span>Projects</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
+            <nav aria-label="Main navigation">
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton tooltip="Projects" render={<NavLink to="/projects" />}>
+                    <Boxes /> <span>Projects</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </nav>
           </SidebarContent>
           <div className="sidebar-status">
             <span className="status-dot healthy" /><div><strong>Host online</strong><small>Docker connected</small></div>
@@ -61,10 +65,13 @@ export function AppShell() {
             </DropdownMenu>
           </SidebarFooter>
         </Sidebar>
-      <div className="content-shell">
-        <header className="topbar"><div><HardDrive size={16} /> Local Docker host</div><span className="badge neutral">Installer Core</span></header>
-        <Outlet />
-      </div>
+      <SidebarInset>
+        <header className="topbar">
+          <SidebarTrigger aria-label="Open sidebar" />
+          <div><HardDrive size={16} /> Local Docker host</div><span className="badge neutral">Installer Core</span>
+        </header>
+        <div className="content-shell"><Outlet /></div>
+      </SidebarInset>
       </div>
     </SidebarProvider>
   )

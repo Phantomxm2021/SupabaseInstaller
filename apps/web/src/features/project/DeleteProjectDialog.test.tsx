@@ -5,6 +5,7 @@ import { DeleteProjectDialog } from './DeleteProjectDialog'
 it('requires the exact project name before deleting data', async () => {
   const user = userEvent.setup()
   render(<DeleteProjectDialog project={{ id: 'bee', name: 'Bee' }} open onClose={() => {}} onDelete={() => {}} />)
+  expect(screen.getByText('Delete mode')).toBeInTheDocument()
   await user.click(screen.getByLabelText('Delete runtime and data'))
   await user.type(screen.getByLabelText('Type Bee to confirm'), 'bee')
   expect(screen.getByRole('button', { name: 'Delete permanently' })).toBeDisabled()

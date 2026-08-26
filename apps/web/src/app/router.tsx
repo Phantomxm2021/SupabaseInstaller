@@ -1,6 +1,7 @@
 import { QueryClient, useQuery } from '@tanstack/react-query'
 import { Navigate, Outlet, createBrowserRouter } from 'react-router-dom'
-import { apiFetch, setCSRFToken } from '../api/client'
+import { apiFetch } from '../api/client'
+import { sessionQueryOptions } from '../api/session'
 import { LoginPage } from '../features/auth/LoginPage'
 import { SetupPage } from '../features/auth/SetupPage'
 import { ProjectsPage } from '../features/projects/ProjectsPage'
@@ -17,16 +18,8 @@ function EntryGate() {
   return <Navigate to="/projects" replace />
 }
 
-function AuthenticatedShell() {
-  const session = useQuery({
-    queryKey: ['session'],
-    queryFn: async () => {
-      const current = await apiFetch<{ csrfToken: string }>('/api/session')
-      setCSRFToken(current.csrfToken)
-      return current
-    },
-    retry: false,
-  })
+export function AuthenticatedShell() {
+  const session = useQuery({ ...sessionQueryOptions(), retry: false })
   if (session.isLoading) return <div className="splash">Loading workspace…</div>
   if (session.isError) return <Navigate to="/login" replace />
   return <AppShell />
