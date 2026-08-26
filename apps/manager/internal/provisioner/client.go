@@ -116,6 +116,10 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 		var rotation contracts.RotateDatabasePasswordResponse
 		if json.Unmarshal(payload, &rotation) == nil {
 			rollbackComplete = rotation.RolledBack
+			if rotation.Error != nil {
+				runtimeStateKnown = true
+				runtimeStateChanged = rotation.RuntimeChanged
+			}
 		}
 		if envelope.Error.Code == "" {
 			if rotation.Error != nil {
