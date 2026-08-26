@@ -24,24 +24,44 @@ assert_no_compose_resources() {
 }
 
 cleanup() {
+	local original_status=$?
+	local cleanup_status=0
 	if [[ -f "$env_file" ]]; then
-		docker compose -p "$compose_project" -f "$repo_root/deploy/docker-compose.yml" --env-file "$env_file" down -v --remove-orphans >/dev/null 2>&1 || true
+		if ! docker compose -p "$compose_project" -f "$repo_root/deploy/docker-compose.yml" --env-file "$env_file" down -v --remove-orphans >/dev/null 2>&1; then
+			cleanup_status=1
+		fi
 	fi
-	assert_no_compose_resources "$compose_project" || true
+	if ! assert_no_compose_resources "$compose_project"; then
+		cleanup_status=1
+	fi
 	if [[ -f "$runtime_project_file" ]]; then
 		runtime_project="$(<"$runtime_project_file")"
 		while IFS= read -r container; do
-			[[ -z "$container" ]] || docker rm -f "$container" >/dev/null 2>&1 || true
+			if [[ -n "$container" ]] && ! docker rm -f "$container" >/dev/null 2>&1; then
+				cleanup_status=1
+			fi
 		done < <(docker ps -aq --filter "label=com.docker.compose.project=$runtime_project")
 		while IFS= read -r network; do
-			[[ -z "$network" ]] || docker network rm "$network" >/dev/null 2>&1 || true
+			if [[ -n "$network" ]] && ! docker network rm "$network" >/dev/null 2>&1; then
+				cleanup_status=1
+			fi
 		done < <(docker network ls -q --filter "label=com.docker.compose.project=$runtime_project")
 		while IFS= read -r volume; do
-			[[ -z "$volume" ]] || docker volume rm "$volume" >/dev/null 2>&1 || true
+			if [[ -n "$volume" ]] && ! docker volume rm "$volume" >/dev/null 2>&1; then
+				cleanup_status=1
+			fi
 		done < <(docker volume ls -q --filter "label=com.docker.compose.project=$runtime_project")
-		assert_no_compose_resources "$runtime_project" || true
+		if ! assert_no_compose_resources "$runtime_project"; then
+			cleanup_status=1
+		fi
 	fi
-	rm -rf "$acceptance_root"
+	if ! rm -rf "$acceptance_root"; then
+		cleanup_status=1
+	fi
+	if (( original_status != 0 )); then
+		return "$original_status"
+	fi
+	return "$cleanup_status"
 }
 trap cleanup EXIT
 
@@ -75,3 +95,4 @@ fi
 export SUPABASE_MANAGER_E2E_COMPOSE_PROJECT="$compose_project"
 export SUPABASE_MANAGER_E2E_RUNTIME_PROJECT_FILE="$runtime_project_file"
 go test -tags=integration ./tests/integration -run TestConfigurationReconcile -v -timeout 45m
+go test ./apps/provisioner/internal/runtime -run TestAcceptanceInspectorFailureRestoresPreviousRuntimeAndRecreatesPriorAuth -count=1 -v

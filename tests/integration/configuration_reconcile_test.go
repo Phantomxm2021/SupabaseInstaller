@@ -143,8 +143,7 @@ func cleanupRuntimeProject(t *testing.T, client *http.Client, baseURL, projectID
 	t.Helper()
 	result, err := requestJSONNoFatal(client, http.MethodDelete, baseURL+"/api/projects/"+projectID, map[string]any{"mode": "runtime"}, cookie, csrf)
 	if err != nil {
-		t.Logf("cleanup runtime request failed: %v", err)
-		return
+		t.Fatalf("cleanup runtime request failed: %v", err)
 	}
 	if operationID, ok := result["operationId"].(string); ok {
 		waitOperation(t, client, baseURL, operationID, cookie, csrf)
