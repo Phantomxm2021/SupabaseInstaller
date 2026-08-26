@@ -1,4 +1,5 @@
 import type { RedactedProjectConfiguration } from './wire'
+import type { Services } from '../../../api/types'
 
 export const CONFIGURATION_SECTIONS = ['general', 'services', 'auth', 'smtp', 'oauth', 'storage', 'realtime', 'functions', 'database', 'pooler', 'network', 'secrets'] as const
 export type ConfigurationSection = typeof CONFIGURATION_SECTIONS[number]
@@ -44,19 +45,31 @@ export function sectionEndpoint(section: ConfigurationSection, provider?: string
   return provider && section === 'oauth' ? `oauth/${encodeURIComponent(provider)}` : section
 }
 
-export function sectionImpact(section: ConfigurationSection, value: unknown): PendingConfigurationSave['impact'] {
+export function sectionImpact(section: ConfigurationSection, value: unknown, services?: Services): PendingConfigurationSave['impact'] {
+  if ((section === 'smtp' || section === 'oauth') && value && typeof value === 'object' && 'enabled' in value && (value as { enabled?: unknown }).enabled === false) return 'none'
+  if (section === 'auth' && value && typeof value === 'object' && (value as { enabled?: unknown }).enabled === false) return 'none'
+  if (services && ['auth', 'smtp', 'oauth', 'storage', 'realtime', 'functions'].includes(section)) {
+    const owner = section === 'smtp' || section === 'oauth' || section === 'auth' ? 'auth' : section
+    if (!(services as unknown as Record<string, boolean>)[owner]) return 'none'
+  }
   if (section === 'general' || section === 'network' || section === 'services' || section === 'database' || section === 'pooler') return 'recreate'
   if (section === 'smtp' || section === 'oauth' || section === 'auth' || section === 'storage' || section === 'realtime' || section === 'functions') return 'recreate'
   return 'none'
 }
 
-export function affectedServices(section: ConfigurationSection, value: unknown): string[] {
+export function affectedServices(section: ConfigurationSection, dirty: unknown, value?: unknown, services?: Services): string[] {
   if (section === 'services' && value && typeof value === 'object') {
     const names: Record<string, string> = { auth: 'Auth', rest: 'PostgREST', studio: 'Studio', postgresMeta: 'postgres-meta', realtime: 'Realtime', storage: 'Storage', imgproxy: 'imgproxy', functions: 'Edge Functions', supavisor: 'Supavisor', logs: 'Logflare', vector: 'Vector', directDb: 'PostgreSQL' }
-    return Object.entries(value).filter(([, current]) => typeof current === 'boolean').map(([name]) => names[name] ?? name)
+    const before = (services ?? {}) as unknown as Record<string, boolean>
+    return Object.entries(value).filter(([name, current]) => typeof current === 'boolean' && before[name] !== current).map(([name]) => names[name] ?? name)
   }
   const defaults: Record<ConfigurationSection, string[]> = { general: ['Gateway', 'Auth', 'Studio'], services: [], auth: ['Auth'], smtp: ['Auth'], oauth: ['Auth'], storage: ['Storage'], realtime: ['Realtime'], functions: ['Edge Functions'], database: ['PostgreSQL'], pooler: ['Supavisor'], network: ['Gateway'], secrets: [] }
-  return defaults[section]
+  const result = defaults[section]
+  if (!services) return result
+  return result.filter((name) => {
+    const owner: Record<string, string> = { Auth: 'auth', Storage: 'storage', Realtime: 'realtime', 'Edge Functions': 'functions', PostgreSQL: 'database', Supavisor: 'supavisor', Gateway: 'gateway' }
+    return (services as unknown as Record<string, boolean>)[owner[name] ?? name.toLowerCase()]
+  })
 }
 
 export function dirtyLabels(value: unknown, path: string[] = []): string[] {

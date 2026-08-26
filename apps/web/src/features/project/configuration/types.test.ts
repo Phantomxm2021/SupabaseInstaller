@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { RedactedProjectConfiguration } from '../../../api/types'
 import { normalizeRedactedConfiguration, sectionImpact, affectedServices } from './types'
+import { storageSchema, smtpSchema, oauthProviderSchema, authSchema, functionsSchema } from './schema'
 
 function omittedConfiguration(): RedactedProjectConfiguration {
   return {
@@ -44,5 +45,18 @@ describe('configuration projection normalization', () => {
 
   it('calculates general changes including Auth, Studio, and gateway', () => {
     expect(affectedServices('general', { domain: 'new.example.com' })).toEqual(['Gateway', 'Auth', 'Studio'])
+  })
+
+  it('matches Manager truth tables for enabled configured secrets and endpoints', () => {
+    const storage = { backend: 's3' as const, s3CompatibleApi: true, bucket: 'bucket', region: 'us-east-1', endpoint: 'not-a-url', accountId: '', accessKeyId: 'key', secretAccessKeySet: true, secretAccessKey: { action: 'remove' as const }, forcePathStyle: false, localPath: '' }
+    expect(storageSchema.safeParse(storage).success).toBe(false)
+    const smtp = { enabled: true, host: 'smtp.example.com', port: 587, username: 'u', passwordSet: true, password: { action: 'remove' as const }, senderEmail: 'a@example.com', senderName: 'A' }
+    expect(smtpSchema.safeParse(smtp).success).toBe(false)
+    const oauth = { enabled: true, clientId: 'client', secretSet: true, secret: { action: 'remove' as const }, fields: {} }
+    expect(oauthProviderSchema('google').safeParse(oauth).success).toBe(false)
+    const phone = { enabled: true, provider: 'twilio', secretSet: true, secret: { action: 'remove' as const }, fields: { accountSid: 'a', messageServiceSid: 'm' } }
+    const auth = { enabled: true, jwtExpiry: 3600, disableSignup: false, email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false }, phone, anonymousSignIn: false, redirectUrls: [], oauth: {}, smtp: { ...smtp, password: { action: 'retain' as const } } }
+    expect(authSchema.safeParse(auth).success).toBe(false)
+    expect(functionsSchema.safeParse({ defaultJwtVerification: true, directory: './functions', variables: [{ name: 'SUPABASE_URL', valueSet: false, value: { action: '' } }] }).success).toBe(false)
   })
 })

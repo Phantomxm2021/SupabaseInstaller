@@ -54,9 +54,6 @@ func Project(input Input) (OutputFiles, error) {
 	if err := validateStorageConfiguration(input.Configuration.Storage); err != nil {
 		return OutputFiles{}, err
 	}
-	if input.Configuration.Network.HTTPSMode == contracts.HTTPSModeManual {
-		return OutputFiles{}, fmt.Errorf("network.httpsMode: manual HTTPS requires certificate fields")
-	}
 	if input.Configuration.Network.InternalGatewayPort != 0 && input.Configuration.Network.InternalGatewayPort != 8000 {
 		return OutputFiles{}, fmt.Errorf("network.internalGatewayPort: pinned gateway only supports port 8000")
 	}
@@ -300,7 +297,7 @@ func loadOfficialCompose(config contracts.ProjectConfiguration) (map[string]any,
 	}
 	if config.Network.HTTPSMode == contracts.HTTPSModeCaddy {
 		overlays = append(overlays, "docker-compose.caddy.yml")
-	} else if config.Network.HTTPSMode != "" && config.Network.HTTPSMode != contracts.HTTPSModeExternal && config.Network.HTTPSMode != contracts.HTTPSModeManual {
+	} else if config.Network.HTTPSMode != "" && config.Network.HTTPSMode != contracts.HTTPSModeExternal {
 		return nil, fmt.Errorf("network.httpsMode: unsupported HTTPS mode %q", config.Network.HTTPSMode)
 	}
 	for _, name := range overlays {

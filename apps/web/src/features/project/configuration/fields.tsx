@@ -24,10 +24,11 @@ export function useResetOnServerRevision<T extends FieldValues>(form: UseFormRet
   }, [form, initial, revision])
 }
 
-export function Toggle({ id, label, checked, onChange, disabled, description }: { id?: string; label: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean; description?: string }) {
+export function Toggle({ id, label, checked, onChange, disabled, description, error }: { id?: string; label: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean; description?: string; error?: string }) {
   const uid = useId()
   const controlId = id ?? `toggle-${uid.replace(/[^a-zA-Z0-9]/g, '')}`
-  return <div className="rounded-lg border border-border p-3"><div className="flex items-center justify-between gap-3"><label htmlFor={controlId} className="text-sm font-medium">{label}</label><Switch id={controlId} aria-label={label} checked={checked} onCheckedChange={onChange} disabled={disabled} /></div>{description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}</div>
+  const errorId = `${controlId}-error`
+  return <div className="rounded-lg border border-border p-3"><div className="flex items-center justify-between gap-3"><label htmlFor={controlId} className="text-sm font-medium">{label}</label><Switch id={controlId} aria-label={label} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} checked={checked} onCheckedChange={onChange} disabled={disabled} /></div>{description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}{error && <FieldError id={errorId}>{error}</FieldError>}</div>
 }
 
 export function TextField<T extends FieldValues>({ form, name, label, placeholder }: { form: UseFormReturn<T>; name: Path<T>; label: string; placeholder?: string }) {
@@ -51,13 +52,14 @@ export function ReadOnlyField({ label, value, copy = false }: { label: string; v
 }
 export function SectionSaveButton({ label, disabled }: { label: string; disabled: boolean }) { return <div className="flex justify-end"><Button type="submit" disabled={disabled}><span>Save {label}</span></Button></div> }
 
-export function SecretEditor({ label, secret, configured, onChange }: { label: string; secret?: SecretInput; configured: boolean; onChange: (value: UpdateSecretInput) => void }) {
+export function SecretEditor({ label, secret, configured, onChange, error }: { label: string; secret?: SecretInput; configured: boolean; onChange: (value: UpdateSecretInput) => void; error?: string }) {
   const [value, setValue] = useStateMemory()
   const [visible, setVisible] = useState(false)
   const uid = useId()
   const id = `secret-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${uid.replace(/[^a-zA-Z0-9]/g, '')}`
   const action: SecretAction = value ? 'replace' : ''
-  return <Field><div className="flex items-center justify-between gap-2"><FieldLabel htmlFor={id}>{label}</FieldLabel>{configured && <Badge variant="outline">Configured</Badge>}</div><div className="flex gap-2"><Input id={id} type={visible ? 'text' : 'password'} value={value} placeholder={configured ? 'Configured — enter to replace' : 'Enter a secret'} autoComplete="new-password" onChange={(event) => { const next = event.target.value; setValue(next); onChange(next ? { action: 'replace', value: next } : { action: '' }) }} /><Button type="button" variant="outline" size="icon" onClick={() => setVisible((current) => !current)} aria-label={visible ? `Hide ${label}` : `Show ${label}`}>{visible ? 'Hide' : 'Show'}</Button></div>{configured && <div className="flex gap-2"><Button type="button" size="sm" variant="ghost" onClick={() => { setValue(''); onChange({ action: 'retain' }) }}>Retain</Button><Button type="button" size="sm" variant="ghost" onClick={() => { setValue(''); onChange({ action: 'remove' }) }}>Remove</Button></div>}<FieldDescription>Secrets are held in memory only and are never returned by configuration reads.</FieldDescription></Field>
+  const errorId = `${id}-error`
+  return <Field><div className="flex items-center justify-between gap-2"><FieldLabel htmlFor={id}>{label}</FieldLabel>{configured && <Badge variant="outline">Configured</Badge>}</div><div className="flex gap-2"><Input id={id} type={visible ? 'text' : 'password'} value={value} placeholder={configured ? 'Configured — enter to replace' : 'Enter a secret'} autoComplete="new-password" aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => { const next = event.target.value; setValue(next); onChange(next ? { action: 'replace', value: next } : { action: '' }) }} /><Button type="button" variant="outline" size="icon" onClick={() => setVisible((current) => !current)} aria-label={visible ? `Hide ${label}` : `Show ${label}`}>{visible ? 'Hide' : 'Show'}</Button></div>{configured && <div className="flex gap-2"><Button type="button" size="sm" variant="ghost" aria-label={`Retain ${label}`} onClick={() => { setValue(''); onChange({ action: 'retain' }) }}>Retain</Button><Button type="button" size="sm" variant="ghost" aria-label={`Remove ${label}`} onClick={() => { setValue(''); onChange({ action: 'remove' }) }}>Remove</Button></div>}{error && <FieldError id={errorId}>{error}</FieldError>}<FieldDescription>Secrets are held in memory only and are never returned by configuration reads.</FieldDescription></Field>
 }
 
 function useStateMemory() {
@@ -66,4 +68,4 @@ function useStateMemory() {
   useEffect(() => () => setValue(''), [])
   return [value, setValue] as const
 }
-function errorAt(errors: unknown, path: string) { let current: any = errors; for (const part of path.split('.')) current = current?.[part]; return current?.message ?? current?.root?.message }
+export function errorAt(errors: unknown, path: string) { let current: any = errors; for (const part of path.split('.')) current = current?.[part]; return current?.message ?? current?.root?.message }

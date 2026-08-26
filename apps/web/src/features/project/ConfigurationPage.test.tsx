@@ -100,3 +100,19 @@ it('can disable an enabled OAuth provider and sends its provider endpoint', asyn
   await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
   await waitFor(() => expect(patchPath).toContain('/configuration/oauth/google'))
 })
+
+it('keeps removal reachable for disabled configured SMTP and previews no runtime action', async () => {
+  const user = userEvent.setup()
+  let patchBody = ''
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === 'PATCH') { patchBody = String(init.body); return new Response(JSON.stringify({ projectId: 'bee', operationId: 'op-smtp', revision: 5 }), { status: 202 }) }
+    const snapshot = redactedSnapshot(); snapshot.configuration.auth.smtp = { enabled: false, host: '', port: 587, username: '', passwordSet: true, password: { action: '' }, senderEmail: '', senderName: '' }; return new Response(JSON.stringify(snapshot), { status: 200 })
+  }))
+  renderConfiguration('smtp')
+  await screen.findByRole('button', { name: 'Remove Password' })
+  await user.click(screen.getByRole('button', { name: 'Remove Password' }))
+  await user.click(screen.getByRole('button', { name: 'Save Email & SMTP' }))
+  expect(await screen.findByText('No runtime restart expected')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
+  await waitFor(() => expect(patchBody).toContain('"action":"remove"'))
+})

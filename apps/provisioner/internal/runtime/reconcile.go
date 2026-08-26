@@ -300,7 +300,7 @@ func affectedServices(before, after contracts.ProjectConfiguration) []string {
 	if !reflect.DeepEqual(before.Pooler, after.Pooler) {
 		set["supavisor"] = true
 	}
-	if before.Network.Gateway != after.Network.Gateway || before.Network.HTTPSMode != after.Network.HTTPSMode || before.Network.InternalGatewayPort != after.Network.InternalGatewayPort || before.Network.APIPort != after.Network.APIPort || before.Network.Certificate != after.Network.Certificate {
+	if before.Network.Gateway != after.Network.Gateway || before.Network.HTTPSMode != after.Network.HTTPSMode || before.Network.InternalGatewayPort != after.Network.InternalGatewayPort || before.Network.APIPort != after.Network.APIPort {
 		set["api-gw"] = true
 	}
 	if before.Network.DirectDatabasePort != after.Network.DirectDatabasePort {

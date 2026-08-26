@@ -440,8 +440,8 @@ func validateNetwork(network contracts.NetworkConfig, validation *ValidationErro
 	if network.Gateway != contracts.GatewayEnvoy && network.Gateway != contracts.GatewayKong {
 		validation.add("network.gateway", "must be envoy or kong")
 	}
-	if network.HTTPSMode != contracts.HTTPSModeExternal && network.HTTPSMode != contracts.HTTPSModeCaddy && network.HTTPSMode != contracts.HTTPSModeManual {
-		validation.add("network.httpsMode", "must be external, caddy, or manual")
+	if network.HTTPSMode != contracts.HTTPSModeExternal && network.HTTPSMode != contracts.HTTPSModeCaddy {
+		validation.add("network.httpsMode", "must be external or caddy; manual HTTPS is unsupported by the pinned renderer")
 	}
 	for field, port := range map[string]int{"apiPort": network.APIPort, "studioPort": network.StudioPort, "directDatabasePort": network.DirectDatabasePort, "poolerPort": network.PoolerPort} {
 		if port != 0 {

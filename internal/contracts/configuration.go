@@ -166,7 +166,6 @@ type HTTPSMode string
 const (
 	HTTPSModeExternal HTTPSMode = "external"
 	HTTPSModeCaddy    HTTPSMode = "caddy"
-	HTTPSModeManual   HTTPSMode = "manual"
 )
 
 type NetworkConfig struct {
@@ -177,7 +176,6 @@ type NetworkConfig struct {
 	StudioPort          int       `json:"studioPort"`
 	DirectDatabasePort  int       `json:"directDatabasePort"`
 	PoolerPort          int       `json:"poolerPort"`
-	Certificate         string    `json:"certificate,omitempty"`
 }
 
 var OAuthProviderNames = []string{
