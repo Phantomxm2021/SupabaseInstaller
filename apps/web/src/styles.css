@@ -508,6 +508,7 @@ a.auth-template-row:hover {
   line-height: 1.35;
 }
 .auth-template-row > svg {
+  margin-left: auto;
   width: 18px;
   height: 18px;
 }
