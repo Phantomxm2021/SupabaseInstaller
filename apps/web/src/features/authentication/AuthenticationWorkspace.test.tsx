@@ -12,6 +12,7 @@ it('renders sign-in providers in the authentication workspace without configurat
   render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>)
 
   expect(await screen.findByRole('heading', { name: 'Sign In / Providers' })).toBeVisible()
+  expect(screen.getByRole('navigation', { name: 'Authentication navigation' })).toBeVisible()
   expect(screen.queryByRole('tablist', { name: /configuration/i })).not.toBeInTheDocument()
   router.dispose()
 })
