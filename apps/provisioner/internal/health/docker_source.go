@@ -24,6 +24,11 @@ func NewDockerSource(dockerHost string) (*DockerSource, error) {
 	}
 	socketPath := strings.TrimPrefix(dockerHost, unixPrefix)
 	transport := &http.Transport{
+		// Docker Desktop's Unix-socket proxy can leave persistent response
+		// bodies open while Compose is recreating containers. Every inspection
+		// is independent, so avoid reusing those connections across health
+		// probes and rollback boundaries.
+		DisableKeepAlives: true,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socketPath)
 		},
