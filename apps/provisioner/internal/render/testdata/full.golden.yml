@@ -1,0 +1,22 @@
+name: supabase-manager-full
+services:
+  db:
+    image: supabase/postgres:17.6.1.136
+  api-gw:
+    image: envoyproxy/envoy:v1.39.0
+  auth:
+    image: supabase/gotrue:v2.189.0
+  rest:
+    image: postgrest/postgrest:v14.12
+  realtime:
+    image: supabase/realtime:v2.102.3
+  storage:
+    image: supabase/storage-api:v1.60.4
+  imgproxy:
+    image: darthsim/imgproxy:v3.30.1
+  meta:
+    image: supabase/postgres-meta:v0.96.6
+  functions:
+    image: supabase/edge-runtime:v1.74.0
+  supavisor:
+    image: supabase/supavisor:2.9.5

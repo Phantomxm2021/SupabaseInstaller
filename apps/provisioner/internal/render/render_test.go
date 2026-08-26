@@ -1,12 +1,61 @@
 package render
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	"supabase-manager/internal/contracts"
 )
+
+func TestWriteRepresentativeRenderFiles(t *testing.T) {
+	root := os.Getenv("RENDER_OUTPUT")
+	if root == "" {
+		t.Skip("RENDER_OUTPUT not set")
+	}
+	cases := []struct {
+		name     string
+		services func(*contracts.ProjectConfiguration)
+	}{
+		{name: "lightweight", services: func(c *contracts.ProjectConfiguration) {}},
+		{name: "standard", services: func(c *contracts.ProjectConfiguration) {
+			c.Services.Realtime = true
+			c.Services.Storage = true
+			c.Services.Imgproxy = true
+			c.Services.Functions = true
+			c.Services.Supavisor = true
+		}},
+		{name: "full", services: func(c *contracts.ProjectConfiguration) {
+			c.Services.Realtime = true
+			c.Services.Storage = true
+			c.Services.Imgproxy = true
+			c.Services.Functions = true
+			c.Services.Supavisor = true
+			c.Services.Logs = true
+			c.Services.Vector = true
+		}},
+	}
+	for _, tc := range cases {
+		cfg := testConfiguration()
+		tc.services(&cfg)
+		out, err := Project(Input{Slug: tc.name, APIPort: 18001, Configuration: cfg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(root, tc.name)
+		if err := os.MkdirAll(filepath.Join(dir, "volumes"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for name, data := range map[string]string{"docker-compose.yml": out.Compose, ".env": out.Env, ".env.functions": out.FunctionsEnv} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
 
 const testCompose = `
 name: supabase
@@ -38,6 +87,91 @@ services:
   analytics:
     image: supabase/logflare:1.22.4
 `
+
+func testConfiguration() contracts.ProjectConfiguration {
+	return contracts.ProjectConfiguration{
+		Revision:  1,
+		General:   contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "0.8.0"},
+		Services:  contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true},
+		Auth:      contracts.AuthConfig{Enabled: true, JWTExpiry: 3600, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}},
+		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true},
+	}
+}
+
+func TestRenderCustomAuthAndSMTP(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Auth.Email.ConfirmEmail = true
+	cfg.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", Port: 587, Username: "mailer", SenderEmail: "noreply@example.com", SenderName: "Example"}
+	cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true, ClientID: "google-client", SecretSet: true}}
+	out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, RuntimeSecrets: map[string]string{"smtp.password": "smtp-secret", "oauth.google.secret": "oauth-secret"}, TemplateCompose: []byte(testCompose)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"ENABLE_EMAIL_AUTOCONFIRM=false", "SMTP_HOST=smtp.example.com", "SMTP_PORT=587", "GOOGLE_ENABLED=true", "GOOGLE_CLIENT_ID=google-client", "GOOGLE_SECRET=oauth-secret"} {
+		if !strings.Contains(out.Env, line) {
+			t.Errorf("missing %q", line)
+		}
+	}
+	if !strings.Contains(out.Compose, "GOTRUE_EXTERNAL_GOOGLE_ENABLED") {
+		t.Fatal("Google mapping missing from Auth service")
+	}
+}
+
+func TestRenderFunctionsSecretsStayInFunctionsEnv(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Functions = true
+	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "STRIPE_KEY", ValueSet: true}}
+	out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, RuntimeSecrets: map[string]string{"functions.STRIPE_KEY": "stripe-secret"}, TemplateCompose: []byte(testCompose)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.FunctionsEnv, "STRIPE_KEY=stripe-secret") || strings.Contains(out.Env, "stripe-secret") || strings.Contains(out.Compose, "stripe-secret") {
+		t.Fatal("function secret leaked outside .env.functions")
+	}
+}
+
+func TestRenderServiceSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*contracts.ProjectConfiguration)
+		want      []string
+		no        []string
+	}{
+		{name: "standard", configure: func(c *contracts.ProjectConfiguration) {}, want: []string{"db", "envoy", "auth", "rest", "meta", "studio"}, no: []string{"realtime", "storage", "functions", "supavisor"}},
+		{name: "full", configure: func(c *contracts.ProjectConfiguration) {
+			c.Services.Realtime = true
+			c.Services.Storage = true
+			c.Services.Imgproxy = true
+			c.Services.Functions = true
+			c.Services.Supavisor = true
+			c.Services.Logs = true
+			c.Services.Vector = true
+		}, want: []string{"realtime", "storage", "imgproxy", "functions", "supavisor"}, no: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfiguration()
+			tc.configure(&cfg)
+			var compose []byte
+			if tc.name != "full" {
+				compose = []byte(testCompose)
+			}
+			out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, TemplateCompose: compose})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, service := range tc.want {
+				if !strings.Contains(out.Compose, "  "+service+":") {
+					t.Errorf("missing service %s", service)
+				}
+			}
+			for _, service := range tc.no {
+				if strings.Contains(out.Compose, "  "+service+":") {
+					t.Errorf("unexpected service %s", service)
+				}
+			}
+		})
+	}
+}
 
 func TestLightweightRenderUsesPinnedImagesAndUniqueComposeName(t *testing.T) {
 	output, err := Lightweight(Input{

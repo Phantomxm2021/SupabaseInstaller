@@ -42,37 +42,131 @@ func (r *Root) DeleteProjectData(slug string) error {
 	return nil
 }
 
-func (r *Root) WriteRuntimeFiles(slug string, compose, environment []byte) error {
+type RuntimeFiles struct {
+	Compose      []byte
+	Env          []byte
+	FunctionsEnv []byte
+}
+
+// StageRuntimeFiles prepares a complete runtime file set. Candidate bytes are
+// copied before any publication, and restore/commit are safe to call once.
+func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func() error, commit func() error, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	projectPath, err := r.ProjectPath(slug)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if _, err := os.Stat(projectPath); errors.Is(err, os.ErrNotExist) {
 		staging, err := os.MkdirTemp(r.base, "."+slug+"-staging-")
 		if err != nil {
-			return fmt.Errorf("create project staging directory: %w", err)
+			return nil, nil, fmt.Errorf("create project staging directory: %w", err)
 		}
-		defer os.RemoveAll(staging)
 		if err := copyEmbeddedTemplate(staging); err != nil {
-			return err
-		}
-		if err := writeAtomic(staging, "docker-compose.yml", compose, 0o600); err != nil {
-			return err
-		}
-		if err := writeAtomic(staging, ".env", environment, 0o600); err != nil {
-			return err
+			_ = os.RemoveAll(staging)
+			return nil, nil, err
 		}
 		if err := os.Rename(staging, projectPath); err != nil {
-			return fmt.Errorf("publish project directory: %w", err)
+			_ = os.RemoveAll(staging)
+			return nil, nil, fmt.Errorf("publish project directory: %w", err)
 		}
-		return nil
 	} else if err != nil {
-		return fmt.Errorf("inspect project directory: %w", err)
+		return nil, nil, fmt.Errorf("inspect project directory: %w", err)
 	}
-	if err := writeAtomic(projectPath, "docker-compose.yml", compose, 0o600); err != nil {
+
+	// The private last-good directory is itself populated atomically and is
+	// retained across successful commits for rollback and operator recovery.
+	lastGood := filepath.Join(projectPath, ".manager-last-good")
+	if err := os.MkdirAll(lastGood, 0o700); err != nil {
+		return nil, nil, fmt.Errorf("create last-good directory: %w", err)
+	}
+	candidateDir, err := os.MkdirTemp(projectPath, ".manager-staged-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create runtime staging directory: %w", err)
+	}
+	candidate := RuntimeFiles{Compose: append([]byte(nil), files.Compose...), Env: append([]byte(nil), files.Env...), FunctionsEnv: append([]byte(nil), files.FunctionsEnv...)}
+	for name, data := range map[string][]byte{"docker-compose.yml": candidate.Compose, ".env": candidate.Env, ".env.functions": candidate.FunctionsEnv} {
+		if err := writeAtomic(candidateDir, name, data, 0o600); err != nil {
+			_ = os.RemoveAll(candidateDir)
+			return nil, nil, err
+		}
+	}
+	previous := make(map[string][]byte, 3)
+	present := make(map[string]bool, 3)
+	for _, name := range []string{"docker-compose.yml", ".env", ".env.functions"} {
+		data, readErr := os.ReadFile(filepath.Join(projectPath, name))
+		if readErr == nil {
+			previous[name] = append([]byte(nil), data...)
+			present[name] = true
+			if err := writeAtomic(lastGood, name, data, 0o600); err != nil {
+				_ = os.RemoveAll(candidateDir)
+				return nil, nil, err
+			}
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			_ = os.RemoveAll(candidateDir)
+			return nil, nil, fmt.Errorf("read previous %s: %w", name, readErr)
+		}
+	}
+
+	restored := false
+	restore = func() error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if restored {
+			return nil
+		}
+		for _, name := range []string{"docker-compose.yml", ".env", ".env.functions"} {
+			path := filepath.Join(projectPath, name)
+			if present[name] {
+				if err := writeAtomic(projectPath, name, previous[name], 0o600); err != nil {
+					return err
+				}
+			} else if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove staged %s: %w", name, err)
+			}
+		}
+		restored = true
+		return syncDirectory(projectPath)
+	}
+	committed := false
+	commit = func() error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if committed {
+			return nil
+		}
+		for _, name := range []string{"docker-compose.yml", ".env", ".env.functions"} {
+			data, readErr := os.ReadFile(filepath.Join(candidateDir, name))
+			if readErr != nil {
+				return fmt.Errorf("read staged %s: %w", name, readErr)
+			}
+			if err := writeAtomic(projectPath, name, data, 0o600); err != nil {
+				// Reinstall all prior files if publication fails halfway through.
+				for _, oldName := range []string{"docker-compose.yml", ".env", ".env.functions"} {
+					if oldData, existed := previous[oldName]; existed {
+						_ = writeAtomic(projectPath, oldName, oldData, 0o600)
+					} else {
+						_ = os.Remove(filepath.Join(projectPath, oldName))
+					}
+				}
+				return err
+			}
+		}
+		_ = os.RemoveAll(candidateDir)
+		committed = true
+		return syncDirectory(projectPath)
+	}
+	return restore, commit, nil
+}
+
+// WriteRuntimeFiles is retained for old callers; new code should stage all
+// three runtime files and commit them as one set.
+func (r *Root) WriteRuntimeFiles(slug string, compose, environment []byte) error {
+	_, commit, err := r.StageRuntimeFiles(slug, RuntimeFiles{Compose: compose, Env: environment})
+	if err != nil {
 		return err
 	}
-	return writeAtomic(projectPath, ".env", environment, 0o600)
+	return commit()
 }
 
 func copyEmbeddedTemplate(destination string) error {
@@ -134,6 +228,18 @@ func writeAtomic(directory, name string, data []byte, mode fs.FileMode) error {
 	}
 	if err := os.Rename(temporaryName, filepath.Join(directory, name)); err != nil {
 		return fmt.Errorf("publish %s: %w", name, err)
+	}
+	return nil
+}
+
+func syncDirectory(directory string) error {
+	file, err := os.Open(directory)
+	if err != nil {
+		return fmt.Errorf("open directory for sync: %w", err)
+	}
+	defer file.Close()
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync directory: %w", err)
 	}
 	return nil
 }

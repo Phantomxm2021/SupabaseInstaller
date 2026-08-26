@@ -1,0 +1,16 @@
+name: supabase-manager-standard
+services:
+  db:
+    image: supabase/postgres:17.6.1.136
+  api-gw:
+    image: envoyproxy/envoy:v1.39.0
+    ports:
+      - 127.0.0.1:18001:8000
+  auth:
+    image: supabase/gotrue:v2.189.0
+  rest:
+    image: postgrest/postgrest:v14.12
+  meta:
+    image: supabase/postgres-meta:v0.96.6
+  studio:
+    image: supabase/studio:2026.08.03-sha-022b374
