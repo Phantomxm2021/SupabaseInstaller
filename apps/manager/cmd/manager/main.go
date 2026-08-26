@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"supabase-manager/apps/manager/internal/auth"
+	"supabase-manager/apps/manager/internal/authadmin"
 	managerconfig "supabase-manager/apps/manager/internal/config"
 	managerconfiguration "supabase-manager/apps/manager/internal/configuration"
 	"supabase-manager/apps/manager/internal/httpapi"
@@ -50,6 +51,7 @@ func main() {
 	adminAuth := auth.NewService(database, auth.NewPasswordHasher(auth.DefaultParams), rand.Reader, now)
 	operations := operation.NewService(database, randomID, now)
 	projects := project.NewServiceWithCipher(database, randomID, now, cipher)
+	authAdmin := authadmin.New(database, cipher, &http.Client{Timeout: 20 * time.Second}, authadmin.GatewayAtHost("host.docker.internal"))
 	provisionerHTTP := &http.Client{Timeout: provisioner.DefaultRequestTimeout}
 	provisionerClient := provisioner.NewClient(cfg.ProvisionerURL, cfg.ProvisionerToken, provisionerHTTP)
 	allocator := ports.NewAllocator(database, cfg.PortRangeStart, cfg.PortRangeEnd, ports.NetworkProbe{})
@@ -78,7 +80,7 @@ func main() {
 	lifecycleManager := lifecycle.NewService(database, operations, provisionerClient)
 	api := httpapi.NewRouter(httpapi.RouterOptions{
 		Auth:          httpapi.AuthOptions{Service: adminAuth, PublicOrigin: cfg.PublicOrigin, SecureCookies: cfg.SecureCookies},
-		Projects:      httpapi.ProjectOptions{Projects: projects, Installer: installer, Lifecycle: lifecycleManager},
+		Projects:      httpapi.ProjectOptions{Projects: projects, AuthAdmin: authAdmin, Installer: installer, Lifecycle: lifecycleManager},
 		Operations:    operations,
 		Configuration: configurationManager,
 	})

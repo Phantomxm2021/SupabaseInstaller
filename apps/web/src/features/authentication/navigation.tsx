@@ -13,7 +13,7 @@ export const authenticationGroups: readonly AuthenticationGroup[] = [
   { label: 'Configuration', items: [['policies', 'Policies', { external: true }], ['sign-in-providers', 'Sign In / Providers'], ['passkeys', 'Passkeys', { beta: true }], ['oauth-server', 'OAuth Server', { beta: true }], ['sessions', 'Sessions'], ['rate-limits', 'Rate Limits'], ['multi-factor', 'Multi-Factor'], ['url-configuration', 'URL Configuration'], ['attack-protection', 'Attack Protection'], ['auth-hooks', 'Auth Hooks', { beta: true }], ['audit-logs', 'Audit Logs'], ['performance', 'Performance']] },
 ] as const
 
-export const unsupportedAuthenticationRoutes = authenticationGroups.flatMap((group) => group.items).filter(([path]) => !['emails', 'sign-in-providers', 'rate-limits', 'multi-factor', 'url-configuration'].includes(path))
+export const unsupportedAuthenticationRoutes = authenticationGroups.flatMap((group) => group.items).filter(([path]) => !['users', 'oauth-apps', 'emails', 'sign-in-providers', 'rate-limits', 'multi-factor', 'url-configuration'].includes(path))
 
 const compactBreakpoint = 900
 

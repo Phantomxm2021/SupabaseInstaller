@@ -143,6 +143,22 @@ export interface AuthConfig {
   rateLimits: RateLimitConfig;
   mfa: MFAConfig;
 }
+export interface AuthUser {
+  id: string;
+  email: string;
+  phone: string;
+  created_at: string;
+  user_metadata: Record<string, unknown>;
+  identities: { provider: string }[];
+}
+export interface OAuthApp {
+  client_id: string;
+  name: string;
+  redirect_uris: string[];
+  client_type: string;
+  token_endpoint_auth_method: string;
+  created_at: string;
+}
 export type StorageBackend = "local" | "s3" | "aws-s3" | "r2";
 export interface StorageConfig {
   backend: StorageBackend;

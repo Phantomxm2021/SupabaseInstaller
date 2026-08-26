@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query'
 import { isValidElement } from 'react'
 import { matchRoutes, Navigate } from 'react-router-dom'
 import { ConfigurationPage } from '../features/project/configuration/ConfigurationPage'
-import { EmailsRoute, SignInProvidersRoute, URLConfigurationRoute } from '../features/authentication/AuthenticationWorkspace'
+import { EmailsRoute, SignInProvidersRoute, URLConfigurationRoute, UsersRoute, OAuthAppsRoute } from '../features/authentication/AuthenticationWorkspace'
 import { createAppRouter, NotFoundPage } from './router'
 
 it('does not register removed project configuration compatibility routes', () => {
@@ -22,7 +22,9 @@ it('does not register removed project configuration compatibility routes', () =>
   expect(authenticationPaths).toEqual(expect.arrayContaining(['sign-in-providers', 'emails', 'url-configuration']))
   const authenticationIndex = authenticationRoute?.children?.find((route) => route.index)
   expect(elementType(authenticationIndex?.element)).toBe(Navigate)
-  expect(isValidElement<{ to: string }>(authenticationIndex?.element) && authenticationIndex.element.props.to).toBe('sign-in-providers')
+  expect(isValidElement<{ to: string }>(authenticationIndex?.element) && authenticationIndex.element.props.to).toBe('users')
+  expect(elementType(matchRoutes(router.routes, '/projects/bee/authentication/users')?.at(-1)?.route.element)).toBe(UsersRoute)
+  expect(elementType(matchRoutes(router.routes, '/projects/bee/authentication/oauth-apps')?.at(-1)?.route.element)).toBe(OAuthAppsRoute)
   expect(elementType(matchRoutes(router.routes, '/projects/bee/authentication/sign-in-providers')?.at(-1)?.route.element)).toBe(SignInProvidersRoute)
   expect(elementType(matchRoutes(router.routes, '/projects/bee/authentication/emails')?.at(-1)?.route.element)).toBe(EmailsRoute)
   expect(elementType(matchRoutes(router.routes, '/projects/bee/authentication/url-configuration')?.at(-1)?.route.element)).toBe(URLConfigurationRoute)

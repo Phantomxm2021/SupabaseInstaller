@@ -16,7 +16,9 @@ import { SignInProvidersPage } from './SignInProvidersPage'
 import { EmailsPage } from './EmailsPage'
 import { EmailTemplateEditorPage } from './EmailTemplateEditorPage'
 import { MultiFactorPage } from './MultiFactorPage'
+import { OAuthAppsPage } from './OAuthAppsPage'
 import { RateLimitsPage } from './RateLimitsPage'
+import { UsersPage } from './UsersPage'
 
 type Snapshot = { projectId: string; revision: number; configuration: RedactedProjectConfiguration }
 type SaveRequest = Omit<PendingConfigurationSave, 'labels' | 'services' | 'impact'> & { dirty: unknown; onQueued?: () => void }
@@ -72,3 +74,5 @@ export function URLConfigurationRoute() {
   const redirectsDirty = JSON.stringify(redirectUrls) !== JSON.stringify(auth.redirectUrls)
   return <main className="page auth-page space-y-16"><header className="page-heading"><div><h1>URL Configuration</h1><p className="muted">Configure site URL and redirect URLs for authentication.</p></div></header><section className="space-y-4"><h2>Site URL</h2><form className="auth-settings-card auth-url-card" onSubmit={(event) => { event.preventDefault(); requestSave({ section: 'general', value: { ...general, siteUrl }, dirty: { siteUrl: true } }) }}><div className="grid gap-8 p-7 lg:grid-cols-[minmax(18rem,1fr)_minmax(20rem,1fr)]"><div><h3 className="text-base font-medium">Site URL</h3><p className="mt-1 text-sm text-muted-foreground">The default redirect URL when a valid redirect is not specified.</p></div><Input aria-label="Site URL" value={siteUrl} onChange={(event) => setSiteUrl(event.target.value)} placeholder="https://app.example.com" /></div><div className="flex justify-end border-t border-border p-5"><Button type="submit" disabled={!siteDirty}>Save changes</Button></div></form></section><section className="space-y-4"><div><h2>Redirect URLs</h2><p className="muted mt-1">URLs authentication providers may redirect to after sign-in.</p></div><form className="auth-settings-card auth-url-card" onSubmit={(event) => { event.preventDefault(); requestSave({ section: 'auth', value: { ...auth, redirectUrls }, dirty: { redirectUrls: true } }) }}><div className="space-y-3 p-7">{redirectUrls.map((value, index) => <div className="flex gap-3" key={`${index}-${value}`}><Input aria-label={`Redirect URL ${index + 1}`} value={value} onChange={(event) => setRedirectUrls((current) => current.map((item, position) => position === index ? event.target.value : item))} placeholder="https://app.example.com/auth/callback" /><Button type="button" variant="outline" onClick={() => setRedirectUrls((current) => current.filter((_, position) => position !== index))}>Remove</Button></div>)}{redirectUrls.length === 0 && <p className="py-16 text-center text-sm text-muted-foreground">No Redirect URLs</p>}<Button type="button" variant="outline" onClick={() => setRedirectUrls((current) => [...current, ''])}>Add URL</Button></div><div className="flex justify-end border-t border-border p-5"><Button type="submit" disabled={!redirectsDirty}>Save changes</Button></div></form></section></main>
 }
+export function UsersRoute() { return <UsersPage /> }
+export function OAuthAppsRoute() { return <OAuthAppsPage /> }

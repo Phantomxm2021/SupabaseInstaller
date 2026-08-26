@@ -302,6 +302,43 @@ h2 {
 .authentication-content .page input:focus {
   border-color: #5a625d;
 }
+.auth-admin-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.auth-data-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+.auth-toolbar-spacer { flex: 1; }
+.auth-search { display: flex; width: min(100%, 520px); align-items: center; border: 1px solid #343936; border-radius: 7px; background: #151816; }
+.auth-search svg { width: 18px; margin-left: 12px; color: #9da39f; }
+.auth-search input { border: 0 !important; background: transparent !important; box-shadow: none !important; }
+.auth-filter-button { color: #c6cbc8; }
+.auth-data-card { overflow: hidden; border: 1px solid #2d312f; border-radius: 7px; background: #171a18; }
+.auth-data-table-wrap { overflow: auto; }
+.auth-data-table { width: 100%; min-width: 780px; border-collapse: collapse; }
+.auth-data-table th { height: 60px; padding: 0 14px; border-bottom: 1px solid #2d312f; color: #a9afab; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
+.auth-data-table td { height: 62px; padding: 0 14px; border-bottom: 1px solid #282d2a; color: #d9deda; font-size: 14px; }
+.auth-data-table tbody tr:last-child td { border-bottom: 0; }
+.auth-data-card footer { border-top: 1px solid #2d312f; padding: 14px; color: #a9afab; font-size: 14px; }
+.auth-user-id { color: #c8cfca; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.auth-user-avatar { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 50%; background: #222724; color: #cbd1cd; }
+.auth-user-avatar svg { width: 16px; }
+.auth-data-empty { height: 220px !important; color: #9da39f !important; text-align: center; }
+.auth-oauth-disabled { display: flex; align-items: center; gap: 16px; min-height: 104px; margin: 70px 0 54px; padding: 24px; border: 1px solid #2d312f; border-radius: 8px; background: #171a18; }
+.auth-oauth-disabled > svg { color: #c8cfca; }
+.auth-oauth-disabled div { flex: 1; }.auth-oauth-disabled strong { display: block; margin-bottom: 5px; }.auth-oauth-disabled p { margin: 0; color: #9da39f; }
+.auth-admin-sheet-form { display: grid; gap: 20px; padding: 24px 0; }.auth-admin-sheet-form label { display: grid; gap: 8px; font-size: 14px; font-weight: 500; }.auth-admin-sheet-form select { min-height: 40px; border: 1px solid #343936; border-radius: 6px; background: #151816; padding: 0 12px; color: #eef2ef; }
+.auth-add-user-menu { width: 264px; padding: 8px; border: 1px solid #343936; background: #181b19; }
+.auth-add-user-menu [data-slot="dropdown-menu-item"] { min-height: 48px; gap: 14px; padding: 0 14px; border-radius: 5px; color: #d9deda; font-size: 15px; }
+.auth-add-user-menu [data-slot="dropdown-menu-item"] svg { width: 20px; height: 20px; color: #b4bcb7; }
+.auth-user-dialog { gap: 0; overflow: hidden; padding: 0; border: 1px solid #343936; background: #151816; }
+.auth-user-dialog-header { display: block; padding: 30px 36px; border-bottom: 1px solid #2d312f; text-align: left; }
+.auth-user-dialog-header [data-slot="alert-dialog-title"] { font-size: 28px; font-weight: 500; letter-spacing: -0.03em; }
+.auth-user-dialog form { display: grid; gap: 28px; padding: 36px; }
+.auth-user-field { display: grid; gap: 12px; color: #d9deda; font-size: 18px; font-weight: 500; }
+.auth-user-field input { min-height: 58px !important; padding: 0 16px; font-size: 18px; }
+.auth-user-dialog [data-slot="alert-dialog-footer"] { margin: 0 -36px -36px; padding: 32px 36px; background: transparent; }
+.auth-create-user-form { gap: 30px !important; }
+.auth-auto-confirm { display: flex; align-items: center; gap: 14px; color: #d9deda; font-size: 18px; font-weight: 500; }
+.auth-auto-confirm [data-slot="checkbox"] { width: 28px; height: 28px; border-color: #f0f3f1; background: #f0f3f1; color: #151816; }
+.auth-create-user-form .muted { margin: -12px 0 0; font-size: 16px; line-height: 1.5; }
+@media (max-width: 720px) { .auth-data-toolbar { flex-wrap: wrap; }.auth-search { width: 100%; }.auth-toolbar-spacer { display: none; }.auth-oauth-disabled { align-items: flex-start; flex-direction: column; margin-top: 36px; } }
 .auth-tabs-list {
   width: 100%;
   min-height: 42px;

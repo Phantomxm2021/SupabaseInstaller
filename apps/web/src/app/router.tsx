@@ -11,7 +11,7 @@ import { ConfigurationPage } from '../features/project/ConfigurationPage'
 import { ComingSoonPage, ProjectLayout } from '../features/project/ProjectLayout'
 import { AppShell } from './AppShell'
 import { ManagerSettingsPage } from '../features/settings/ManagerSettingsPage'
-import { AuthenticationWorkspace, EmailsRoute, EmailTemplateEditorRoute, MultiFactorRoute, RateLimitsRoute, SignInProvidersRoute, URLConfigurationRoute } from '../features/authentication/AuthenticationWorkspace'
+import { AuthenticationWorkspace, EmailsRoute, EmailTemplateEditorRoute, MultiFactorRoute, OAuthAppsRoute, RateLimitsRoute, SignInProvidersRoute, URLConfigurationRoute, UsersRoute } from '../features/authentication/AuthenticationWorkspace'
 import { AuthenticationUnavailablePage } from '../features/authentication/AuthenticationUnavailablePage'
 import { unsupportedAuthenticationRoutes } from '../features/authentication/navigation'
 
@@ -51,7 +51,9 @@ export function createAppRouter(_queryClient: QueryClient) {
               path: 'authentication',
               element: <AuthenticationWorkspace />,
               children: [
-                { index: true, element: <Navigate to="sign-in-providers" replace /> },
+                { index: true, element: <Navigate to="users" replace /> },
+                { path: 'users', element: <UsersRoute /> },
+                { path: 'oauth-apps', element: <OAuthAppsRoute /> },
                 { path: 'sign-in-providers', element: <SignInProvidersRoute /> },
                 { path: 'emails', element: <EmailsRoute /> },
                 { path: 'emails/:templateKey', element: <EmailTemplateEditorRoute /> },

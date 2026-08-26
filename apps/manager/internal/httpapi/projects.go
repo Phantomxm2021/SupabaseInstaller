@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"supabase-manager/apps/manager/internal/authadmin"
 	"supabase-manager/apps/manager/internal/configuration"
 	"supabase-manager/apps/manager/internal/lifecycle"
 	"supabase-manager/apps/manager/internal/operation"
@@ -26,6 +27,7 @@ type LifecycleManager interface {
 
 type ProjectOptions struct {
 	Projects      *project.Service
+	AuthAdmin     *authadmin.Service
 	Installer     Installer
 	Lifecycle     LifecycleManager
 	Configuration *configuration.Orchestrator
@@ -40,6 +42,11 @@ func RegisterProjectRoutes(mux *http.ServeMux, options ProjectOptions) {
 	mux.HandleFunc("POST /api/projects", handlers.create)
 	mux.HandleFunc("GET /api/projects", handlers.list)
 	mux.HandleFunc("GET /api/projects/{id}", handlers.get)
+	mux.HandleFunc("GET /api/projects/{id}/auth/users", handlers.listUsers)
+	mux.HandleFunc("POST /api/projects/{id}/auth/users", handlers.createUser)
+	mux.HandleFunc("POST /api/projects/{id}/auth/users/invite", handlers.inviteUser)
+	mux.HandleFunc("GET /api/projects/{id}/auth/oauth-apps", handlers.listOAuthApps)
+	mux.HandleFunc("POST /api/projects/{id}/auth/oauth-apps", handlers.createOAuthApp)
 	mux.HandleFunc("POST /api/projects/{id}/start", handlers.lifecycle(lifecycle.ActionStart))
 	mux.HandleFunc("POST /api/projects/{id}/stop", handlers.lifecycle(lifecycle.ActionStop))
 	mux.HandleFunc("POST /api/projects/{id}/restart", handlers.lifecycle(lifecycle.ActionRestart))
