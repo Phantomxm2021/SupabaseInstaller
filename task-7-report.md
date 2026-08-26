@@ -158,3 +158,30 @@ none
 ```
 
 The only remaining top-level `supabaseVersion`/`domain`/`siteUrl`/`services` JSON fields are on the read-only `Project` response or inside the authoritative `ProjectConfiguration`; neither create request contains those projections.
+
+## Round 5 correction
+
+Partial PATCH handling now distinguishes the redacted stored base from incoming sections. When a section is untouched, configured redacted leaves are given an internal retain marker solely to satisfy aggregate validation and secret lookup; the persisted/read response remains `{action:""}`. Any incoming configured secret with an empty action is rejected, while explicit `retain`, `remove`, and `replace` remain the only update commands. Unset or disabled secrets stay canonical empty markers.
+
+The TypeScript update model now includes `UnsetSecretInput`, and `toUpdateSecretInput` returns empty for an unconfigured unchanged secret, retain for a configured unchanged secret, and remove only when a configured secret is explicitly requested for removal. Domain numeric-label behavior now matches Manager after failed IPv4 parsing, and SMTP sender validation rejects display-name addresses consistently with the frontend email rule.
+
+Round 5 regression coverage includes default Local/disabled Phone General-only patches, configured Google/SMTP untouched General-only patches, modified configured secret empty-action rejection, unset/update helper truth tables, numeric-label domains, JWT bounds, and SMTP email parity.
+
+Round 5 verification:
+
+```text
+go test ./...
+all packages passed
+
+npm test --workspace apps/web -- --run
+Test Files 10 passed (10)
+Tests 43 passed (43)
+
+npm run build --workspace apps/web
+TypeScript check and Vite build passed (existing chunk-size warning only)
+
+git diff --check
+passed
+```
+
+Round 5 implementation commit: `8bfe0a3 fix: close Round5 partial patch secret semantics`
