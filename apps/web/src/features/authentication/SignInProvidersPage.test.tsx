@@ -1,20 +1,20 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RouterProvider } from 'react-router-dom'
 import { createAppRouter } from '../../app/router'
 
-const configuration = {
-  projectId: 'bee', revision: 7, lastGoodRevision: 7,
+function configuration(revision: number, googleEnabled = false) { return {
+  projectId: 'bee', revision, lastGoodRevision: revision,
   configuration: {
-    revision: 7,
+    revision,
     general: { domain: 'bee.example.test', siteUrl: 'https://bee.example.test', supabaseVersion: '2.0.0' },
     services: { auth: true },
     auth: {
       enabled: true, jwtExpiry: 3600, disableSignup: false,
       email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false },
       phone: { enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} },
-      anonymousSignIn: false, redirectUrls: [], oauth: {},
+      anonymousSignIn: false, redirectUrls: [], oauth: googleEnabled ? { google: { enabled: true, clientId: 'google-client', secretSet: true, secret: { action: '' }, fields: {} } } : {},
       smtp: { enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' },
     },
     storage: { backend: 'local', s3CompatibleApi: false, bucket: '', region: '', endpoint: '', accountId: '', accessKeyId: '', secretAccessKeySet: false, secretAccessKey: { action: '' }, forcePathStyle: false, localPath: '' },
@@ -23,15 +23,17 @@ const configuration = {
     pooler: { transactionPort: 0, sessionPort: 0, poolSize: 20, maxClientConnections: 100 },
     network: { gateway: 'envoy', httpsMode: 'external', internalGatewayPort: 0, apiPort: 0, studioPort: 0, directDatabasePort: 0, poolerPort: 0 },
   },
-}
+} }
 
 function renderSignInProviders() {
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
+  let revision = 7
+  let googleEnabled = false
   const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
     const path = String(input)
     if (path.endsWith('/session')) return new Response(JSON.stringify({ username: 'admin', mustChangePassword: false, csrfToken: 'csrf-token' }), { headers: { 'Content-Type': 'application/json' } })
-    if (path.endsWith('/configuration')) return new Response(JSON.stringify(configuration), { headers: { 'Content-Type': 'application/json' } })
-    if (path.includes('/configuration/oauth/google')) return new Response(JSON.stringify({ projectId: 'bee', operationId: 'operation-1', revision: 8 }), { headers: { 'Content-Type': 'application/json' } })
+    if (path.endsWith('/configuration')) return new Response(JSON.stringify(configuration(revision, googleEnabled)), { headers: { 'Content-Type': 'application/json' } })
+    if (path.includes('/configuration/oauth/google')) { revision += 1; googleEnabled = true; return new Response(JSON.stringify({ projectId: 'bee', operationId: 'operation-1', revision }), { headers: { 'Content-Type': 'application/json' } }) }
     throw new Error(`Unexpected request: ${path} ${init?.method ?? 'GET'}`)
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -42,7 +44,7 @@ function renderSignInProviders() {
   return { fetchMock, router }
 }
 
-it('opens Google in a Sheet and saves only that provider', async () => {
+it('saves only Google with a replacement secret then refetches its revision', async () => {
   const { fetchMock, router } = renderSignInProviders()
   const user = userEvent.setup()
 
@@ -53,7 +55,16 @@ it('opens Google in a Sheet and saves only that provider', async () => {
   await user.type(screen.getByLabelText('Google client secret'), 'secret')
   await user.click(screen.getByRole('button', { name: 'Save changes' }))
   await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
-  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/configuration/oauth/google'), expect.objectContaining({ method: 'PATCH' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: /Google.*Enabled/i })).toBeVisible())
+  const patches = () => fetchMock.mock.calls.filter(([path, init]) => String(path).includes('/configuration/oauth/google') && (init as RequestInit).method === 'PATCH')
+  expect(JSON.parse((patches()[0][1] as RequestInit).body as string)).toEqual(expect.objectContaining({ expectedRevision: 7, value: expect.objectContaining({ enabled: true, clientId: 'google-client', secret: { action: 'replace', value: 'secret' } }) }))
+  expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith('/configuration'))).toBe(true)
+  await user.click(screen.getByRole('button', { name: /Google.*Enabled/i }))
+  await user.type(screen.getByLabelText('Client ID'), '-2')
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
+  await waitFor(() => expect(patches()).toHaveLength(2))
+  expect(JSON.parse((patches()[1][1] as RequestInit).body as string)).toEqual(expect.objectContaining({ expectedRevision: 8, value: expect.objectContaining({ clientId: 'google-client-2', secret: { action: 'retain' } }) }))
   router.dispose()
 })
 

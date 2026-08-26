@@ -36,6 +36,7 @@ export function useConfigurationMutation(projectId: string, revision: number, on
     },
     onSuccess: (result) => {
       onQueued(result)
+      void queryClient.invalidateQueries({ queryKey: ['project-configuration', projectId] })
       void queryClient.invalidateQueries({ queryKey: ['project', projectId] })
     },
     onError: (error, pending) => {
