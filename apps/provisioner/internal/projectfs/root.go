@@ -151,7 +151,7 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 			return nil, nil, err
 		}
 	}
-	if err := syncDirectory(candidateDir); err != nil {
+	if err := r.syncRuntimeDirectory(candidateDir); err != nil {
 		_ = os.RemoveAll(candidateDir)
 		return nil, nil, err
 	}
@@ -160,13 +160,23 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 
 	committed := false
 	restored := false
+	generationPublished := false
 	var committedTarget string
 	var previousTarget string
+	var legacyCleanup *legacyRuntimeCleanup
 	restore = func() error {
 		r.runtimeMu.Lock()
 		defer r.runtimeMu.Unlock()
 		if restored {
 			return nil
+		}
+		// A failed legacy migration must be rolled back before changing the
+		// current pointer. This keeps the returned restore closure coherent even
+		// when cleanup failed after publication.
+		if legacyCleanup != nil && !legacyCleanup.finalized {
+			if err := legacyCleanup.rollback(); err != nil {
+				return err
+			}
 		}
 		if committed {
 			active, err := os.Readlink(current)
@@ -176,22 +186,22 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 			if filepath.ToSlash(strings.TrimPrefix(active, "generations/")) != committedTarget {
 				return fmt.Errorf("stale runtime generation %s", committedTarget)
 			}
-			if err := switchRuntimePointer(runtimeRoot, current, previousTarget); err != nil {
+			if err := r.switchRuntimePointer(runtimeRoot, current, previousTarget); err != nil {
 				return err
 			}
 		}
 		stagedPath := generationPath
-		if !committed {
+		if !generationPublished {
 			stagedPath = candidateDir
 		}
 		if err := os.RemoveAll(stagedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove staged generation: %w", err)
 		}
-		if err := syncDirectory(filepath.Join(runtimeRoot, "generations")); err != nil {
+		if err := r.syncRuntimeDirectory(filepath.Join(runtimeRoot, "generations")); err != nil {
 			return err
 		}
 		restored = true
-		return syncDirectory(projectPath)
+		return r.syncRuntimeDirectory(projectPath)
 	}
 	commit = func() error {
 		r.runtimeMu.Lock()
@@ -202,28 +212,35 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 		if err := os.Rename(candidateDir, generationPath); err != nil {
 			return fmt.Errorf("publish runtime generation: %w", err)
 		}
+		generationPublished = true
+		r.recordRuntimeOperation("rename-generation")
+		// The generation directory entry must be durable before current can
+		// point at it. Otherwise a crash can leave a durable pointer to a missing
+		// generation.
+		generationsDir := filepath.Join(runtimeRoot, "generations")
+		if err := r.syncRuntimeDirectory(generationsDir); err != nil {
+			return err
+		}
 		active, err := os.Readlink(current)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			_ = os.RemoveAll(generationPath)
 			return fmt.Errorf("read current runtime pointer: %w", err)
 		}
 		previousTarget = active
-		if err := switchRuntimePointer(runtimeRoot, current, generationName); err != nil {
-			_ = os.RemoveAll(generationPath)
+		if err := r.switchRuntimePointer(runtimeRoot, current, generationName); err != nil {
 			return err
 		}
 		committedTarget = generationName
 		// Keep every committed generation while restore closures may still
 		// refer to it. Chained rollback (A -> B -> C -> B -> A) depends on
 		// ancestors remaining valid; startup cleanup only removes candidates.
-		if err := removeLegacyRuntimeFiles(projectPath, legacyFiles); err != nil {
-			// The pointer already selects a complete, durable generation. Return
-			// the cleanup error without switching back to stale root files, so a
-			// failed migration can always recover from current.
+		// Mark this before cleanup so restore knows that current must be switched
+		// back if moving a legacy entry fails.
+		committed = true
+		legacyCleanup, err = r.cleanupLegacyRuntimeFiles(projectPath, runtimeRoot, legacyFiles)
+		if err != nil {
 			return err
 		}
-		committed = true
-		return syncDirectory(runtimeRoot)
+		return nil
 	}
 	return restore, commit, nil
 }
@@ -313,13 +330,34 @@ func copyEmbeddedTemplate(destination string) error {
 }
 
 func switchRuntimePointer(runtimeRoot, current, target string) error {
-	if target == "" {
-		if err := os.Remove(current); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		return syncDirectory(runtimeRoot)
+	return switchRuntimePointerWithOps(runtimeRoot, current, target, syncDirectory, nil)
+}
+
+func switchRuntimePointerWithOps(runtimeRoot, current, target string, syncDir func(string) error, operation func(string)) error {
+	previousTarget, err := os.Readlink(current)
+	previousPresent := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read current runtime pointer: %w", err)
 	}
 	target = strings.TrimPrefix(filepath.ToSlash(target), "generations/")
+	if target == "" {
+		if !previousPresent {
+			return nil
+		}
+		if err := os.Remove(current); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove runtime pointer: %w", err)
+		}
+		if operation != nil {
+			operation("remove-current")
+		}
+		if err := syncDir(runtimeRoot); err != nil {
+			if rollbackErr := restoreRuntimePointer(runtimeRoot, current, previousTarget, previousPresent, syncDir, operation); rollbackErr != nil {
+				return fmt.Errorf("sync removed runtime pointer: %w; restore previous pointer: %v", err, rollbackErr)
+			}
+			return fmt.Errorf("sync removed runtime pointer: %w", err)
+		}
+		return nil
+	}
 	temporary := filepath.Join(runtimeRoot, fmt.Sprintf(".current-%d", time.Now().UnixNano()))
 	if err := os.Symlink(filepath.Join("generations", target), temporary); err != nil {
 		return fmt.Errorf("create runtime pointer: %w", err)
@@ -328,7 +366,44 @@ func switchRuntimePointer(runtimeRoot, current, target string) error {
 		_ = os.Remove(temporary)
 		return fmt.Errorf("switch runtime pointer: %w", err)
 	}
-	return syncDirectory(runtimeRoot)
+	if operation != nil {
+		operation("rename-current")
+	}
+	if err := syncDir(runtimeRoot); err != nil {
+		if rollbackErr := restoreRuntimePointer(runtimeRoot, current, previousTarget, previousPresent, syncDir, operation); rollbackErr != nil {
+			return fmt.Errorf("sync runtime pointer: %w; restore previous pointer: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("sync runtime pointer: %w", err)
+	}
+	return nil
+}
+
+func restoreRuntimePointer(runtimeRoot, current, target string, targetPresent bool, syncDir func(string) error, operation func(string)) error {
+	if !targetPresent || target == "" {
+		if err := os.Remove(current); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove runtime pointer during rollback: %w", err)
+		}
+		if operation != nil {
+			operation("remove-current-rollback")
+		}
+		return syncDir(runtimeRoot)
+	}
+	target = strings.TrimPrefix(filepath.ToSlash(target), "generations/")
+	temporary := filepath.Join(runtimeRoot, fmt.Sprintf(".current-rollback-%d", time.Now().UnixNano()))
+	if err := os.Symlink(filepath.Join("generations", target), temporary); err != nil {
+		return fmt.Errorf("create rollback runtime pointer: %w", err)
+	}
+	if err := os.Rename(temporary, current); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("restore runtime pointer: %w", err)
+	}
+	if operation != nil {
+		operation("rename-current-rollback")
+	}
+	if err := syncDir(runtimeRoot); err != nil {
+		return fmt.Errorf("sync restored runtime pointer: %w", err)
+	}
+	return nil
 }
 
 func identifyLegacyRuntimeFiles(projectPath string) ([]string, error) {
@@ -349,7 +424,38 @@ func identifyLegacyRuntimeFiles(projectPath string) ([]string, error) {
 }
 
 func removeLegacyRuntimeFiles(projectPath string, names []string) error {
-	removed := false
+	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
+	cleanup, err := (&Root{}).cleanupLegacyRuntimeFiles(projectPath, runtimeRoot, names)
+	if err != nil {
+		return err
+	}
+	if cleanup != nil && !cleanup.finalized {
+		return cleanup.rollback()
+	}
+	return nil
+}
+
+type legacyRuntimeCleanup struct {
+	root        *Root
+	projectPath string
+	runtimeRoot string
+	quarantine  string
+	moved       []string
+	finalized   bool
+	rolledBack  bool
+}
+
+func (r *Root) cleanupLegacyRuntimeFiles(projectPath, runtimeRoot string, names []string) (*legacyRuntimeCleanup, error) {
+	cleanup := &legacyRuntimeCleanup{root: r, projectPath: projectPath, runtimeRoot: runtimeRoot}
+	if len(names) == 0 {
+		cleanup.finalized = true
+		return cleanup, nil
+	}
+	quarantine, err := os.MkdirTemp(runtimeRoot, ".legacy-quarantine-")
+	if err != nil {
+		return cleanup, fmt.Errorf("create legacy quarantine: %w", err)
+	}
+	cleanup.quarantine = quarantine
 	for _, name := range names {
 		path := filepath.Join(projectPath, name)
 		info, err := os.Lstat(path)
@@ -357,19 +463,89 @@ func removeLegacyRuntimeFiles(projectPath string, names []string) error {
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("inspect legacy runtime file %s: %w", name, err)
+			return cleanup, cleanup.fail(fmt.Errorf("inspect legacy runtime file %s: %w", name, err))
 		}
 		if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
 			continue
 		}
-		if err := os.Remove(path); err != nil {
-			return fmt.Errorf("remove legacy runtime file %s: %w", name, err)
+		if err := r.moveLegacyRuntime(path, filepath.Join(cleanup.quarantine, name)); err != nil {
+			return cleanup, cleanup.fail(fmt.Errorf("move legacy runtime file %s: %w", name, err))
 		}
-		removed = true
+		cleanup.moved = append(cleanup.moved, name)
 	}
-	if removed {
-		return syncDirectory(projectPath)
+	if len(cleanup.moved) == 0 {
+		if err := os.RemoveAll(cleanup.quarantine); err != nil {
+			return cleanup, fmt.Errorf("remove empty legacy quarantine: %w", err)
+		}
+		cleanup.finalized = true
+		return cleanup, nil
 	}
+	// Persist both sides of every rename before deleting the quarantine. A
+	// failure here is still reversible because all moved entries remain in it.
+	if err := r.syncRuntimeDirectory(cleanup.quarantine); err != nil {
+		return cleanup, cleanup.fail(err)
+	}
+	if err := r.syncRuntimeDirectory(projectPath); err != nil {
+		return cleanup, cleanup.fail(err)
+	}
+	if err := r.syncRuntimeDirectory(runtimeRoot); err != nil {
+		return cleanup, cleanup.fail(err)
+	}
+	if err := os.RemoveAll(cleanup.quarantine); err != nil {
+		return cleanup, cleanup.fail(fmt.Errorf("remove legacy quarantine: %w", err))
+	}
+	cleanup.finalized = true
+	return cleanup, nil
+}
+
+func (c *legacyRuntimeCleanup) fail(err error) error {
+	if rollbackErr := c.rollback(); rollbackErr != nil {
+		return errors.Join(err, rollbackErr)
+	}
+	return err
+}
+
+func (c *legacyRuntimeCleanup) rollback() error {
+	if c == nil || c.finalized || c.rolledBack {
+		return nil
+	}
+	var rollbackErrs []error
+	for index := len(c.moved) - 1; index >= 0; index-- {
+		name := c.moved[index]
+		source := filepath.Join(c.quarantine, name)
+		if _, err := os.Lstat(source); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("inspect quarantined legacy runtime file %s: %w", name, err))
+			continue
+		}
+		destination := filepath.Join(c.projectPath, name)
+		if _, err := os.Lstat(destination); err == nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore legacy runtime file %s: destination already exists", name))
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("inspect legacy runtime destination %s: %w", name, err))
+			continue
+		}
+		if err := c.root.moveLegacyRuntime(source, destination); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore legacy runtime file %s: %w", name, err))
+		}
+	}
+	if len(rollbackErrs) > 0 {
+		return errors.Join(rollbackErrs...)
+	}
+	if c.quarantine != "" {
+		if err := os.RemoveAll(c.quarantine); err != nil {
+			return fmt.Errorf("remove legacy quarantine after rollback: %w", err)
+		}
+	}
+	if err := c.root.syncRuntimeDirectory(c.projectPath); err != nil {
+		return err
+	}
+	if err := c.root.syncRuntimeDirectory(c.runtimeRoot); err != nil {
+		return err
+	}
+	c.rolledBack = true
 	return nil
 }
 
@@ -417,6 +593,41 @@ type Root struct {
 	base       string
 	metadataMu sync.Mutex
 	runtimeMu  sync.Mutex
+	hooks      runtimeHooks
+}
+
+// runtimeHooks are intentionally private test seams for exercising crash and
+// filesystem-failure state transitions without relying on host-specific faults.
+// Production Roots leave all hooks nil and use the operating-system calls.
+type runtimeHooks struct {
+	syncDirectory func(string) error
+	moveLegacy    func(string, string) error
+	operation     func(string)
+}
+
+func (r *Root) syncRuntimeDirectory(directory string) error {
+	r.recordRuntimeOperation("sync:" + directory)
+	if r.hooks.syncDirectory != nil {
+		return r.hooks.syncDirectory(directory)
+	}
+	return syncDirectory(directory)
+}
+
+func (r *Root) moveLegacyRuntime(source, destination string) error {
+	if r.hooks.moveLegacy != nil {
+		return r.hooks.moveLegacy(source, destination)
+	}
+	return os.Rename(source, destination)
+}
+
+func (r *Root) recordRuntimeOperation(operation string) {
+	if r.hooks.operation != nil {
+		r.hooks.operation(operation)
+	}
+}
+
+func (r *Root) switchRuntimePointer(runtimeRoot, current, target string) error {
+	return switchRuntimePointerWithOps(runtimeRoot, current, target, r.syncRuntimeDirectory, r.recordRuntimeOperation)
 }
 
 func New(base string) (*Root, error) {

@@ -108,3 +108,36 @@ GREEN verification:
 - `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 5m ./...` — PASS.
 - `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 2m ./apps/provisioner/internal/render -run TestRepresentativeComposeConfig -v` — PASS; real stable-project-root `docker compose config --quiet` validation passed for lightweight, standard, and full outputs.
 - `git diff --check` — PASS.
+
+## Fix Round 5
+
+Hardened the projectfs generation state machine. After candidate-to-generation
+rename, the `generations` parent is fsynced before `current` is replaced;
+current replacement is followed by a runtime-parent fsync, and a failed
+pointer fsync restores the prior pointer before returning. The closure marks
+the generation committed immediately after durable pointer publication and
+before legacy cleanup.
+
+Legacy migration now moves only the exact eligible root runtime names into one
+temporary quarantine. A move or pre-delete sync failure restores every moved
+entry and removes the quarantine; a successful migration removes the
+quarantine. Cleanup failures retain committed-state semantics so the restore
+closure rolls back the selected generation, including removing `current` on a
+first migration with no prior pointer. Private runtime hooks provide
+deterministic operation-order and second-entry move-failure fixtures without
+changing the production API.
+
+RED evidence:
+
+- The new fsync-order and legacy-failure tests initially failed to compile
+  because `Root` had no injectable runtime hooks.
+
+GREEN verification:
+
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 2m ./apps/provisioner/internal/projectfs` — PASS, including generation/current fsync ordering, injected generation/current fsync failures, second-entry legacy rollback, first-migration rollback, chained restore, stale CAS, candidate cleanup, and concurrent staging.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -race -count=1 -timeout 2m ./apps/provisioner/internal/projectfs` — PASS.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 2m ./apps/provisioner/internal/server ./apps/provisioner/internal/runtime ./apps/provisioner/internal/compose` — PASS.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -race -count=1 -timeout 2m ./apps/provisioner/internal/projectfs ./apps/provisioner/internal/server ./apps/provisioner/internal/runtime ./apps/provisioner/internal/compose` — PASS.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 5m ./...` — PASS.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 2m ./apps/provisioner/internal/render -run TestRepresentativeComposeConfig -v` — PASS; real Compose validation succeeded for lightweight, standard, and full generated outputs.
+- `git diff --check` — PASS.

@@ -1,6 +1,7 @@
 package projectfs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -471,6 +472,289 @@ func TestConcurrentRuntimeStagesSerializePublication(t *testing.T) {
 	close(errCh)
 	for err := range errCh {
 		t.Fatal(err)
+	}
+}
+
+func TestStageRuntimeFilesSyncsGenerationsBeforePublishingCurrent(t *testing.T) {
+	base := t.TempDir()
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("ordered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoot := filepath.Join(project, ".manager-runtime")
+	generations := filepath.Join(runtimeRoot, "generations")
+	var operations []string
+	root.hooks.operation = func(operation string) {
+		operations = append(operations, operation)
+	}
+	_, commit, err := root.StageRuntimeFiles("ordered", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	indexOf := func(want string, after int) int {
+		for index := after + 1; index < len(operations); index++ {
+			if operations[index] == want {
+				return index
+			}
+		}
+		return -1
+	}
+	generationRename := indexOf("rename-generation", -1)
+	if generationRename < 0 {
+		t.Fatalf("operation log missing candidate-to-generation rename: %v", operations)
+	}
+	generationSync := indexOf("sync:"+generations, generationRename)
+	if generationSync < 0 {
+		t.Fatalf("operation log missing generations fsync after rename: %v", operations)
+	}
+	currentRename := indexOf("rename-current", generationSync)
+	if currentRename < 0 {
+		t.Fatalf("operation log missing current replacement after generations fsync: %v", operations)
+	}
+	currentSync := indexOf("sync:"+runtimeRoot, currentRename)
+	if currentSync < 0 {
+		t.Fatalf("operation log missing runtime parent fsync after current replacement: %v", operations)
+	}
+}
+
+func TestStageRuntimeFilesGenerationSyncFailureLeavesPreviousCurrent(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commitA, err := root.StageRuntimeFiles("sync-failure", RuntimeFiles{Compose: []byte("A"), Env: []byte("A"), FunctionsEnv: []byte("A")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitA(); err != nil {
+		t.Fatal(err)
+	}
+	failed := false
+	root.hooks.syncDirectory = func(directory string) error {
+		if filepath.Base(directory) == "generations" && !failed {
+			failed = true
+			return errors.New("injected generations fsync failure")
+		}
+		return syncDirectory(directory)
+	}
+	restoreB, commitB, err := root.StageRuntimeFiles("sync-failure", RuntimeFiles{Compose: []byte("B"), Env: []byte("B"), FunctionsEnv: []byte("B")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitB(); err == nil || !strings.Contains(err.Error(), "injected generations fsync failure") {
+		t.Fatalf("commit error = %v, want generations fsync failure", err)
+	}
+	composePath, err := root.RuntimeComposePath("sync-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, composePath)); got != "A" {
+		t.Fatalf("current changed after pre-publication fsync failure: %q", got)
+	}
+	if err := restoreB(); err != nil {
+		t.Fatalf("restore after generations fsync failure: %v", err)
+	}
+	if got := string(mustRead(t, composePath)); got != "A" {
+		t.Fatalf("current changed after failed generation cleanup: %q", got)
+	}
+}
+
+func TestStageRuntimeFilesCurrentSyncFailureRestoresPreviousCurrent(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commitA, err := root.StageRuntimeFiles("pointer-sync-failure", RuntimeFiles{Compose: []byte("A"), Env: []byte("A"), FunctionsEnv: []byte("A")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitA(); err != nil {
+		t.Fatal(err)
+	}
+	failed := false
+	root.hooks.syncDirectory = func(directory string) error {
+		if filepath.Base(directory) == ".manager-runtime" && !failed {
+			failed = true
+			return errors.New("injected current fsync failure")
+		}
+		return syncDirectory(directory)
+	}
+	restoreB, commitB, err := root.StageRuntimeFiles("pointer-sync-failure", RuntimeFiles{Compose: []byte("B"), Env: []byte("B"), FunctionsEnv: []byte("B")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitB(); err == nil || !strings.Contains(err.Error(), "injected current fsync failure") {
+		t.Fatalf("commit error = %v, want current fsync failure", err)
+	}
+	composePath, err := root.RuntimeComposePath("pointer-sync-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, composePath)); got != "A" {
+		t.Fatalf("current changed after pointer fsync failure: %q", got)
+	}
+	if err := restoreB(); err != nil {
+		t.Fatalf("restore after pointer fsync failure: %v", err)
+	}
+	if got := string(mustRead(t, composePath)); got != "A" {
+		t.Fatalf("current changed after failed pointer cleanup: %q", got)
+	}
+}
+
+func TestStageRuntimeFilesLegacyMoveFailureRollsBackBeforeCurrentRestore(t *testing.T) {
+	base := t.TempDir()
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commitA, err := root.StageRuntimeFiles("legacy", RuntimeFiles{Compose: []byte("A"), Env: []byte("A"), FunctionsEnv: []byte("A")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitA(); err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyContents := map[string]string{
+		"docker-compose.yml": "legacy-compose",
+		".env":               "legacy-env",
+		".env.functions":     "legacy-functions",
+	}
+	for name, contents := range legacyContents {
+		if err := os.WriteFile(filepath.Join(project, name), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	moveCount := 0
+	root.hooks.moveLegacy = func(source, destination string) error {
+		if filepath.Dir(source) == project {
+			moveCount++
+			if moveCount == 2 {
+				return errors.New("injected second legacy move failure")
+			}
+		}
+		return os.Rename(source, destination)
+	}
+	restore, commitB, err := root.StageRuntimeFiles("legacy", RuntimeFiles{Compose: []byte("B"), Env: []byte("B"), FunctionsEnv: []byte("B")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitB(); err == nil || !strings.Contains(err.Error(), "injected second legacy move failure") {
+		t.Fatalf("commit error = %v, want injected cleanup failure", err)
+	}
+	if err := restore(); err != nil {
+		t.Fatalf("restore after cleanup failure: %v", err)
+	}
+	composePath, err := root.RuntimeComposePath("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, composePath)); got != "A" {
+		t.Fatalf("restored current = %q, want A", got)
+	}
+	for name, want := range legacyContents {
+		if got := string(mustRead(t, filepath.Join(project, name))); got != want {
+			t.Errorf("restored legacy %s = %q, want %q", name, got, want)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(project, ".manager-runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".candidate-") || strings.HasPrefix(entry.Name(), ".legacy-quarantine-") {
+			t.Errorf("runtime leaked transient entry %q", entry.Name())
+		}
+	}
+	generations, err := os.ReadDir(filepath.Join(project, ".manager-runtime", "generations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(generations) != 1 {
+		t.Fatalf("generation count after rollback = %d, want 1", len(generations))
+	}
+}
+
+func TestStageRuntimeFilesFirstMigrationFailureRestoresLegacyAndRemovesCurrent(t *testing.T) {
+	base := t.TempDir()
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyContents := map[string]string{
+		"docker-compose.yml": "legacy-compose",
+		".env":               "legacy-env",
+		".env.functions":     "legacy-functions",
+	}
+	for name, contents := range legacyContents {
+		if err := os.MkdirAll(project, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(project, name), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	moveCount := 0
+	root.hooks.moveLegacy = func(source, destination string) error {
+		if filepath.Dir(source) == project {
+			moveCount++
+			if moveCount == 2 {
+				return errors.New("injected second legacy move failure")
+			}
+		}
+		return os.Rename(source, destination)
+	}
+	restore, commit, err := root.StageRuntimeFiles("first", RuntimeFiles{Compose: []byte("current"), Env: []byte("current"), FunctionsEnv: []byte("current")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err == nil {
+		t.Fatal("commit succeeded despite injected cleanup failure")
+	}
+	if err := restore(); err != nil {
+		t.Fatalf("restore first migration: %v", err)
+	}
+	current, err := root.RuntimeComposePath("first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(current); !os.IsNotExist(err) {
+		t.Fatalf("first migration restore retained current: %v", err)
+	}
+	for name, want := range legacyContents {
+		if got := string(mustRead(t, filepath.Join(project, name))); got != want {
+			t.Errorf("restored legacy %s = %q, want %q", name, got, want)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(project, ".manager-runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".candidate-") || strings.HasPrefix(entry.Name(), ".legacy-quarantine-") {
+			t.Errorf("runtime leaked transient entry %q", entry.Name())
+		}
+	}
+	generations, err := os.ReadDir(filepath.Join(project, ".manager-runtime", "generations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(generations) != 0 {
+		t.Fatalf("generation count after first migration rollback = %d, want 0", len(generations))
 	}
 }
 
