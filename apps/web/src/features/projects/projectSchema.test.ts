@@ -1,4 +1,5 @@
 import { applyPreset, defaultConfiguration, normalizeCreateConfiguration, projectConfigurationSchema, projectSchema, redactedSecretSchema, updateSecretSchema } from './projectSchema'
+import { toUpdateSecretInput } from '../../api/types'
 
 function validProject() {
   return { name: 'Bee', slug: 'bee', preset: 'LIGHTWEIGHT' as const, configuration: { ...defaultConfiguration('LIGHTWEIGHT'), general: { domain: 'bee.example.com', siteUrl: 'https://example.com', supabaseVersion: 'self-hosted/v0.8.0' } } }
@@ -86,6 +87,8 @@ it('keeps redacted and update secret truth tables distinct', () => {
   expect(updateSecretSchema.safeParse({ action: 'remove', value: 'leak' }).success).toBe(false)
   expect(updateSecretSchema.safeParse({ action: 'replace' }).success).toBe(false)
   expect(updateSecretSchema.safeParse({ action: 'replace', value: 'secret' }).success).toBe(true)
+  expect(toUpdateSecretInput({ action: '' }, true)).toEqual({ action: 'retain' })
+  expect(toUpdateSecretInput({ action: '' }, false)).toEqual({ action: 'remove' })
 })
 
 it.each([

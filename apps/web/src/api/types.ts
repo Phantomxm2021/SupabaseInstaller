@@ -25,6 +25,11 @@ export type RedactedSecretInput = { action: ''; value?: never }
 export type CreateSecretInput = { action: ''; value?: never } | { action: 'replace'; value: string }
 export type UpdateSecretInput = { action: 'retain' | 'remove'; value?: never } | { action: 'replace'; value: string }
 export type SecretInput = RedactedSecretInput | CreateSecretInput | UpdateSecretInput
+/** Convert a redacted marker to an explicit update command at the client boundary. */
+export function toUpdateSecretInput(input: RedactedSecretInput, configured: boolean): UpdateSecretInput {
+  if (input.action !== '') throw new Error('redacted secret markers must use an empty action')
+  return configured ? { action: 'retain' } : { action: 'remove' }
+}
 export interface GeneralConfig { domain: string; siteUrl: string; supabaseVersion: string }
 export interface EmailAuthConfig { enabled: boolean; allowSignup: boolean; confirmEmail: boolean; secureEmailChange: boolean; doubleConfirmChanges: boolean }
 export interface PhoneAuthConfig { enabled: boolean; provider: string; secretSet: boolean; secret: SecretInput; fields: Record<string, string> }
