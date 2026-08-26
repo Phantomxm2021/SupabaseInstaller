@@ -69,3 +69,5 @@ passed
 ```
 
 Commit: `0841220 fix: close Task 7 create contract gaps`
+
+Follow-up closure commit: `16cd2da fix: enforce service and storage closures`
