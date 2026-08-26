@@ -98,3 +98,29 @@ passed
 ```
 
 Commit: `add061a fix: make Task 7 aggregate and allocations authoritative`
+
+Final Round 3 create-secret hardening:
+
+- `CreateSecretInput` and the create Zod schema now admit only `{action:""}` or `{action:"replace",value}`. `retain` and `remove` are update-only and are normalized to an empty marker before create serialization; Manager rejects either update-only action during initial creation. Redaction remains the Go-compatible non-pointer `{action:""}` shape.
+- Added regression coverage for create action truth tables and Manager rejection without leaving a project row.
+
+Final verification:
+
+```text
+go test ./...
+all packages passed
+
+npm test --workspace apps/web -- --run
+Test Files 10 passed (10)
+Tests 38 passed (38)
+
+npm run build --workspace apps/web
+TypeScript check and Vite build passed (existing chunk-size warning only)
+
+git diff --check
+passed
+```
+
+Final contract commit: `60ae3c4 fix: restrict create secrets to create-safe actions`
+
+Legacy-track scan: no exact matches for `NormalizeDraft`, `configurationSupplied`, `firstConfiguration`, `TryReservePort`, or `configuration omitted`; no `domain`, `siteUrl`, or `services` fields remain on `ProjectDraft`/`CreateProjectRequest`. Those names remain only where authoritative aggregate configuration or the read-only `Project` response requires them.

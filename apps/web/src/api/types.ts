@@ -53,7 +53,7 @@ export interface RedactedProjectConfiguration { revision: number; general: Gener
 /** Full editable aggregate used by the wizard before it is converted to a wire DTO. */
 export interface ProjectConfiguration { revision: number; general: GeneralConfig; services: Services; auth: AuthConfig; storage: StorageConfig; realtime: RealtimeConfig; functions: FunctionsConfig; database: DatabaseConfig; pooler: PoolerConfig; network: NetworkConfig }
 type WithSecret<T, S> = T extends SecretInput ? S : T extends Array<infer U> ? Array<WithSecret<U, S>> : T extends object ? { [K in keyof T]: WithSecret<T[K], S> } : T
-/** Create DTO uses only empty/remove/replace actions; retain is update-only. */
+/** Create DTO uses only empty/replace actions; retain/remove are update-only. */
 export type CreateProjectConfiguration = WithSecret<ProjectConfiguration, CreateSecretInput>
 export type UpdateProjectConfiguration = WithSecret<ProjectConfiguration, UpdateSecretInput>
 export interface CreateProjectRequest { name: string; slug: string; supabaseVersion: string; preset: Preset; configuration: CreateProjectConfiguration }
