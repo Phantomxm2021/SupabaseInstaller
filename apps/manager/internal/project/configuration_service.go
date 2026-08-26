@@ -274,11 +274,17 @@ func (s *ConfigurationService) secretMutations(ctx context.Context, projectID st
 	if err := add("storage.secretAccessKey", &cfg.Storage.SecretAccessKey, &cfg.Storage.SecretAccessKeySet); err != nil {
 		return nil, err
 	}
+	keptVariables := cfg.Functions.Variables[:0]
 	for index := range cfg.Functions.Variables {
 		variable := &cfg.Functions.Variables[index]
+		removeVariable := strings.EqualFold(strings.TrimSpace(variable.Value.Action), "remove")
 		if err := add("functions."+variable.Name, &variable.Value, &variable.ValueSet); err != nil {
 			return nil, err
 		}
+		if !removeVariable {
+			keptVariables = append(keptVariables, *variable)
+		}
 	}
+	cfg.Functions.Variables = keptVariables
 	return mutations, nil
 }

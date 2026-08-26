@@ -27,3 +27,13 @@ git diff --check                                                             PAS
 - Added actual Project URL/Anon Key response fields, in-memory reveal/copy/timeout controls, durable rotation operation panel handoff, and first-class Configuration/legacy Logs/Backups navigation.
 
 Round 1 verification: `npm test --workspace apps/web -- --run`, `npm run build --workspace apps/web`, `GOCACHE=/tmp/supabase-installer-task8-round1-go-cache go test ./apps/manager/internal/httpapi ./apps/manager/internal/project`, and `git diff --check` passed.
+
+## Round 2 correction
+
+- Normalized omitted redacted arrays/maps (`redirectUrls`, `oauth`, `extensions`, function variables and provider fields) before section forms render; OAuth disabled providers keep an always-visible save footer and use the provider endpoint.
+- Services now permits all non-mandatory runtime switches while enforcing Studio/postgres-meta, Logs/Vector, and Storage/imgproxy closure. Preview metadata includes changed service transitions and General impacts Gateway/Auth/Studio.
+- Configuration GET no longer decrypts or returns anon key; all four key kinds remain behind the no-store recent-auth reveal route. Project URL remains derived from Domain.
+- Configured Functions variable remove now deletes both its encrypted secret and persisted variable row in one mutation.
+- Logs and Backups retain their own module routes; Configuration remains first-class with query-aware section navigation.
+
+Round 2 verification: web tests (46 passed), web build, manager HTTP/project tests, and `git diff --check` passed.

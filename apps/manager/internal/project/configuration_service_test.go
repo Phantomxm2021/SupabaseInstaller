@@ -52,7 +52,7 @@ func TestConfigurationServiceSecretPatches(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Patch() error = %v", err)
 			}
-			if got.Revision != 2 || got.Configuration.Functions.Variables[0].Value.Value != "" {
+			if got.Revision != 2 || (tc.exists && got.Configuration.Functions.Variables[0].Value.Value != "") || (!tc.exists && len(got.Configuration.Functions.Variables) != 0) {
 				t.Fatalf("Patch() snapshot leaked or has wrong revision: %#v", got)
 			}
 			stored, err := database.GetSecret(context.Background(), project.ID, "functions.OPENAI_API_KEY")

@@ -16,7 +16,7 @@ export type PendingConfigurationSave = {
   value: unknown
   labels: string[]
   services: string[]
-  impact: 'none' | 'restart' | 'recreate'
+  impact: 'none' | 'restart' | 'recreate' | 'start' | 'stop'
 }
 
 export const SECTION_LABELS: Record<ConfigurationSection, string> = {
@@ -26,6 +26,17 @@ export const SECTION_LABELS: Record<ConfigurationSection, string> = {
 }
 
 export function sectionLabel(section: ConfigurationSection) { return SECTION_LABELS[section] }
+
+/** Go omitempty fields are intentionally optional on redacted responses. Keep
+ * every section form on a total DTO before it calls watch/join/index methods. */
+export function normalizeRedactedConfiguration(config: RedactedProjectConfiguration): RedactedProjectConfiguration {
+  return {
+    ...config,
+    auth: { ...config.auth, redirectUrls: config.auth.redirectUrls ?? [], oauth: config.auth.oauth ?? {}, phone: { ...config.auth.phone, fields: config.auth.phone.fields ?? {} }, smtp: { ...config.auth.smtp } },
+    database: { ...config.database, extensions: config.database.extensions ?? [] },
+    functions: { ...config.functions, variables: config.functions.variables ?? [] },
+  }
+}
 
 export function sectionEndpoint(section: ConfigurationSection, provider?: string) {
   return provider && section === 'oauth' ? `oauth/${encodeURIComponent(provider)}` : section
