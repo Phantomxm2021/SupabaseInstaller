@@ -8,8 +8,9 @@ export function BasicStep({ form }: { form: UseFormReturn<ProjectForm> }) {
       <div className="form-grid">
         <div><label>Project name<input autoFocus placeholder="Bee" {...form.register('name')} /></label><ErrorText value={form.formState.errors.name?.message} /></div>
         <div><label>Project slug<input placeholder="bee" {...form.register('slug')} /></label><ErrorText value={form.formState.errors.slug?.message} /></div>
-        <div><label>Domain<input placeholder="bee.example.com" {...form.register('domain')} /></label><ErrorText value={form.formState.errors.domain?.message} /></div>
-        <div><label>Site URL<input placeholder="https://example.com" {...form.register('siteUrl')} /></label><ErrorText value={form.formState.errors.siteUrl?.message} /></div>
+        <div><label>Domain<input placeholder="bee.example.com" {...form.register('configuration.general.domain')} /></label><ErrorText value={form.formState.errors.configuration?.general?.domain?.message} /></div>
+        <div><label>Site URL<input placeholder="https://example.com" {...form.register('configuration.general.siteUrl')} /></label><ErrorText value={form.formState.errors.configuration?.general?.siteUrl?.message} /></div>
+        <div><label>Pinned Supabase version<select {...form.register('configuration.general.supabaseVersion')}><option value="self-hosted/v0.8.0">self-hosted/v0.8.0</option></select></label></div>
       </div>
     </section>
   )

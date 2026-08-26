@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Check, LoaderCircle, RotateCcw, ShieldAlert } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useInRouterContext, useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../api/client'
 import type { Operation } from '../../api/types'
 import { useOperationEvents } from './useOperationEvents'
@@ -14,8 +15,10 @@ const labels: Record<string, string> = {
   MARK_RUNNING: 'Mark project running',
 }
 
-export function OperationPanel({ operationId, projectName }: { operationId: string; projectName: string }) {
-	const [activeOperationId, setActiveOperationId] = useState(operationId)
+export function OperationPanel({ operationId, projectId, projectName, onSucceeded }: { operationId: string; projectId?: string; projectName: string; onSucceeded?: (projectId: string) => void }) {
+  const [activeOperationId, setActiveOperationId] = useState(operationId)
+  const navigate = useInRouterContext() ? useNavigate() : undefined
+  const handledSuccess = useRef<string | undefined>(undefined)
   const queryClient = useQueryClient()
   const operation = useQuery({
     queryKey: ['operation', activeOperationId],
@@ -31,6 +34,15 @@ export function OperationPanel({ operationId, projectName }: { operationId: stri
     },
   })
   const current = operation.data
+  useEffect(() => {
+    const id = current?.projectId || projectId
+    if (current?.status === 'SUCCEEDED' && id && handledSuccess.current !== activeOperationId) {
+      handledSuccess.current = activeOperationId
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+      onSucceeded?.(id)
+      navigate?.(`/projects/${id}/overview`, { replace: true })
+    }
+  }, [activeOperationId, current?.projectId, current?.status, navigate, onSucceeded, projectId, queryClient])
   const failed = current?.status === 'FAILED'
   const rolledBack = current?.status === 'ROLLED_BACK'
   const succeeded = current?.status === 'SUCCEEDED'

@@ -1,0 +1,10 @@
+import type { UseFormReturn } from 'react-hook-form'
+import { OAUTH_PROVIDERS, type ProjectForm } from './projectSchema'
+
+export const providerLabels: Record<string,string> = { apple:'Apple',azure:'Azure / Microsoft',bitbucket:'Bitbucket',discord:'Discord',facebook:'Facebook',figma:'Figma',github:'GitHub',gitlab:'GitLab',google:'Google',kakao:'Kakao',keycloak:'Keycloak',linkedin_oidc:'LinkedIn OIDC',notion:'Notion',slack_oidc:'Slack OIDC',snapchat:'Snapchat',spotify:'Spotify',twitch:'Twitch',twitter:'Twitter / X',workos:'WorkOS',zoom:'Zoom' }
+const specialFields: Record<string,string> = { azure:'tenantUrl',github:'enterpriseUrl',gitlab:'selfHostedUrl',keycloak:'realmUrl' }
+
+export function OAuthProviderFields({ form, siteUrl }: { form: UseFormReturn<ProjectForm>; siteUrl: string }) {
+  const oauth = form.watch('configuration.auth.oauth') || {}
+  return <div className="oauth-providers">{OAUTH_PROVIDERS.map(provider => { const config = oauth[provider] || { enabled:false,clientId:'',secretSet:false,secret:{action:'retain'},fields:{} }; const special=specialFields[provider]; return <fieldset className="provider-card" key={provider}><legend><label><input type="checkbox" checked={config.enabled} onChange={e=>form.setValue(`configuration.auth.oauth.${provider}.enabled` as any,e.target.checked)} /> {providerLabels[provider]}</label></legend>{config.enabled&&<><label>Client ID<input {...form.register(`configuration.auth.oauth.${provider}.clientId` as any)} /></label><label>Client secret<input type="password" placeholder={config.secretSet?'Configured — enter to replace':''} onChange={e=>form.setValue(`configuration.auth.oauth.${provider}.secret` as any,{action:e.target.value?'replace':'retain',...(e.target.value?{value:e.target.value}: {})})} /></label>{special&&<label>{special}<input {...form.register(`configuration.auth.oauth.${provider}.fields.${special}` as any)} /></label>}<label>Read-only callback URL<input readOnly value={`${siteUrl.replace(/\/$/,'')}/auth/v1/callback`} /></label></>}</fieldset> })}</div>
+}

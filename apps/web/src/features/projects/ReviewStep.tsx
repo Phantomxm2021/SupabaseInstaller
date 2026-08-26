@@ -1,20 +1,5 @@
 import { CheckCircle2, CircleOff } from 'lucide-react'
 import type { ProjectForm } from './projectSchema'
 
-const enabled = ['Database', 'Envoy Gateway', 'Authentication', 'PostgREST', 'Supabase Studio', 'postgres-meta']
-const disabled = ['Realtime', 'Storage', 'Image Transformation', 'Edge Functions', 'Supavisor', 'Logs & Analytics']
-
-export function ReviewStep({ project }: { project: ProjectForm }) {
-  return (
-    <section className="review-layout">
-      <div className="review-summary panel">
-        <div className="panel-heading"><h2>{project.name}</h2><p>Ready to install</p></div>
-        <dl><div><dt>Domain</dt><dd>{project.domain}</dd></div><div><dt>Site URL</dt><dd>{project.siteUrl}</dd></div><div><dt>Preset</dt><dd><span className="badge healthy">Lightweight</span></dd></div><div><dt>Runtime</dt><dd>self-hosted/v0.8.0</dd></div><div><dt>Estimated containers</dt><dd>6</dd></div></dl>
-      </div>
-      <div className="service-review">
-        <div><h3>Enabled services</h3>{enabled.map((service) => <span key={service}><CheckCircle2 size={15} />{service}</span>)}</div>
-        <div className="disabled-services"><h3>Disabled by default</h3>{disabled.map((service) => <span key={service}><CircleOff size={15} />{service}</span>)}</div>
-      </div>
-    </section>
-  )
-}
+const labels: Record<string,string> = { database:'PostgreSQL',gateway:'Envoy Gateway',auth:'Authentication',rest:'PostgREST',studio:'Supabase Studio',postgresMeta:'postgres-meta',realtime:'Realtime',storage:'Storage',imgproxy:'Image Transformation',functions:'Edge Functions',supavisor:'Supavisor',logs:'Logs & Analytics',vector:'Vector',directDb:'Direct PostgreSQL port' }
+export function ReviewStep({ project }: { project: ProjectForm }) { const c=project.configuration; const enabled=Object.entries(c.services).filter(([,v])=>v).map(([k])=>labels[k]); const disabled=Object.entries(c.services).filter(([,v])=>!v).map(([k])=>labels[k]); const oauth=Object.entries(c.auth.oauth).filter(([,v])=>v.enabled).map(([k])=>k); const presetLabel=project.preset[0]+project.preset.slice(1).toLowerCase(); return <section className="review-layout"><div className="review-summary panel"><div className="panel-heading"><h2>{project.name}</h2><p>Ready to install</p></div><dl><div><dt>Domain</dt><dd>{c.general.domain}</dd></div><div><dt>Site URL</dt><dd>{c.general.siteUrl}</dd></div><div><dt>Preset</dt><dd><span className="badge healthy">{presetLabel}</span></dd></div><div><dt>Runtime</dt><dd>{c.general.supabaseVersion}</dd></div><div><dt>SMTP</dt><dd>{c.auth.smtp.enabled?'Configured':'Disabled'}</dd></div><div><dt>OAuth</dt><dd>{oauth.length?`${oauth.length} provider(s) enabled`:'None'}</dd></div><div><dt>Storage</dt><dd>{c.services.storage?c.storage.backend:'Disabled'}</dd></div><div><dt>Functions</dt><dd>{c.services.functions?'Configured':'Disabled'}</dd></div></dl></div><div className="service-review"><div><h3>Enabled services</h3>{enabled.map(s=><span key={s}><CheckCircle2 size={15}/>{s}</span>)}</div><div className="disabled-services"><h3>Disabled services</h3>{disabled.map(s=><span key={s}><CircleOff size={15}/>{s}</span>)}</div></div></section> }
