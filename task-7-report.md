@@ -48,4 +48,24 @@ git diff --check
 passed
 ```
 
-Commit: `70a1205 fix: rebuild configurable project wizard forms`
+Commit: `5bcb974 fix: rebuild configurable project wizard forms`
+
+## Round 2 correction
+
+Creation now uses create-safe secret actions (`""`, `replace`, `remove`) and normalizes any update-only `retain` marker/value at the POST boundary. The generated RHF Form/FormField primitives and Alert variants are used directly; nested service, provider, SMTP and Functions array errors are rendered beside their controls. Preset selection resets the complete aggregate closure while preserving project identity, Direct DB and all allocated ports remain Manager-owned (`0`/read-only), unsupported extensions/internal gateway values are rejected, and Phone includes Twilio Verify SID with disabled-provider fields not required. Schema parity covers DNS hostnames, HTTP(S), secret truth tables, dependencies, port uniqueness/relationships and renderer constraints. Operation success tests cover awaited invalidation, operation project ID, exactly-once navigation and all terminal no-navigation states; Functions zero-variable review text is explicit.
+
+Round 2 verification:
+
+```text
+npm test --workspace apps/web -- --run
+Test Files 10 passed (10)
+Tests 34 passed (34)
+
+npm run build --workspace apps/web
+TypeScript check and Vite build passed
+
+git diff --check
+passed
+```
+
+Commit: pending (Round 2 working tree)
