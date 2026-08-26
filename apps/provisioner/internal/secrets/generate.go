@@ -36,6 +36,30 @@ func Generate(random io.Reader) (contracts.ProjectSecrets, error) {
 	if err != nil {
 		return contracts.ProjectSecrets{}, err
 	}
+	realtimeKey, err := randomString(random, 16)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	logflarePublic, err := randomString(random, 32)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	logflarePrivate, err := randomString(random, 32)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	s3Access, err := randomString(random, 16)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	s3Secret, err := randomString(random, 32)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	poolerTenant, err := randomString(random, 16)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
 	now := time.Now().UTC()
 	anon, err := signAPIKey(jwtSecret, "anon", now)
 	if err != nil {
@@ -46,13 +70,15 @@ func Generate(random io.Reader) (contracts.ProjectSecrets, error) {
 		return contracts.ProjectSecrets{}, err
 	}
 	return contracts.ProjectSecrets{
-		DatabasePassword:   databasePassword,
-		JWTSecret:          jwtSecret,
-		AnonKey:            anon,
-		ServiceRoleKey:     serviceRole,
-		DashboardPassword:  dashboardPassword,
-		SecretKeyBase:      secretKeyBase,
-		VaultEncryptionKey: vaultKey,
+		DatabasePassword:        databasePassword,
+		JWTSecret:               jwtSecret,
+		AnonKey:                 anon,
+		ServiceRoleKey:          serviceRole,
+		DashboardPassword:       dashboardPassword,
+		SecretKeyBase:           secretKeyBase,
+		VaultEncryptionKey:      vaultKey,
+		RealtimeDBEncryptionKey: realtimeKey, LogflarePublicAccessToken: logflarePublic, LogflarePrivateAccessToken: logflarePrivate,
+		S3ProtocolAccessKeyID: s3Access, S3ProtocolAccessKeySecret: s3Secret, PoolerTenantID: poolerTenant,
 	}, nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"supabase-manager/apps/provisioner/internal/projectfs"
 	"supabase-manager/internal/contracts"
@@ -37,6 +38,22 @@ func TestProvisionerRejectsStaleConfigRevision(t *testing.T) {
 	response = authenticatedJSON(t, handler, "/internal/v1/projects/prepare", stale)
 	if response.Code != http.StatusConflict {
 		t.Fatalf("stale prepare status = %d, want 409", response.Code)
+	}
+}
+
+func TestPrepareRuntimePublicationCompletes(t *testing.T) {
+	handler := newTestServer(t)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- authenticatedJSON(t, handler, "/internal/v1/projects/prepare", prepareRequest("op-timeout", "key-timeout", 0, 1))
+	}()
+	select {
+	case response := <-done:
+		if response.Code != http.StatusCreated {
+			t.Fatalf("prepare status = %d, body = %s", response.Code, response.Body.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("prepare did not complete within timeout")
 	}
 }
 

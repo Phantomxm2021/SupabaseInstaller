@@ -3,6 +3,7 @@ package projectfs
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -147,6 +148,73 @@ func TestStageRuntimeFilesRestoreSwitchesToPriorGeneration(t *testing.T) {
 	}
 	if got := string(mustRead(t, filepath.Join(runtimePath, "docker-compose.yml"))); got != "one" {
 		t.Fatalf("restore selected %q, want prior generation", got)
+	}
+}
+
+func TestStageRuntimeFilesPreservesStableVolumeDataAcrossGenerations(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _ := root.ProjectPath("legacy")
+	if err := os.MkdirAll(filepath.Join(project, "volumes", "db"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "volumes", "storage"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "volumes", "db", "sentinel"), []byte("db-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "volumes", "storage", "sentinel"), []byte("storage-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"one", "two"} {
+		_, commit, err := root.StageRuntimeFiles("legacy", RuntimeFiles{Compose: []byte(content), Env: []byte(content), FunctionsEnv: []byte(content)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := string(mustRead(t, filepath.Join(project, "volumes", "db", "sentinel"))); got != "db-data" {
+		t.Fatal("database volume sentinel changed")
+	}
+	if got := string(mustRead(t, filepath.Join(project, "volumes", "storage", "sentinel"))); got != "storage-data" {
+		t.Fatal("storage volume sentinel changed")
+	}
+}
+
+func TestConcurrentRuntimeStagesSerializePublication(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	for _, value := range []string{"one", "two"} {
+		wg.Add(1)
+		go func(value string) {
+			defer wg.Done()
+			restore, commit, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte(value), Env: []byte(value), FunctionsEnv: []byte(value)})
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if err := commit(); err != nil {
+				errCh <- err
+				return
+			}
+			if err := restore(); err != nil {
+				errCh <- err
+			}
+		}(value)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
 	}
 }
 

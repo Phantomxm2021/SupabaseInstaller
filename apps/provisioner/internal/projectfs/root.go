@@ -28,8 +28,12 @@ type Metadata struct {
 }
 
 func (r *Root) DeleteProjectData(slug string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// Lock order is metadataMu -> runtimeMu. Runtime paths never acquire
+	// metadataMu, so UpdateMetadata callbacks may safely stage a generation.
+	r.metadataMu.Lock()
+	defer r.metadataMu.Unlock()
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
 	projectPath, err := r.ProjectPath(slug)
 	if err != nil {
 		return err
@@ -59,12 +63,34 @@ func (r *Root) RuntimePath(slug string) (string, error) {
 	return filepath.Join(projectPath, ".manager-runtime", "current"), nil
 }
 
+func (r *Root) RuntimeComposePath(slug string) (string, error) {
+	path, err := r.RuntimePath(slug)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(path, "docker-compose.yml"), nil
+}
+func (r *Root) RuntimeEnvPath(slug string) (string, error) {
+	path, err := r.RuntimePath(slug)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(path, ".env"), nil
+}
+func (r *Root) RuntimeFunctionsEnvPath(slug string) (string, error) {
+	path, err := r.RuntimePath(slug)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(path, ".env.functions"), nil
+}
+
 // StageRuntimeFiles prepares a complete runtime generation. The current
 // symlink is the sole publication switch; candidate generations are never
 // visible to Compose callers.
 func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func() error, commit func() error, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
 	projectPath, err := r.ProjectPath(slug)
 	if err != nil {
 		return nil, nil, err
@@ -105,10 +131,6 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 	if err != nil {
 		return nil, nil, fmt.Errorf("create runtime staging directory: %w", err)
 	}
-	if err := copyRuntimeTree(projectPath, candidateDir); err != nil {
-		_ = os.RemoveAll(candidateDir)
-		return nil, nil, err
-	}
 	candidate := RuntimeFiles{Compose: append([]byte(nil), files.Compose...), Env: append([]byte(nil), files.Env...), FunctionsEnv: append([]byte(nil), files.FunctionsEnv...)}
 	for name, data := range map[string][]byte{"docker-compose.yml": candidate.Compose, ".env": candidate.Env, ".env.functions": candidate.FunctionsEnv} {
 		if err := writeAtomic(candidateDir, name, data, 0o600); err != nil {
@@ -129,15 +151,21 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 
 	committed := false
 	restored := false
+	var restoreLinks func() error
 	restore = func() error {
-		r.mu.Lock()
-		defer r.mu.Unlock()
+		r.runtimeMu.Lock()
+		defer r.runtimeMu.Unlock()
 		if restored {
 			return nil
 		}
 		if committed {
 			if err := switchRuntimePointer(runtimeRoot, current, previousTarget); err != nil {
 				return err
+			}
+			if previousTarget == "" && restoreLinks != nil {
+				if err := restoreLinks(); err != nil {
+					return err
+				}
 			}
 		}
 		if err := os.RemoveAll(generationPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -150,12 +178,19 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 		return syncDirectory(projectPath)
 	}
 	commit = func() error {
-		r.mu.Lock()
-		defer r.mu.Unlock()
+		r.runtimeMu.Lock()
+		defer r.runtimeMu.Unlock()
 		if committed {
 			return nil
 		}
+		var err error
+		restoreLinks, err = prepareCompatibilityLinks(projectPath, runtimeRoot)
+		if err != nil {
+			_ = os.RemoveAll(generationPath)
+			return err
+		}
 		if err := switchRuntimePointer(runtimeRoot, current, generationName); err != nil {
+			_ = restoreLinks()
 			_ = os.RemoveAll(generationPath)
 			return err
 		}
@@ -179,23 +214,6 @@ func (r *Root) WriteRuntimeFiles(slug string, compose, environment []byte) error
 	}
 	if err := commit(); err != nil {
 		return err
-	}
-	path, err := r.RuntimePath(slug)
-	if err != nil {
-		return err
-	}
-	projectPath, err := r.ProjectPath(slug)
-	if err != nil {
-		return err
-	}
-	for _, name := range []string{"docker-compose.yml", ".env", ".env.functions"} {
-		data, readErr := os.ReadFile(filepath.Join(path, name))
-		if readErr != nil {
-			return readErr
-		}
-		if err := writeAtomic(projectPath, name, data, 0o600); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -235,38 +253,80 @@ func copyEmbeddedTemplate(destination string) error {
 	})
 }
 
-func copyRuntimeTree(source, destination string) error {
-	return filepath.Walk(source, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		relative, err := filepath.Rel(source, path)
-		if err != nil {
-			return err
-		}
-		if relative == "." {
-			return nil
-		}
-		parts := strings.Split(filepath.ToSlash(relative), "/")
-		if parts[0] == ".manager-runtime" || parts[0] == ".manager-last-good" || relative == "project.json" {
-			if info.IsDir() {
-				return filepath.SkipDir
+func prepareCompatibilityLinks(projectPath, runtimeRoot string) (func() error, error) {
+	names := []string{"docker-compose.yml", ".env", ".env.functions"}
+	type priorEntry struct {
+		existed bool
+		symlink bool
+		target  string
+		backup  string
+	}
+	prior := make(map[string]priorEntry, len(names))
+	restore := func() error {
+		for _, name := range names {
+			path := filepath.Join(projectPath, name)
+			entry := prior[name]
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
 			}
-			return nil
+			if !entry.existed {
+				continue
+			}
+			if entry.symlink {
+				if err := os.Symlink(entry.target, path); err != nil {
+					return err
+				}
+			} else if err := os.Rename(entry.backup, path); err != nil {
+				return err
+			}
 		}
-		if relative == "docker-compose.yml" || relative == ".env" || relative == ".env.functions" {
-			return nil
+		return syncDirectory(projectPath)
+	}
+	for _, name := range names {
+		path := filepath.Join(projectPath, name)
+		info, err := os.Lstat(path)
+		if err == nil {
+			entry := priorEntry{existed: true}
+			if info.Mode()&os.ModeSymlink != 0 {
+				entry.symlink = true
+				entry.target, err = os.Readlink(path)
+				if err != nil {
+					_ = restore()
+					return nil, err
+				}
+			} else {
+				entry.backup = filepath.Join(runtimeRoot, ".legacy-"+name+"-"+fmt.Sprint(time.Now().UnixNano()))
+				if err := os.Rename(path, entry.backup); err != nil {
+					_ = restore()
+					return nil, err
+				}
+			}
+			prior[name] = entry
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
 		}
-		target := filepath.Join(destination, relative)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode().Perm())
+		target := filepath.Join(".manager-runtime", "current", name)
+		temp := path + ".link-tmp"
+		if entry, ok := prior[name]; ok && entry.symlink && entry.target == target {
+			continue
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
+		if entry, ok := prior[name]; ok && entry.symlink {
+			if err := os.Remove(path); err != nil {
+				_ = restore()
+				return nil, err
+			}
 		}
-		return os.WriteFile(target, data, info.Mode().Perm())
-	})
+		if err := os.Symlink(target, temp); err != nil {
+			_ = restore()
+			return nil, err
+		}
+		if err := os.Rename(temp, path); err != nil {
+			_ = os.Remove(temp)
+			_ = restore()
+			return nil, err
+		}
+	}
+	return restore, nil
 }
 
 func switchRuntimePointer(runtimeRoot, current, target string) error {
@@ -346,8 +406,9 @@ func syncDirectory(directory string) error {
 }
 
 type Root struct {
-	base string
-	mu   sync.Mutex
+	base       string
+	metadataMu sync.Mutex
+	runtimeMu  sync.Mutex
 }
 
 func New(base string) (*Root, error) {
@@ -377,14 +438,17 @@ func (r *Root) ProjectPath(slug string) (string, error) {
 }
 
 func (r *Root) Metadata(slug string) (Metadata, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.metadataMu.Lock()
+	defer r.metadataMu.Unlock()
 	return r.readMetadata(slug)
 }
 
 func (r *Root) UpdateMetadata(slug string, mutate func(*Metadata) error) (Metadata, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// Keep revision/idempotency mutation serialized across the complete
+	// callback. The callback may acquire runtimeMu to publish a generation;
+	// runtime code must never acquire metadataMu.
+	r.metadataMu.Lock()
+	defer r.metadataMu.Unlock()
 	metadata, err := r.readMetadata(slug)
 	if errors.Is(err, ErrNotFound) {
 		metadata = Metadata{Slug: slug, Idempotency: make(map[string]json.RawMessage)}

@@ -48,6 +48,30 @@ func (generator CryptoGenerator) Generate() (contracts.ProjectSecrets, error) {
 	if err != nil {
 		return contracts.ProjectSecrets{}, err
 	}
+	realtimeKey, err := generatedValue(random, 16)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	logflarePublic, err := generatedValue(random, 32)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	logflarePrivate, err := generatedValue(random, 32)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	s3Access, err := generatedValue(random, 16)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	s3Secret, err := generatedValue(random, 32)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
+	poolerTenant, err := generatedValue(random, 16)
+	if err != nil {
+		return contracts.ProjectSecrets{}, err
+	}
 	anon, err := generatedAPIKey(jwtSecret, "anon", now())
 	if err != nil {
 		return contracts.ProjectSecrets{}, err
@@ -59,6 +83,8 @@ func (generator CryptoGenerator) Generate() (contracts.ProjectSecrets, error) {
 	return contracts.ProjectSecrets{
 		DatabasePassword: database, JWTSecret: jwtSecret, AnonKey: anon, ServiceRoleKey: serviceRole,
 		DashboardPassword: dashboard, SecretKeyBase: secretKeyBase, VaultEncryptionKey: vaultKey,
+		RealtimeDBEncryptionKey: realtimeKey, LogflarePublicAccessToken: logflarePublic, LogflarePrivateAccessToken: logflarePrivate,
+		S3ProtocolAccessKeyID: s3Access, S3ProtocolAccessKeySecret: s3Secret, PoolerTenantID: poolerTenant,
 	}, nil
 }
 

@@ -22,8 +22,15 @@ const (
 )
 
 var phoneFieldKeys = map[string]map[string]string{
-	"twilio":      {"accountSid": "SMS_TWILIO_ACCOUNT_SID", "authToken": "SMS_TWILIO_AUTH_TOKEN", "messageServiceSid": "SMS_TWILIO_MESSAGE_SERVICE_SID"},
-	"messagebird": {"accessKey": "SMS_MESSAGEBIRD_ACCESS_KEY", "originator": "SMS_MESSAGEBIRD_ORIGINATOR"},
+	"twilio":      {"accountSid": "SMS_TWILIO_ACCOUNT_SID", "messageServiceSid": "SMS_TWILIO_MESSAGE_SERVICE_SID", "verifySid": "SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID"},
+	"messagebird": {"originator": "SMS_MESSAGEBIRD_ORIGINATOR"},
+	"textlocal":   {"sender": "SMS_TEXTLOCAL_SENDER"},
+}
+
+var phoneSecretEnv = map[string][]string{
+	"twilio":      {"GOTRUE_SMS_TWILIO_AUTH_TOKEN", "GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN"},
+	"messagebird": {"GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY"},
+	"textlocal":   {"GOTRUE_SMS_TEXTLOCAL_API_KEY"},
 }
 
 func renderEnvironment(input Input) (string, string, error) {
@@ -45,9 +52,9 @@ func renderEnvironment(input Input) (string, string, error) {
 		"SERVICE_ROLE_KEY": input.Secrets.ServiceRoleKey, "SITE_URL": siteURL,
 		"SUPABASE_PUBLIC_URL": "https://" + domain, "VAULT_ENC_KEY": input.Secrets.VaultEncryptionKey,
 		"PG_META_CRYPTO_KEY":  input.Secrets.SecretKeyBase,
-		"REALTIME_DB_ENC_KEY": "", "OPENAI_API_KEY": "",
+		"REALTIME_DB_ENC_KEY": firstNonempty(input.RuntimeSecrets["realtime.dbEncryptionKey"], input.Secrets.RealtimeDBEncryptionKey), "OPENAI_API_KEY": "",
 		"ADDITIONAL_REDIRECT_URLS": strings.Join(cfg.Auth.RedirectURLs, ","),
-		"JWT_EXPIRY":               strconv.Itoa(cfg.Auth.JWTExpiry), "DISABLE_SIGNUP": boolString(cfg.Auth.DisableSignup),
+		"JWT_EXPIRY":               strconv.Itoa(cfg.Auth.JWTExpiry), "DISABLE_SIGNUP": boolString(cfg.Auth.DisableSignup || !cfg.Auth.Email.AllowSignup),
 		"ENABLE_EMAIL_SIGNUP":      boolString(cfg.Auth.Email.Enabled),
 		"ENABLE_EMAIL_AUTOCONFIRM": boolString(!cfg.Auth.Email.ConfirmEmail),
 		"ENABLE_ANONYMOUS_USERS":   boolString(cfg.Auth.AnonymousSignIn),
@@ -55,21 +62,26 @@ func renderEnvironment(input Input) (string, string, error) {
 		"SMTP_ADMIN_EMAIL": cfg.Auth.SMTP.SenderEmail, "SMTP_HOST": cfg.Auth.SMTP.Host,
 		"SMTP_PORT": strconv.Itoa(cfg.Auth.SMTP.Port), "SMTP_USER": cfg.Auth.SMTP.Username,
 		"SMTP_PASS": "", "SMTP_SENDER_NAME": cfg.Auth.SMTP.SenderName,
-		"SECURE_EMAIL_CHANGE_ENABLED": boolString(cfg.Auth.Email.SecureEmailChange),
+		"SECURE_EMAIL_CHANGE_ENABLED": boolString(cfg.Auth.Email.SecureEmailChange || cfg.Auth.Email.DoubleConfirmChanges),
 		"STORAGE_BACKEND":             storageBackend(cfg.Storage.Backend), "GLOBAL_S3_BUCKET": cfg.Storage.Bucket,
 		"GLOBAL_S3_ENDPOINT": cfg.Storage.Endpoint, "GLOBAL_S3_FORCE_PATH_STYLE": boolString(cfg.Storage.ForcePathStyle),
-		"AWS_ACCESS_KEY_ID": "", "AWS_SECRET_ACCESS_KEY": "",
-		"REGION": cfg.Storage.Region, "FUNCTIONS_VERIFY_JWT": boolString(cfg.Functions.DefaultJWTVerification),
+		"GLOBAL_S3_PROTOCOL": storageProtocol(cfg.Storage.Endpoint),
+		"AWS_ACCESS_KEY_ID":  "", "AWS_SECRET_ACCESS_KEY": "",
+		"REGION": storageRegion(cfg.Storage), "S3_PROTOCOL_ENABLED": boolString(cfg.Storage.S3CompatibleAPI), "FUNCTIONS_VERIFY_JWT": boolString(cfg.Functions.DefaultJWTVerification),
 		"POOLER_PROXY_PORT_TRANSACTION": strconv.Itoa(cfg.Pooler.TransactionPort),
 		"POOLER_DEFAULT_POOL_SIZE":      strconv.Itoa(cfg.Pooler.PoolSize), "POOLER_MAX_CLIENT_CONN": strconv.Itoa(cfg.Pooler.MaxClientConnections),
-		"POOLER_POOL_MODE": "transaction", "POOLER_DB_POOL_SIZE": "5",
+		"POOLER_POOL_MODE": "transaction", "POOLER_DB_POOL_SIZE": strconv.Itoa(cfg.Pooler.PoolSize), "POOLER_TENANT_ID": input.Secrets.PoolerTenantID,
 		"POSTGRES_MAX_CONNECTIONS": strconv.Itoa(cfg.Database.MaxConnections), "POSTGRES_SHARED_BUFFERS": cfg.Database.SharedBuffers,
-		"POSTGRES_EXTENSIONS": strings.Join(cfg.Database.Extensions, ","), "REALTIME_MAX_CONNECTIONS": strconv.Itoa(cfg.Realtime.MaxConnections),
-		"REALTIME_DB_POOL_SIZE": strconv.Itoa(cfg.Realtime.DatabasePoolSize), "REALTIME_LOG_LEVEL": string(cfg.Realtime.LogLevel),
-		"LOGFLARE_PUBLIC_ACCESS_TOKEN": "", "LOGFLARE_PRIVATE_ACCESS_TOKEN": "",
-		"S3_PROTOCOL_ACCESS_KEY_ID": "", "S3_PROTOCOL_ACCESS_KEY_SECRET": "",
-		"STORAGE_LOCAL_PATH":            safeLocalPath(cfg.Storage.LocalPath),
+		"REALTIME_MAX_CONNECTIONS": strconv.Itoa(cfg.Realtime.MaxConnections),
+		"REALTIME_DB_POOL_SIZE":    strconv.Itoa(cfg.Realtime.DatabasePoolSize), "REALTIME_LOG_LEVEL": string(cfg.Realtime.LogLevel),
+		"LOGFLARE_PUBLIC_ACCESS_TOKEN": firstNonempty(input.RuntimeSecrets[SecretLogsPublic], input.Secrets.LogflarePublicAccessToken), "LOGFLARE_PRIVATE_ACCESS_TOKEN": firstNonempty(input.RuntimeSecrets[SecretLogsPrivate], input.Secrets.LogflarePrivateAccessToken),
+		"S3_PROTOCOL_ACCESS_KEY_ID": firstNonempty(input.RuntimeSecrets[SecretS3Access], input.Secrets.S3ProtocolAccessKeyID), "S3_PROTOCOL_ACCESS_KEY_SECRET": firstNonempty(input.RuntimeSecrets[SecretS3Secret], input.Secrets.S3ProtocolAccessKeySecret),
+		"STORAGE_LOCAL_PATH":            "/var/lib/storage",
 		"STORAGE_IMAGE_TRANSFORMATIONS": boolString(cfg.Services.Imgproxy),
+		// Values present in the upstream example are deliberately overridden so
+		// disabled optional consumers never inherit example credentials.
+		"MINIO_ROOT_USER": "", "MINIO_ROOT_PASSWORD": "",
+		"STORAGE_TENANT_ID": firstNonempty(input.ProjectID, input.Slug), "PROXY_DOMAIN": domain,
 	}
 	if cfg.Storage.Backend == contracts.StorageBackendR2 && cfg.Storage.Endpoint == "" && cfg.Storage.AccountID != "" {
 		values["GLOBAL_S3_ENDPOINT"] = "https://" + cfg.Storage.AccountID + ".r2.cloudflarestorage.com"
@@ -81,13 +93,19 @@ func renderEnvironment(input Input) (string, string, error) {
 		values["AWS_ACCESS_KEY_ID"] = cfg.Storage.AccessKeyID
 		values["AWS_SECRET_ACCESS_KEY"] = input.RuntimeSecrets[SecretStorageKey]
 	}
-	if cfg.Services.Logs {
-		values["LOGFLARE_PUBLIC_ACCESS_TOKEN"] = input.RuntimeSecrets[SecretLogsPublic]
-		values["LOGFLARE_PRIVATE_ACCESS_TOKEN"] = input.RuntimeSecrets[SecretLogsPrivate]
+	if !cfg.Services.Realtime {
+		values["REALTIME_DB_ENC_KEY"] = ""
 	}
-	if cfg.Storage.S3CompatibleAPI {
-		values["S3_PROTOCOL_ACCESS_KEY_ID"] = input.RuntimeSecrets[SecretS3Access]
-		values["S3_PROTOCOL_ACCESS_KEY_SECRET"] = input.RuntimeSecrets[SecretS3Secret]
+	if !cfg.Services.Supavisor {
+		values["POOLER_TENANT_ID"] = ""
+	}
+	if !cfg.Services.Logs {
+		values["LOGFLARE_PUBLIC_ACCESS_TOKEN"] = ""
+		values["LOGFLARE_PRIVATE_ACCESS_TOKEN"] = ""
+	}
+	if !cfg.Storage.S3CompatibleAPI {
+		values["S3_PROTOCOL_ACCESS_KEY_ID"] = ""
+		values["S3_PROTOCOL_ACCESS_KEY_SECRET"] = ""
 	}
 	if cfg.Auth.Phone.Provider != "" {
 		values["SMS_PROVIDER"] = cfg.Auth.Phone.Provider
@@ -124,6 +142,9 @@ func renderEnvironment(input Input) (string, string, error) {
 	if cfg.Auth.Phone.Enabled {
 		values["PHONE_SECRET"] = input.RuntimeSecrets[SecretPhone]
 	}
+	if err := validateDotEnvValues(values); err != nil {
+		return "", "", err
+	}
 
 	env := renderDotEnv(string(templates.EnvExample()), values)
 	functionValues := map[string]string{}
@@ -135,7 +156,21 @@ func renderEnvironment(input Input) (string, string, error) {
 			functionValues[variable.Name] = input.RuntimeSecrets["functions."+variable.Name]
 		}
 	}
+	if err := validateDotEnvValues(functionValues); err != nil {
+		return "", "", err
+	}
 	return env, renderDotEnv("", functionValues), nil
+}
+
+func validateDotEnvValues(values map[string]string) error {
+	for key, value := range values {
+		for _, r := range value {
+			if unicode.IsControl(r) || (r >= 0x80 && r <= 0x9f) {
+				return fmt.Errorf("environment.%s: contains unsupported control character", key)
+			}
+		}
+	}
+	return nil
 }
 
 func requireRuntimeSecrets(input Input) error {
@@ -144,11 +179,10 @@ func requireRuntimeSecrets(input Input) error {
 		enabled bool
 		kind    string
 	}{
-		{cfg.Auth.SMTP.PasswordSet, SecretSMTPassword}, {cfg.Auth.Phone.SecretSet, SecretPhone}, {cfg.Storage.SecretAccessKeySet, SecretStorageKey},
-		{cfg.Services.Logs, SecretLogsPublic}, {cfg.Services.Logs, SecretLogsPrivate}, {cfg.Storage.S3CompatibleAPI, SecretS3Access}, {cfg.Storage.S3CompatibleAPI, SecretS3Secret},
+		{cfg.Auth.SMTP.Enabled && cfg.Auth.SMTP.PasswordSet, SecretSMTPassword}, {cfg.Auth.Phone.Enabled && cfg.Auth.Phone.SecretSet, SecretPhone}, {cfg.Services.Storage && (cfg.Storage.Backend == contracts.StorageBackendS3 || cfg.Storage.Backend == contracts.StorageBackendAWSS3 || cfg.Storage.Backend == contracts.StorageBackendR2) && cfg.Storage.SecretAccessKeySet, SecretStorageKey},
 	}
 	for _, name := range configuredProviderNames(cfg.Auth.OAuth) {
-		if cfg.Auth.OAuth[name].SecretSet {
+		if cfg.Auth.OAuth[name].Enabled && cfg.Auth.OAuth[name].SecretSet {
 			required = append(required, struct {
 				enabled bool
 				kind    string
@@ -156,7 +190,7 @@ func requireRuntimeSecrets(input Input) error {
 		}
 	}
 	for _, variable := range cfg.Functions.Variables {
-		if variable.ValueSet {
+		if cfg.Services.Functions && variable.ValueSet {
 			required = append(required, struct {
 				enabled bool
 				kind    string
@@ -171,14 +205,36 @@ func requireRuntimeSecrets(input Input) error {
 	return nil
 }
 
+func storageRegion(storage contracts.StorageConfig) string {
+	if storage.Backend == contracts.StorageBackendR2 && strings.TrimSpace(storage.Region) == "" {
+		return "auto"
+	}
+	return storage.Region
+}
+
+func storageProtocol(endpoint string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(endpoint)), "https://") {
+		return "https"
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(endpoint)), "http://") {
+		return "http"
+	}
+	return ""
+}
+
 func safeLocalPath(path string) string {
-	if path == "" {
-		return "/var/lib/storage"
-	}
-	if strings.HasPrefix(path, "/") && !strings.Contains(path, "..") {
-		return path
-	}
+	// The host-side source is always the managed project path. This value is
+	// only the container-side path consumed by storage-api.
 	return "/var/lib/storage"
+}
+
+func firstNonempty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func boolString(value bool) string {
@@ -222,7 +278,7 @@ func validEnvName(value string) bool {
 func escapeDotEnv(value string) string {
 	needsQuote := value == "" || strings.TrimSpace(value) != value
 	for _, r := range value {
-		if r < 0x20 || r == 0x7f || strings.ContainsRune("\\\"#$'", r) {
+		if unicode.IsControl(r) || (r >= 0x80 && r <= 0x9f) || strings.ContainsRune("\\\"#$'", r) {
 			needsQuote = true
 			break
 		}
@@ -281,10 +337,10 @@ func injectAuthEnvironment(raw any, input Input) error {
 	if input.Configuration.Auth.Phone.Enabled {
 		set("GOTRUE_SMS_PROVIDER", "SMS_PROVIDER")
 		for _, envKey := range phoneFieldKeys[input.Configuration.Auth.Phone.Provider] {
-			set("GOTRUE_SMS_"+strings.TrimPrefix(envKey, "SMS_"), envKey)
+			set("GOTRUE_"+strings.TrimPrefix(envKey, "SMS_"), envKey)
 		}
-		if input.Configuration.Auth.Phone.SecretSet {
-			env["GOTRUE_SMS_"+strings.ToUpper(input.Configuration.Auth.Phone.Provider)+"_AUTH_TOKEN"] = "${PHONE_SECRET}"
+		for _, secretKey := range phoneSecretEnv[input.Configuration.Auth.Phone.Provider] {
+			env[secretKey] = "${PHONE_SECRET}"
 		}
 	}
 	for _, name := range configuredProviderNames(input.Configuration.Auth.OAuth) {
@@ -317,6 +373,7 @@ func injectServiceConfiguration(services map[string]any, input Input) error {
 		env["STORAGE_BACKEND"] = "${STORAGE_BACKEND}"
 		env["GLOBAL_S3_BUCKET"] = "${GLOBAL_S3_BUCKET}"
 		env["GLOBAL_S3_ENDPOINT"] = "${GLOBAL_S3_ENDPOINT}"
+		env["GLOBAL_S3_PROTOCOL"] = "${GLOBAL_S3_PROTOCOL}"
 		env["GLOBAL_S3_FORCE_PATH_STYLE"] = "${GLOBAL_S3_FORCE_PATH_STYLE}"
 		env["AWS_ACCESS_KEY_ID"] = "${AWS_ACCESS_KEY_ID}"
 		env["AWS_SECRET_ACCESS_KEY"] = "${AWS_SECRET_ACCESS_KEY}"
@@ -324,11 +381,15 @@ func injectServiceConfiguration(services map[string]any, input Input) error {
 		env["FILE_STORAGE_BACKEND_PATH"] = "${STORAGE_LOCAL_PATH}"
 		env["S3_PROTOCOL_ACCESS_KEY_ID"] = "${S3_PROTOCOL_ACCESS_KEY_ID}"
 		env["S3_PROTOCOL_ACCESS_KEY_SECRET"] = "${S3_PROTOCOL_ACCESS_KEY_SECRET}"
+		env["S3_PROTOCOL_ENABLED"] = "${S3_PROTOCOL_ENABLED}"
 		env["ENABLE_IMAGE_TRANSFORMATION"] = "${STORAGE_IMAGE_TRANSFORMATIONS}"
 		if input.Configuration.Services.Imgproxy {
 			env["IMGPROXY_URL"] = "http://imgproxy:5001"
 		} else {
 			env["IMGPROXY_URL"] = ""
+		}
+		if input.Configuration.Storage.Backend == "" || input.Configuration.Storage.Backend == contracts.StorageBackendLocal {
+			services["storage"].(map[string]any)["volumes"] = []string{"./volumes/storage:/var/lib/storage:z"}
 		}
 	}
 	if env := setEnv("functions"); env != nil {
@@ -337,17 +398,36 @@ func injectServiceConfiguration(services map[string]any, input Input) error {
 		}
 	}
 	if env := setEnv("realtime"); env != nil {
+		env["DB_ENC_KEY"] = "${REALTIME_DB_ENC_KEY}"
 		env["MAX_CONNECTIONS"] = "${REALTIME_MAX_CONNECTIONS}"
 		env["DB_POOL_SIZE"] = "${REALTIME_DB_POOL_SIZE}"
 		env["LOG_LEVEL"] = "${REALTIME_LOG_LEVEL}"
 	}
 	if env := setEnv("db"); env != nil {
-		env["POSTGRES_MAX_CONNECTIONS"] = "${POSTGRES_MAX_CONNECTIONS}"
-		env["POSTGRES_SHARED_BUFFERS"] = "${POSTGRES_SHARED_BUFFERS}"
-		env["POSTGRES_EXTENSIONS"] = "${POSTGRES_EXTENSIONS}"
+		command := []any{"postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"}
+		if input.Configuration.Database.MaxConnections > 0 {
+			command = append(command, "-c", "max_connections="+strconv.Itoa(input.Configuration.Database.MaxConnections))
+		}
+		if strings.TrimSpace(input.Configuration.Database.SharedBuffers) != "" {
+			command = append(command, "-c", "shared_buffers="+input.Configuration.Database.SharedBuffers)
+		}
+		services["db"].(map[string]any)["command"] = command
 	}
 	if service, ok := services["supavisor"].(map[string]any); ok {
-		service["ports"] = []string{fmt.Sprintf("127.0.0.1:%d:5432", input.Configuration.Pooler.SessionPort), fmt.Sprintf("127.0.0.1:%d:6543", input.Configuration.Pooler.TransactionPort)}
+		sessionPort := input.Configuration.Pooler.SessionPort
+		if sessionPort == 0 {
+			sessionPort = input.Configuration.Network.PoolerPort
+		}
+		ports := make([]string, 0, 2)
+		if sessionPort > 0 {
+			ports = append(ports, fmt.Sprintf("127.0.0.1:%d:5432", sessionPort))
+		}
+		if input.Configuration.Pooler.TransactionPort > 0 {
+			ports = append(ports, fmt.Sprintf("127.0.0.1:%d:6543", input.Configuration.Pooler.TransactionPort))
+		}
+		if len(ports) > 0 {
+			service["ports"] = ports
+		}
 	}
 	if service, ok := services["studio"].(map[string]any); ok && input.Configuration.Network.StudioPort > 0 {
 		service["ports"] = []string{fmt.Sprintf("127.0.0.1:%d:3000", input.Configuration.Network.StudioPort)}

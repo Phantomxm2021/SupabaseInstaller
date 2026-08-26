@@ -50,3 +50,23 @@ Named GREEN verification:
 - `go test -timeout 5m ./apps/provisioner/... ./internal/...` — PASS.
 - `go test -timeout 2m ./apps/provisioner/internal/render -run TestRepresentativeComposeConfig -count=1 -v` — PASS; the test executed real `docker compose ... config --quiet` for lightweight, standard, and full generated directories.
 - Focused tests cover golden fixture comparisons, all 20 OAuth providers and special fields, Storage modes/R2/S3 protocol, PostgreSQL 15/17 and gateway choices, Realtime/DB/Pooler tuning, missing RuntimeSecrets, strict dotenv injection, image validation, generation restore/abort cleanup, and post-stage input mutation.
+
+## Fix Round 2
+
+Split project filesystem synchronization into `metadataMu` and `runtimeMu`. Metadata revision/idempotency callbacks retain serialization while safely publishing runtime generations; lock order is documented as metadata then runtime, and runtime paths never acquire metadata. Added real prepare completion and concurrent staging regression tests.
+
+Completed the remaining renderer hardening: managed stable storage bind semantics, explicit S3 protocol enablement without the MinIO test overlay, generated internal Realtime/Logflare/S3-protocol/Pooler credentials, exact phone provider secret mappings (Twilio, MessageBird, Textlocal), DB command tuning, API/direct/pooler port validation, control-character rejection, and full canonical Compose golden comparisons. Complete lightweight/standard/full Compose goldens now include all parsed services and configuration.
+
+Named GREEN verification:
+
+- `go test -v -count=1 -timeout 30s ./apps/provisioner/internal/server -run TestProvisionerRejectsStaleConfigRevision` — PASS; this was the prior deadlock reproducer.
+- `go test -count=1 -timeout 2m ./apps/provisioner/internal/render` — PASS.
+- `go test -count=1 -timeout 2m ./apps/provisioner/internal/projectfs ./apps/provisioner/internal/server` — PASS.
+- `go test -race -count=1 -timeout 2m ./apps/provisioner/internal/projectfs ./apps/provisioner/internal/server` — PASS.
+- `go test -count=1 -timeout 5m ./apps/provisioner/...` — PASS.
+- `go test -count=1 -timeout 5m ./apps/manager/...` — PASS.
+- `go test -count=1 -timeout 5m ./internal/...` — PASS.
+- Real `docker compose config --quiet` for lightweight, standard, and full representative generated files — PASS for all three.
+- `git diff --check` — PASS.
+
+The first broad-suite run timed out at five minutes in `TestProvisionerRejectsStaleConfigRevision`; the goroutine stack identified the `UpdateMetadata`/`StageRuntimeFiles` self-deadlock, fixed by the mutex split above. A later controller reproduction of representative generation passed in 0.57 seconds.

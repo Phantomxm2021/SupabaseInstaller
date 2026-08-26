@@ -40,13 +40,19 @@ type ReconcileProjectResponse struct {
 }
 
 type ProjectSecrets struct {
-	DatabasePassword   string `json:"databasePassword"`
-	JWTSecret          string `json:"jwtSecret"`
-	AnonKey            string `json:"anonKey"`
-	ServiceRoleKey     string `json:"serviceRoleKey"`
-	DashboardPassword  string `json:"dashboardPassword"`
-	SecretKeyBase      string `json:"secretKeyBase"`
-	VaultEncryptionKey string `json:"vaultEncryptionKey"`
+	DatabasePassword           string `json:"databasePassword"`
+	JWTSecret                  string `json:"jwtSecret"`
+	AnonKey                    string `json:"anonKey"`
+	ServiceRoleKey             string `json:"serviceRoleKey"`
+	DashboardPassword          string `json:"dashboardPassword"`
+	SecretKeyBase              string `json:"secretKeyBase"`
+	VaultEncryptionKey         string `json:"vaultEncryptionKey"`
+	RealtimeDBEncryptionKey    string `json:"realtimeDbEncryptionKey"`
+	LogflarePublicAccessToken  string `json:"logflarePublicAccessToken"`
+	LogflarePrivateAccessToken string `json:"logflarePrivateAccessToken"`
+	S3ProtocolAccessKeyID      string `json:"s3ProtocolAccessKeyId"`
+	S3ProtocolAccessKeySecret  string `json:"s3ProtocolAccessKeySecret"`
+	PoolerTenantID             string `json:"poolerTenantId"`
 }
 
 type PrepareProjectResponse struct {

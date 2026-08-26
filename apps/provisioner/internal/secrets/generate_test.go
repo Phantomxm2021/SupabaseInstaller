@@ -35,3 +35,15 @@ func TestGeneratedAPIKeysContainDistinctRolesAndValidSignatures(t *testing.T) {
 		t.Fatalf("service-role key verification error = %v", err)
 	}
 }
+
+func TestGenerateProducesInternalRuntimeCredentials(t *testing.T) {
+	generated, err := Generate(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{"realtime": generated.RealtimeDBEncryptionKey, "logflare-public": generated.LogflarePublicAccessToken, "logflare-private": generated.LogflarePrivateAccessToken, "s3-access": generated.S3ProtocolAccessKeyID, "s3-secret": generated.S3ProtocolAccessKeySecret, "pooler-tenant": generated.PoolerTenantID} {
+		if value == "" {
+			t.Errorf("%s secret is empty", name)
+		}
+	}
+}

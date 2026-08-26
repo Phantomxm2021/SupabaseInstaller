@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -141,7 +142,7 @@ services:
 func testConfiguration() contracts.ProjectConfiguration {
 	return contracts.ProjectConfiguration{
 		Revision:  1,
-		General:   contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "0.8.0"},
+		General:   contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"},
 		Services:  contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true},
 		Auth:      contracts.AuthConfig{Enabled: true, JWTExpiry: 3600, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true},
@@ -171,7 +172,7 @@ func TestRenderFunctionsSecretsStayInFunctionsEnv(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Services.Functions = true
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "STRIPE_KEY", ValueSet: true}}
-	out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, RuntimeSecrets: map[string]string{"functions.STRIPE_KEY": "stripe-secret"}, TemplateCompose: []byte(testCompose)})
+	out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, RuntimeSecrets: map[string]string{"functions.STRIPE_KEY": "stripe-secret"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,6 +244,48 @@ func TestRenderDotEnvQuotesInjectionCharacters(t *testing.T) {
 	}
 }
 
+func TestRenderPhoneProviderRegistry(t *testing.T) {
+	cases := []struct {
+		provider string
+		fields   map[string]string
+		want     string
+	}{
+		{"twilio", map[string]string{"accountSid": "AC123", "messageServiceSid": "MG123"}, "GOTRUE_SMS_TWILIO_AUTH_TOKEN"},
+		{"messagebird", map[string]string{"originator": "Bee"}, "GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY"},
+		{"textlocal", map[string]string{"sender": "Bee"}, "GOTRUE_SMS_TEXTLOCAL_API_KEY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			cfg := testConfiguration()
+			cfg.Auth.Phone = contracts.PhoneAuthConfig{Enabled: true, Provider: tc.provider, SecretSet: true, Fields: tc.fields}
+			out, err := Project(Input{Slug: "phone-" + tc.provider, APIPort: 18001, Configuration: cfg, RuntimeSecrets: map[string]string{SecretPhone: "phone-secret"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.Compose, tc.want+": ${PHONE_SECRET}") {
+				t.Fatalf("missing exact provider secret mapping %s", tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderRejectsUnicodeControlInjection(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.General.SiteURL = "https://example.com/\u0085"
+	if _, err := Project(Input{Slug: "control", APIPort: 18001, Configuration: cfg}); err == nil || !strings.Contains(err.Error(), "control character") {
+		t.Fatal("C1 control character was accepted")
+	}
+}
+
+func TestRenderRequiresGeneratedRealtimeCredential(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Realtime = true
+	secrets := contracts.ProjectSecrets{DatabasePassword: "database", JWTSecret: "jwt", SecretKeyBase: "key"}
+	if _, err := Project(Input{Slug: "missing-generated", APIPort: 18001, Configuration: cfg, Secrets: secrets}); err == nil || !strings.Contains(err.Error(), "realtimeDbEncryptionKey") {
+		t.Fatal("missing generated realtime credential was accepted")
+	}
+}
+
 func TestRenderGoldenFixtures(t *testing.T) {
 	cases := []struct {
 		name, fixture string
@@ -279,14 +322,23 @@ func TestRenderGoldenFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, line := range strings.Split(string(golden), "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
-				}
-				if !strings.Contains(out.Compose, line) {
-					t.Errorf("golden line missing: %q", line)
-				}
+			var expected, actual any
+			if err := yaml.Unmarshal(golden, &expected); err != nil {
+				t.Fatal(err)
+			}
+			if err := yaml.Unmarshal([]byte(out.Compose), &actual); err != nil {
+				t.Fatal(err)
+			}
+			expectedCanonical, err := yaml.Marshal(expected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actualCanonical, err := yaml.Marshal(actual)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(expectedCanonical, actualCanonical) {
+				t.Fatalf("canonical Compose differs from %s", tc.fixture)
 			}
 		})
 	}
@@ -419,7 +471,6 @@ func TestRenderRealtimeDatabaseAndPoolerTuning(t *testing.T) {
 	cfg.Services.Supavisor = true
 	cfg.Database.MaxConnections = 321
 	cfg.Database.SharedBuffers = "256MB"
-	cfg.Database.Extensions = []string{"pgvector"}
 	cfg.Realtime.MaxConnections = 88
 	cfg.Realtime.DatabasePoolSize = 12
 	cfg.Realtime.LogLevel = contracts.LogLevelDebug
@@ -431,7 +482,7 @@ func TestRenderRealtimeDatabaseAndPoolerTuning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"POSTGRES_MAX_CONNECTIONS", "POSTGRES_SHARED_BUFFERS", "REALTIME_MAX_CONNECTIONS", "REALTIME_DB_POOL_SIZE", "REALTIME_LOG_LEVEL", "127.0.0.1:6544:5432", "127.0.0.1:6543:6543"} {
+	for _, want := range []string{"max_connections=321", "shared_buffers=256MB", "REALTIME_MAX_CONNECTIONS", "REALTIME_DB_POOL_SIZE", "REALTIME_LOG_LEVEL", "127.0.0.1:6544:5432", "127.0.0.1:6543:6543"} {
 		if !strings.Contains(out.Compose, want) && !strings.Contains(out.Env, want) {
 			t.Errorf("tuning mapping missing %s", want)
 		}

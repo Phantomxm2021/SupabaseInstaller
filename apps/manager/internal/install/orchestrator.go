@@ -136,13 +136,15 @@ func (orchestrator *Orchestrator) rollback(ctx context.Context, project contract
 
 func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID string, generated contracts.ProjectSecrets) error {
 	values := map[string]string{
-		"database-password":    generated.DatabasePassword,
-		"jwt-secret":           generated.JWTSecret,
-		"anon-key":             generated.AnonKey,
-		"service-role-key":     generated.ServiceRoleKey,
-		"dashboard-password":   generated.DashboardPassword,
-		"secret-key-base":      generated.SecretKeyBase,
-		"vault-encryption-key": generated.VaultEncryptionKey,
+		"database-password":          generated.DatabasePassword,
+		"jwt-secret":                 generated.JWTSecret,
+		"anon-key":                   generated.AnonKey,
+		"service-role-key":           generated.ServiceRoleKey,
+		"dashboard-password":         generated.DashboardPassword,
+		"secret-key-base":            generated.SecretKeyBase,
+		"vault-encryption-key":       generated.VaultEncryptionKey,
+		"realtime-db-encryption-key": generated.RealtimeDBEncryptionKey, "logflare-public-access-token": generated.LogflarePublicAccessToken, "logflare-private-access-token": generated.LogflarePrivateAccessToken,
+		"s3-protocol-access-key-id": generated.S3ProtocolAccessKeyID, "s3-protocol-access-key-secret": generated.S3ProtocolAccessKeySecret, "pooler-tenant-id": generated.PoolerTenantID,
 	}
 	for kind, plaintext := range values {
 		envelope, err := orchestrator.cipher.Encrypt(projectID, kind, []byte(plaintext))

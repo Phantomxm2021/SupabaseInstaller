@@ -38,6 +38,9 @@ type OutputFiles struct {
 // Lightweight is retained as a compatibility shim. Project is the sole
 // authoritative renderer used by new reconciliation code.
 func Lightweight(input Input) (OutputFiles, error) {
+	if input.Configuration.General.SupabaseVersion == "" {
+		input.Configuration.General.SupabaseVersion = "self-hosted/v0.8.0"
+	}
 	if input.Configuration.General.Domain == "" {
 		input.Configuration.General.Domain = input.Domain
 	}
@@ -51,8 +54,17 @@ func Lightweight(input Input) (OutputFiles, error) {
 }
 
 func Project(input Input) (OutputFiles, error) {
+	if input.APIPort == 0 {
+		input.APIPort = input.Configuration.Network.APIPort
+	}
+	if input.Configuration.Network.APIPort != 0 && input.APIPort != 0 && input.Configuration.Network.APIPort != input.APIPort {
+		return OutputFiles{}, fmt.Errorf("network.apiPort: does not match requested API port")
+	}
 	if input.Slug == "" || input.APIPort < 1 || input.APIPort > 65535 {
 		return OutputFiles{}, fmt.Errorf("slug and valid API port are required")
+	}
+	if input.Configuration.General.SupabaseVersion != "self-hosted/v0.8.0" {
+		return OutputFiles{}, fmt.Errorf("general.supabaseVersion: unsupported pinned version %q", input.Configuration.General.SupabaseVersion)
 	}
 	if input.Configuration.General.Domain == "" {
 		input.Configuration.General.Domain = input.Domain
@@ -66,9 +78,43 @@ func Project(input Input) (OutputFiles, error) {
 	if err := validateStorageConfiguration(input.Configuration.Storage); err != nil {
 		return OutputFiles{}, err
 	}
+	if input.Configuration.Network.HTTPSMode == contracts.HTTPSModeManual {
+		return OutputFiles{}, fmt.Errorf("network.httpsMode: manual HTTPS requires certificate fields")
+	}
+	if input.Configuration.Network.InternalGatewayPort != 0 && input.Configuration.Network.InternalGatewayPort != 8000 {
+		return OutputFiles{}, fmt.Errorf("network.internalGatewayPort: pinned gateway only supports port 8000")
+	}
+	if input.Configuration.Database.Extensions != nil && len(input.Configuration.Database.Extensions) > 0 {
+		return OutputFiles{}, fmt.Errorf("database.extensions: unsupported by pinned renderer")
+	}
+	if input.Configuration.Database.DirectPort && (input.Configuration.Database.DirectPortNumber < 1 || input.Configuration.Database.DirectPortNumber > 65535) {
+		if input.Configuration.Network.DirectDatabasePort < 1 || input.Configuration.Network.DirectDatabasePort > 65535 {
+			return OutputFiles{}, fmt.Errorf("database.directPortNumber: required when directPort is enabled")
+		}
+	}
+	if !input.Configuration.Database.DirectPort && input.Configuration.Database.DirectPortNumber != 0 {
+		return OutputFiles{}, fmt.Errorf("database.directPortNumber: set directPort=true to expose direct database")
+	}
+	if !input.Configuration.Database.DirectPort && input.Configuration.Network.DirectDatabasePort != 0 {
+		return OutputFiles{}, fmt.Errorf("network.directDatabasePort: set database.directPort=true to expose direct database")
+	}
+	if input.Configuration.Database.DirectPort && input.Configuration.Database.DirectPortNumber != 0 && input.Configuration.Network.DirectDatabasePort != 0 && input.Configuration.Database.DirectPortNumber != input.Configuration.Network.DirectDatabasePort {
+		return OutputFiles{}, fmt.Errorf("network.directDatabasePort: must match database.directPortNumber")
+	}
+	if input.Configuration.Services.Supavisor && input.Configuration.Pooler.SessionPort > 0 && input.Configuration.Network.PoolerPort > 0 && input.Configuration.Pooler.SessionPort != input.Configuration.Network.PoolerPort {
+		return OutputFiles{}, fmt.Errorf("network.poolerPort: must match pooler.sessionPort when both are set")
+	}
+	if err := validateGeneratedSecrets(input); err != nil {
+		return OutputFiles{}, err
+	}
 	if input.Configuration.Auth.Phone.Enabled && input.Configuration.Auth.Phone.Provider != "" {
 		if _, ok := phoneFieldKeys[input.Configuration.Auth.Phone.Provider]; !ok {
 			return OutputFiles{}, fmt.Errorf("auth.phone.provider: unsupported pinned provider %q", input.Configuration.Auth.Phone.Provider)
+		}
+		for field := range input.Configuration.Auth.Phone.Fields {
+			if _, ok := phoneFieldKeys[input.Configuration.Auth.Phone.Provider][field]; !ok {
+				return OutputFiles{}, fmt.Errorf("auth.phone.fields.%s: unsupported or secret field", field)
+			}
 		}
 	}
 	var compose map[string]any
@@ -86,6 +132,9 @@ func Project(input Input) (OutputFiles, error) {
 		return OutputFiles{}, fmt.Errorf("pinned Compose has no services")
 	}
 	if err := validateServiceConfiguration(input.Configuration); err != nil {
+		return OutputFiles{}, err
+	}
+	if err := validateSelectedServices(input.Configuration, services); err != nil {
 		return OutputFiles{}, err
 	}
 	selected := selectServices(input.Configuration.Services, services)
@@ -159,17 +208,67 @@ func Project(input Input) (OutputFiles, error) {
 	return OutputFiles{Env: env, FunctionsEnv: functionsEnv, Compose: string(encoded), ComposeProjectName: "supabase-manager-" + input.Slug, EnabledComposeServices: enabled}, nil
 }
 
+func validateGeneratedSecrets(input Input) error {
+	// A zero-value Input is useful to decode/inspect templates in compatibility
+	// callers. Once the persisted base secret set is present, enabled consumers
+	// must also carry their generated credentials; never allow image defaults.
+	basePresent := input.Secrets.JWTSecret != "" || input.Secrets.DatabasePassword != "" || input.Secrets.SecretKeyBase != ""
+	if !basePresent {
+		return nil
+	}
+	checks := []struct {
+		enabled bool
+		value   string
+		field   string
+	}{
+		{input.Configuration.Services.Realtime, firstNonempty(input.RuntimeSecrets["realtime.dbEncryptionKey"], input.Secrets.RealtimeDBEncryptionKey), "projectSecrets.realtimeDbEncryptionKey"},
+		{input.Configuration.Services.Logs, firstNonempty(input.RuntimeSecrets[SecretLogsPublic], input.Secrets.LogflarePublicAccessToken), "projectSecrets.logflarePublicAccessToken"},
+		{input.Configuration.Services.Logs, firstNonempty(input.RuntimeSecrets[SecretLogsPrivate], input.Secrets.LogflarePrivateAccessToken), "projectSecrets.logflarePrivateAccessToken"},
+		{input.Configuration.Storage.S3CompatibleAPI, firstNonempty(input.RuntimeSecrets[SecretS3Access], input.Secrets.S3ProtocolAccessKeyID), "projectSecrets.s3ProtocolAccessKeyID"},
+		{input.Configuration.Storage.S3CompatibleAPI, firstNonempty(input.RuntimeSecrets[SecretS3Secret], input.Secrets.S3ProtocolAccessKeySecret), "projectSecrets.s3ProtocolAccessKeySecret"},
+		{input.Configuration.Services.Supavisor, input.Secrets.PoolerTenantID, "projectSecrets.poolerTenantID"},
+	}
+	for _, check := range checks {
+		if check.enabled && strings.TrimSpace(check.value) == "" {
+			return fmt.Errorf("%s: generated credential is required", check.field)
+		}
+	}
+	return nil
+}
+
 func validateStorageConfiguration(storage contracts.StorageConfig) error {
 	switch storage.Backend {
 	case "", contracts.StorageBackendLocal, contracts.StorageBackendS3, contracts.StorageBackendAWSS3, contracts.StorageBackendR2:
 	default:
 		return fmt.Errorf("storage.backend: unsupported backend %q", storage.Backend)
 	}
-	if storage.LocalPath != "" && (!strings.HasPrefix(storage.LocalPath, "/") || strings.Contains(storage.LocalPath, "..")) {
-		return fmt.Errorf("storage.localPath: must be an absolute path without traversal")
+	if storage.Backend == "" || storage.Backend == contracts.StorageBackendLocal {
+		switch storage.LocalPath {
+		case "", "./volumes/storage", "volumes/storage", "/var/lib/storage":
+		default:
+			return fmt.Errorf("storage.localPath: must refer to managed ./volumes/storage")
+		}
 	}
 	if storage.Backend == contracts.StorageBackendR2 && storage.Endpoint == "" && storage.AccountID == "" {
 		return fmt.Errorf("storage.accountId: required for R2 when endpoint is unset")
+	}
+	return nil
+}
+
+func validateSelectedServices(config contracts.ProjectConfiguration, available map[string]any) error {
+	required := map[string]bool{"db": config.Services.Database, "auth": config.Services.Auth, "rest": config.Services.REST, "studio": config.Services.Studio, "meta": config.Services.PostgresMeta, "realtime": config.Services.Realtime, "storage": config.Services.Storage, "imgproxy": config.Services.Imgproxy, "functions": config.Services.Functions, "supavisor": config.Services.Supavisor, "analytics": config.Services.Logs, "vector": config.Services.Vector}
+	for name, enabled := range required {
+		if enabled && available[name] == nil {
+			return fmt.Errorf("services.%s: selected service is absent from pinned Compose", name)
+		}
+	}
+	if config.Services.Gateway {
+		if available["api-gw"] == nil && available["envoy"] == nil && available["kong"] == nil {
+			return fmt.Errorf("services.gateway: selected gateway is absent from pinned Compose")
+		}
+	}
+	if config.Network.HTTPSMode == contracts.HTTPSModeCaddy && available["caddy"] == nil {
+		return fmt.Errorf("network.httpsMode: caddy service is absent from pinned Compose")
 	}
 	return nil
 }
@@ -213,9 +312,6 @@ func loadOfficialCompose(config contracts.ProjectConfiguration) (map[string]any,
 	} else if config.Network.HTTPSMode != "" && config.Network.HTTPSMode != contracts.HTTPSModeExternal && config.Network.HTTPSMode != contracts.HTTPSModeManual {
 		return nil, fmt.Errorf("network.httpsMode: unsupported HTTPS mode %q", config.Network.HTTPSMode)
 	}
-	if config.Storage.S3CompatibleAPI {
-		overlays = append(overlays, "docker-compose.s3.yml")
-	}
 	for _, name := range overlays {
 		overlay, err := read(name)
 		if err != nil {
@@ -246,9 +342,25 @@ func mergeCompose(dst, src map[string]any) {
 }
 
 func validatePinnedImage(service, image string) error {
+	if image == "" || strings.Contains(image, "${") {
+		return fmt.Errorf("service %s uses unpinned image %s; latest is forbidden", service, image)
+	}
 	last := image[strings.LastIndex(image, "/")+1:]
-	validTag := strings.Contains(image, "@sha256:") || (strings.Contains(last, ":") && !strings.HasPrefix(strings.SplitN(last, ":", 2)[1], "latest"))
-	if !validTag || strings.Contains(image, "${") {
+	validTag := false
+	if at := strings.LastIndex(last, "@sha256:"); at >= 0 {
+		digest := last[at+len("@sha256:"):]
+		validTag = len(digest) == 64
+		for _, r := range digest {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				validTag = false
+				break
+			}
+		}
+	} else if colon := strings.LastIndex(last, ":"); colon > 0 {
+		tag := last[colon+1:]
+		validTag = tag != "" && !strings.HasPrefix(tag, "latest")
+	}
+	if !validTag {
 		return fmt.Errorf("service %s uses unpinned image %s; latest is forbidden", service, image)
 	}
 	return nil
