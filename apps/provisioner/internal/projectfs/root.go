@@ -53,36 +53,50 @@ type RuntimeFiles struct {
 	FunctionsEnv []byte
 }
 
-// RuntimePath returns the atomically selected runtime generation. Compose
-// callers should use this path as their project directory.
+// RuntimeRef describes the stable Compose project directory and the current
+// atomically selected generated configuration files.
+type RuntimeRef struct {
+	ProjectDir    string
+	ComposeFile   string
+	EnvFile       string
+	FunctionsFile string
+}
+
+// RuntimePath returns the stable project/data root. Compose must use this as
+// --project-directory so relative volume paths always resolve persistent data.
 func (r *Root) RuntimePath(slug string) (string, error) {
+	return r.ProjectPath(slug)
+}
+
+func (r *Root) CurrentRuntimeFiles(slug string) (RuntimeRef, error) {
 	projectPath, err := r.ProjectPath(slug)
 	if err != nil {
-		return "", err
+		return RuntimeRef{}, err
 	}
-	return filepath.Join(projectPath, ".manager-runtime", "current"), nil
+	current := filepath.Join(projectPath, ".manager-runtime", "current")
+	return RuntimeRef{ProjectDir: projectPath, ComposeFile: filepath.Join(current, "docker-compose.yml"), EnvFile: filepath.Join(current, ".env"), FunctionsFile: filepath.Join(current, ".env.functions")}, nil
 }
 
 func (r *Root) RuntimeComposePath(slug string) (string, error) {
-	path, err := r.RuntimePath(slug)
+	ref, err := r.CurrentRuntimeFiles(slug)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(path, "docker-compose.yml"), nil
+	return ref.ComposeFile, nil
 }
 func (r *Root) RuntimeEnvPath(slug string) (string, error) {
-	path, err := r.RuntimePath(slug)
+	ref, err := r.CurrentRuntimeFiles(slug)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(path, ".env"), nil
+	return ref.EnvFile, nil
 }
 func (r *Root) RuntimeFunctionsEnvPath(slug string) (string, error) {
-	path, err := r.RuntimePath(slug)
+	ref, err := r.CurrentRuntimeFiles(slug)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(path, ".env.functions"), nil
+	return ref.FunctionsFile, nil
 }
 
 // StageRuntimeFiles prepares a complete runtime generation. The current
@@ -116,17 +130,7 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 	if err := os.MkdirAll(filepath.Join(runtimeRoot, "generations"), 0o700); err != nil {
 		return nil, nil, fmt.Errorf("create runtime generations: %w", err)
 	}
-	for _, abandoned := range []string{".candidate-"} {
-		matches, _ := filepath.Glob(filepath.Join(runtimeRoot, abandoned+"*"))
-		for _, path := range matches {
-			_ = os.RemoveAll(path)
-		}
-	}
 	current := filepath.Join(runtimeRoot, "current")
-	previousTarget, previousErr := os.Readlink(current)
-	if previousErr != nil && !errors.Is(previousErr, os.ErrNotExist) {
-		return nil, nil, fmt.Errorf("read current runtime pointer: %w", previousErr)
-	}
 	candidateDir, err := os.MkdirTemp(runtimeRoot, ".candidate-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create runtime staging directory: %w", err)
@@ -144,14 +148,11 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 	}
 	generationName := fmt.Sprintf("generation-%d", time.Now().UnixNano())
 	generationPath := filepath.Join(runtimeRoot, "generations", generationName)
-	if err := os.Rename(candidateDir, generationPath); err != nil {
-		_ = os.RemoveAll(candidateDir)
-		return nil, nil, fmt.Errorf("publish runtime generation: %w", err)
-	}
 
 	committed := false
 	restored := false
-	var restoreLinks func() error
+	var committedTarget string
+	var previousTarget string
 	restore = func() error {
 		r.runtimeMu.Lock()
 		defer r.runtimeMu.Unlock()
@@ -159,16 +160,22 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 			return nil
 		}
 		if committed {
+			active, err := os.Readlink(current)
+			if err != nil {
+				return fmt.Errorf("read current runtime pointer: %w", err)
+			}
+			if filepath.ToSlash(strings.TrimPrefix(active, "generations/")) != committedTarget {
+				return fmt.Errorf("stale runtime generation %s", committedTarget)
+			}
 			if err := switchRuntimePointer(runtimeRoot, current, previousTarget); err != nil {
 				return err
 			}
-			if previousTarget == "" && restoreLinks != nil {
-				if err := restoreLinks(); err != nil {
-					return err
-				}
-			}
 		}
-		if err := os.RemoveAll(generationPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		stagedPath := generationPath
+		if !committed {
+			stagedPath = candidateDir
+		}
+		if err := os.RemoveAll(stagedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove staged generation: %w", err)
 		}
 		if err := syncDirectory(filepath.Join(runtimeRoot, "generations")); err != nil {
@@ -183,17 +190,20 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 		if committed {
 			return nil
 		}
-		var err error
-		restoreLinks, err = prepareCompatibilityLinks(projectPath, runtimeRoot)
-		if err != nil {
-			_ = os.RemoveAll(generationPath)
-			return err
+		if err := os.Rename(candidateDir, generationPath); err != nil {
+			return fmt.Errorf("publish runtime generation: %w", err)
 		}
+		active, err := os.Readlink(current)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			_ = os.RemoveAll(generationPath)
+			return fmt.Errorf("read current runtime pointer: %w", err)
+		}
+		previousTarget = active
 		if err := switchRuntimePointer(runtimeRoot, current, generationName); err != nil {
-			_ = restoreLinks()
 			_ = os.RemoveAll(generationPath)
 			return err
 		}
+		committedTarget = generationName
 		if err := pruneGenerations(filepath.Join(runtimeRoot, "generations"), generationName, previousTarget); err != nil {
 			_ = switchRuntimePointer(runtimeRoot, current, previousTarget)
 			_ = os.RemoveAll(generationPath)
@@ -203,6 +213,29 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 		return syncDirectory(runtimeRoot)
 	}
 	return restore, commit, nil
+}
+
+// CleanupAbandonedRuntimeCandidates removes pre-commit candidate directories
+// left by an interrupted process. It is separate from staging so concurrent
+// stage closures cannot delete one another's candidates.
+func (r *Root) CleanupAbandonedRuntimeCandidates(slug string) error {
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	projectPath, err := r.ProjectPath(slug)
+	if err != nil {
+		return err
+	}
+	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
+	matches, err := filepath.Glob(filepath.Join(runtimeRoot, ".candidate-*"))
+	if err != nil {
+		return err
+	}
+	for _, path := range matches {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove abandoned runtime candidate: %w", err)
+		}
+	}
+	return nil
 }
 
 // WriteRuntimeFiles is retained for old callers; new code should stage all
@@ -230,6 +263,10 @@ func copyEmbeddedTemplate(destination string) error {
 		if relative == "" {
 			return nil
 		}
+		switch relative {
+		case "docker-compose.yml", ".env", ".env.functions":
+			return nil
+		}
 		target := filepath.Join(destination, filepath.FromSlash(relative))
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o700)
@@ -251,82 +288,6 @@ func copyEmbeddedTemplate(destination string) error {
 		}
 		return nil
 	})
-}
-
-func prepareCompatibilityLinks(projectPath, runtimeRoot string) (func() error, error) {
-	names := []string{"docker-compose.yml", ".env", ".env.functions"}
-	type priorEntry struct {
-		existed bool
-		symlink bool
-		target  string
-		backup  string
-	}
-	prior := make(map[string]priorEntry, len(names))
-	restore := func() error {
-		for _, name := range names {
-			path := filepath.Join(projectPath, name)
-			entry := prior[name]
-			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			if !entry.existed {
-				continue
-			}
-			if entry.symlink {
-				if err := os.Symlink(entry.target, path); err != nil {
-					return err
-				}
-			} else if err := os.Rename(entry.backup, path); err != nil {
-				return err
-			}
-		}
-		return syncDirectory(projectPath)
-	}
-	for _, name := range names {
-		path := filepath.Join(projectPath, name)
-		info, err := os.Lstat(path)
-		if err == nil {
-			entry := priorEntry{existed: true}
-			if info.Mode()&os.ModeSymlink != 0 {
-				entry.symlink = true
-				entry.target, err = os.Readlink(path)
-				if err != nil {
-					_ = restore()
-					return nil, err
-				}
-			} else {
-				entry.backup = filepath.Join(runtimeRoot, ".legacy-"+name+"-"+fmt.Sprint(time.Now().UnixNano()))
-				if err := os.Rename(path, entry.backup); err != nil {
-					_ = restore()
-					return nil, err
-				}
-			}
-			prior[name] = entry
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		target := filepath.Join(".manager-runtime", "current", name)
-		temp := path + ".link-tmp"
-		if entry, ok := prior[name]; ok && entry.symlink && entry.target == target {
-			continue
-		}
-		if entry, ok := prior[name]; ok && entry.symlink {
-			if err := os.Remove(path); err != nil {
-				_ = restore()
-				return nil, err
-			}
-		}
-		if err := os.Symlink(target, temp); err != nil {
-			_ = restore()
-			return nil, err
-		}
-		if err := os.Rename(temp, path); err != nil {
-			_ = os.Remove(temp)
-			_ = restore()
-			return nil, err
-		}
-	}
-	return restore, nil
 }
 
 func switchRuntimePointer(runtimeRoot, current, target string) error {

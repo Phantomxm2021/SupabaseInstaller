@@ -394,7 +394,9 @@ func injectServiceConfiguration(services map[string]any, input Input) error {
 	}
 	if env := setEnv("functions"); env != nil {
 		if _, ok := services["functions"]; ok {
-			services["functions"].(map[string]any)["env_file"] = []string{"./.env.functions"}
+			// Compose runs with the stable project directory; point explicitly at
+			// the atomically selected private env file in the current generation.
+			services["functions"].(map[string]any)["env_file"] = []string{"./.manager-runtime/current/.env.functions"}
 		}
 	}
 	if env := setEnv("realtime"); env != nil {

@@ -87,22 +87,29 @@ func Project(input Input) (OutputFiles, error) {
 	if input.Configuration.Database.Extensions != nil && len(input.Configuration.Database.Extensions) > 0 {
 		return OutputFiles{}, fmt.Errorf("database.extensions: unsupported by pinned renderer")
 	}
-	if input.Configuration.Database.DirectPort && (input.Configuration.Database.DirectPortNumber < 1 || input.Configuration.Database.DirectPortNumber > 65535) {
+	directDB := input.Configuration.Database.DirectPort || input.Configuration.Services.DirectDB
+	if directDB && (input.Configuration.Database.DirectPortNumber < 1 || input.Configuration.Database.DirectPortNumber > 65535) {
 		if input.Configuration.Network.DirectDatabasePort < 1 || input.Configuration.Network.DirectDatabasePort > 65535 {
 			return OutputFiles{}, fmt.Errorf("database.directPortNumber: required when directPort is enabled")
 		}
 	}
-	if !input.Configuration.Database.DirectPort && input.Configuration.Database.DirectPortNumber != 0 {
+	if !directDB && input.Configuration.Database.DirectPortNumber != 0 {
 		return OutputFiles{}, fmt.Errorf("database.directPortNumber: set directPort=true to expose direct database")
 	}
-	if !input.Configuration.Database.DirectPort && input.Configuration.Network.DirectDatabasePort != 0 {
+	if !directDB && input.Configuration.Network.DirectDatabasePort != 0 {
 		return OutputFiles{}, fmt.Errorf("network.directDatabasePort: set database.directPort=true to expose direct database")
 	}
-	if input.Configuration.Database.DirectPort && input.Configuration.Database.DirectPortNumber != 0 && input.Configuration.Network.DirectDatabasePort != 0 && input.Configuration.Database.DirectPortNumber != input.Configuration.Network.DirectDatabasePort {
+	if directDB && input.Configuration.Database.DirectPortNumber != 0 && input.Configuration.Network.DirectDatabasePort != 0 && input.Configuration.Database.DirectPortNumber != input.Configuration.Network.DirectDatabasePort {
 		return OutputFiles{}, fmt.Errorf("network.directDatabasePort: must match database.directPortNumber")
 	}
 	if input.Configuration.Services.Supavisor && input.Configuration.Pooler.SessionPort > 0 && input.Configuration.Network.PoolerPort > 0 && input.Configuration.Pooler.SessionPort != input.Configuration.Network.PoolerPort {
 		return OutputFiles{}, fmt.Errorf("network.poolerPort: must match pooler.sessionPort when both are set")
+	}
+	if input.Configuration.Services.Supavisor && (input.Configuration.Pooler.SessionPort < 1 || input.Configuration.Pooler.SessionPort > 65535 || input.Configuration.Pooler.TransactionPort < 1 || input.Configuration.Pooler.TransactionPort > 65535) {
+		return OutputFiles{}, fmt.Errorf("pooler.sessionPort/transactionPort: valid host ports are required when Supavisor is enabled")
+	}
+	if !input.Configuration.Auth.Email.AllowSignup && (input.Configuration.Auth.DisableSignup || input.Configuration.Auth.Phone.Enabled || input.Configuration.Auth.AnonymousSignIn || hasEnabledOAuth(input.Configuration.Auth.OAuth)) {
+		return OutputFiles{}, fmt.Errorf("auth.email.allowSignup: cannot disable email signup while another signup path is enabled")
 	}
 	if err := validateGeneratedSecrets(input); err != nil {
 		return OutputFiles{}, err
@@ -163,7 +170,7 @@ func Project(input Input) (OutputFiles, error) {
 		if isGateway(name) && input.Configuration.Network.HTTPSMode != contracts.HTTPSModeCaddy {
 			service["ports"] = []string{fmt.Sprintf("127.0.0.1:%d:8000", input.APIPort)}
 		}
-		if name == "db" && input.Configuration.Database.DirectPort {
+		if name == "db" && directDB {
 			port := input.Configuration.Database.DirectPortNumber
 			if port < 1 || port > 65535 {
 				port = input.Configuration.Network.DirectDatabasePort
@@ -242,12 +249,10 @@ func validateStorageConfiguration(storage contracts.StorageConfig) error {
 	default:
 		return fmt.Errorf("storage.backend: unsupported backend %q", storage.Backend)
 	}
-	if storage.Backend == "" || storage.Backend == contracts.StorageBackendLocal {
-		switch storage.LocalPath {
-		case "", "./volumes/storage", "volumes/storage", "/var/lib/storage":
-		default:
-			return fmt.Errorf("storage.localPath: must refer to managed ./volumes/storage")
-		}
+	switch storage.LocalPath {
+	case "", "./volumes/storage", "volumes/storage", "/var/lib/storage":
+	default:
+		return fmt.Errorf("storage.localPath: must refer to managed ./volumes/storage")
 	}
 	if storage.Backend == contracts.StorageBackendR2 && storage.Endpoint == "" && storage.AccountID == "" {
 		return fmt.Errorf("storage.accountId: required for R2 when endpoint is unset")

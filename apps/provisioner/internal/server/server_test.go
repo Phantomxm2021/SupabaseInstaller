@@ -75,11 +75,11 @@ func TestPrepareWritesGeneratedComposeAndSecretEnv(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("prepare status = %d, body = %s", response.Code, response.Body.String())
 	}
-	compose, err := os.ReadFile(filepath.Join(base, "bee", "docker-compose.yml"))
+	compose, err := os.ReadFile(filepath.Join(base, "bee", ".manager-runtime", "current", "docker-compose.yml"))
 	if err != nil || strings.Contains(string(compose), "realtime:") {
 		t.Fatalf("generated Compose error = %v, content includes disabled realtime", err)
 	}
-	env, err := os.ReadFile(filepath.Join(base, "bee", ".env"))
+	env, err := os.ReadFile(filepath.Join(base, "bee", ".manager-runtime", "current", ".env"))
 	if err != nil || !strings.Contains(string(env), "POSTGRES_PASSWORD=database-secret") {
 		t.Fatalf("generated env error = %v, content = %s", err, env)
 	}

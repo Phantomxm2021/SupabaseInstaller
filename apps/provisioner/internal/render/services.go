@@ -1,16 +1,24 @@
 package render
 
-import "supabase-manager/internal/contracts"
+import (
+	"fmt"
 
-import "fmt"
+	"supabase-manager/internal/contracts"
+)
 
 func validateServiceConfiguration(config contracts.ProjectConfiguration) error {
 	s := config.Services
+	if (s.Auth || s.REST || s.Realtime || s.Storage || s.Functions || s.Studio || config.Network.HTTPSMode == contracts.HTTPSModeCaddy) && !s.Gateway {
+		return fmt.Errorf("services.gateway: required by enabled public API services")
+	}
 	if s.Functions && !s.Gateway {
 		return fmt.Errorf("services.functions: requires services.gateway")
 	}
 	if s.Storage && (!s.Database || !s.REST) {
 		return fmt.Errorf("services.storage: requires services.database and services.rest")
+	}
+	if s.DirectDB && !s.Database {
+		return fmt.Errorf("services.directDb: requires services.database")
 	}
 	if s.Realtime && !s.Database {
 		return fmt.Errorf("services.realtime: requires services.database")
@@ -31,6 +39,15 @@ func validateServiceConfiguration(config contracts.ProjectConfiguration) error {
 		return fmt.Errorf("services.imgproxy: requires services.storage")
 	}
 	return nil
+}
+
+func hasEnabledOAuth(providers map[string]contracts.OAuthProviderConfig) bool {
+	for _, provider := range providers {
+		if provider.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // selectServices maps product capabilities to names in the pinned Compose

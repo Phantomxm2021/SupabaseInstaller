@@ -70,3 +70,23 @@ Named GREEN verification:
 - `git diff --check` — PASS.
 
 The first broad-suite run timed out at five minutes in `TestProvisionerRejectsStaleConfigRevision`; the goroutine stack identified the `UpdateMetadata`/`StageRuntimeFiles` self-deadlock, fixed by the mutex split above. A later controller reproduction of representative generation passed in 0.57 seconds.
+
+## Fix Round 3
+
+Removed the compatibility root-file mirror entirely. `RuntimePath` now returns the stable project/data root, while `CurrentRuntimeFiles` resolves the atomic `current` generation’s Compose, public env, and private Functions env paths. Compose runtime callers pass the stable root as `--project-directory` and the current files as `--file`/`--env-file`; Functions uses the current-generation env file path. Initial template hydration excludes generated runtime files.
+
+Runtime candidates remain `.candidate-*` until commit. Commit renames the candidate, atomically swaps `current`, records its generation, and prunes only safe prior generations. Restore performs a current-generation CAS check and rejects stale closures without changing a newer pointer. Candidate cleanup is explicit and no longer runs during concurrent staging. Added stable-reference, no-mirror, concurrent staging, stale restore CAS, startup cleanup, and prepare completion tests.
+
+Generated Realtime keys are exactly 16 URL-safe characters. Supavisor and DirectDB ports are validated and mapped, phone provider variables use exact `GOTRUE_SMS_*` names, gateway closure and signup-path conflicts are rejected, and complete Compose golden fixtures remain canonical parsed-YAML comparisons.
+
+GREEN verification:
+
+- Focused render, projectfs, compose, runtime, server, secrets, and manager install suites with bounded 2-minute timeouts — PASS.
+- `go test -race -count=1 -timeout 2m ./apps/provisioner/internal/projectfs ./apps/provisioner/internal/compose ./apps/provisioner/internal/runtime ./apps/provisioner/internal/server` — PASS.
+- `go test -count=1 -timeout 5m ./apps/provisioner/...` — PASS.
+- `go test -count=1 -timeout 5m ./apps/manager/...` — PASS.
+- `go test -count=1 -timeout 5m ./internal/...` — PASS.
+- Real `docker compose config --quiet` using stable project directories and current-generation `--file`/`--env-file` for lightweight, standard, and full outputs — PASS for all three.
+- `git diff --check` — PASS.
+
+Out of scope for Task 3 / Task 5 hydration note: after restart, later reconciliation must load and decrypt the newly generated internal secret kinds before rendering. This change adds generation and persistence but does not implement Manager reconciliation hydration.

@@ -134,7 +134,7 @@ services:
             api-gw:
                 condition: service_healthy
         env_file:
-            - ./.env.functions
+            - ./.manager-runtime/current/.env.functions
         environment:
             JWT_SECRET: ${JWT_SECRET}
             SUPABASE_ANON_KEY: ${ANON_KEY}
@@ -383,8 +383,8 @@ services:
             timeout: 5s
         image: supabase/supavisor:2.9.5
         ports:
-            - ${POSTGRES_PORT}:5432
-            - ${POOLER_PROXY_PORT_TRANSACTION}:6543
+            - 127.0.0.1:6544:5432
+            - 127.0.0.1:6543:6543
         restart: unless-stopped
         volumes:
             - ./volumes/pooler/pooler.exs:/etc/pooler/pooler.exs:ro,z

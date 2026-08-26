@@ -3,6 +3,7 @@ package projectfs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -41,17 +42,11 @@ func TestStageRuntimeFilesCommitsAndRestoresAsASet(t *testing.T) {
 	if err := os.MkdirAll(project, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(project, "docker-compose.yml"), []byte("old-compose"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("old-env"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	restore, commit, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("new-compose"), Env: []byte("new-env"), FunctionsEnv: []byte("FUNCTION_SECRET=secret")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimePath, err := root.RuntimePath("bee")
+	runtimePath, err := root.RuntimeComposePath("bee")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,19 +56,24 @@ func TestStageRuntimeFilesCommitsAndRestoresAsASet(t *testing.T) {
 	if err := commit(); err != nil {
 		t.Fatal(err)
 	}
+	ref, err := root.CurrentRuntimeFiles("bee")
+	if err != nil || ref.ProjectDir != project || ref.ComposeFile != filepath.Join(project, ".manager-runtime", "current", "docker-compose.yml") {
+		t.Fatalf("runtime reference = %#v, error = %v", ref, err)
+	}
+	if _, err := os.Lstat(filepath.Join(project, "docker-compose.yml")); !os.IsNotExist(err) {
+		t.Fatal("compatibility root compose mirror still exists")
+	}
 	for name, want := range map[string]string{"docker-compose.yml": "new-compose", ".env": "new-env", ".env.functions": "FUNCTION_SECRET=secret"} {
-		if got := string(mustRead(t, filepath.Join(runtimePath, name))); got != want {
+		path := filepath.Join(filepath.Dir(runtimePath), name)
+		if got := string(mustRead(t, path)); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
-		if info, err := os.Stat(filepath.Join(runtimePath, name)); err != nil || info.Mode().Perm() != 0o600 {
+		if info, err := os.Stat(filepath.Join(filepath.Dir(runtimePath), name)); err != nil || info.Mode().Perm() != 0o600 {
 			t.Errorf("%s mode = %v, want 0600", name, info.Mode().Perm())
 		}
 	}
 	if err := restore(); err != nil {
 		t.Fatal(err)
-	}
-	if string(mustRead(t, filepath.Join(project, "docker-compose.yml"))) != "old-compose" {
-		t.Fatal("restore did not reinstall prior set")
 	}
 	if _, err := os.Lstat(runtimePath); !os.IsNotExist(err) {
 		t.Fatal("restore retained the candidate pointer")
@@ -94,14 +94,14 @@ func TestStageRuntimeFilesCopiesInputAndCleansAbortCandidates(t *testing.T) {
 	if err := commit(); err != nil {
 		t.Fatal(err)
 	}
-	runtimePath, _ := root.RuntimePath("bee")
-	if got := string(mustRead(t, filepath.Join(runtimePath, "docker-compose.yml"))); got != "compose-before" {
+	runtimePath, _ := root.RuntimeComposePath("bee")
+	if got := string(mustRead(t, runtimePath)); got != "compose-before" {
 		t.Fatalf("staged input was not copied: %q", got)
 	}
 	if err := restore(); err != nil {
 		t.Fatal(err)
 	}
-	runtimeRoot := filepath.Dir(runtimePath)
+	runtimeRoot := filepath.Dir(filepath.Dir(runtimePath))
 	matches, _ := filepath.Glob(filepath.Join(runtimeRoot, ".candidate-*"))
 	if len(matches) != 0 {
 		t.Fatalf("abandoned candidates remain: %v", matches)
@@ -117,6 +117,17 @@ func TestStageRuntimeFilesCopiesInputAndCleansAbortCandidates(t *testing.T) {
 	matches, _ = filepath.Glob(filepath.Join(runtimeRoot, ".candidate-*"))
 	if len(matches) != 0 {
 		t.Fatalf("aborted candidates remain: %v", matches)
+	}
+	_, _, err = root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("orphan"), Env: []byte("orphan"), FunctionsEnv: []byte("orphan")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.CleanupAbandonedRuntimeCandidates("bee"); err != nil {
+		t.Fatal(err)
+	}
+	matches, _ = filepath.Glob(filepath.Join(runtimeRoot, ".candidate-*"))
+	if len(matches) != 0 {
+		t.Fatalf("startup cleanup retained candidates: %v", matches)
 	}
 }
 
@@ -139,15 +150,49 @@ func TestStageRuntimeFilesRestoreSwitchesToPriorGeneration(t *testing.T) {
 	if err := commit(); err != nil {
 		t.Fatal(err)
 	}
-	runtimePath, _ := root.RuntimePath("bee")
-	if got := string(mustRead(t, filepath.Join(runtimePath, "docker-compose.yml"))); got != "two" {
+	runtimePath, _ := root.RuntimeComposePath("bee")
+	if got := string(mustRead(t, runtimePath)); got != "two" {
 		t.Fatal("second generation was not selected")
 	}
 	if err := restore(); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(mustRead(t, filepath.Join(runtimePath, "docker-compose.yml"))); got != "one" {
+	if got := string(mustRead(t, runtimePath)); got != "one" {
 		t.Fatalf("restore selected %q, want prior generation", got)
+	}
+}
+
+func TestStageRuntimeFilesRestoreUsesGenerationCAS(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreOne, commitOne, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("one"), Env: []byte("one"), FunctionsEnv: []byte("one")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitOne(); err != nil {
+		t.Fatal(err)
+	}
+	restoreTwo, commitTwo, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("two"), Env: []byte("two"), FunctionsEnv: []byte("two")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitTwo(); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreOne(); err == nil || !strings.Contains(err.Error(), "stale runtime generation") {
+		t.Fatalf("restore of superseded generation error = %v", err)
+	}
+	composePath, _ := root.RuntimeComposePath("bee")
+	if got := string(mustRead(t, composePath)); got != "two" {
+		t.Fatalf("stale restore changed current generation to %q", got)
+	}
+	if err := restoreTwo(); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, composePath)); got != "one" {
+		t.Fatalf("restore did not select prior committed generation: %q", got)
 	}
 }
 
@@ -206,7 +251,7 @@ func TestConcurrentRuntimeStagesSerializePublication(t *testing.T) {
 				errCh <- err
 				return
 			}
-			if err := restore(); err != nil {
+			if err := restore(); err != nil && !strings.Contains(err.Error(), "stale runtime generation") {
 				errCh <- err
 			}
 		}(value)

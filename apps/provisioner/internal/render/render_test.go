@@ -52,8 +52,12 @@ func TestWriteRepresentativeRenderFiles(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, "volumes"), 0o700); err != nil {
 			t.Fatal(err)
 		}
+		current := filepath.Join(dir, ".manager-runtime", "current")
+		if err := os.MkdirAll(current, 0o700); err != nil {
+			t.Fatal(err)
+		}
 		for name, data := range map[string]string{"docker-compose.yml": out.Compose, ".env": out.Env, ".env.functions": out.FunctionsEnv} {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(current, name), []byte(data), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -93,15 +97,16 @@ func TestRepresentativeComposeConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		dir := filepath.Join(root, tc.name)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+		current := filepath.Join(dir, ".manager-runtime", "current")
+		if err := os.MkdirAll(current, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		for name, data := range map[string]string{"docker-compose.yml": out.Compose, ".env": out.Env, ".env.functions": out.FunctionsEnv} {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(current, name), []byte(data), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
-		command := exec.Command("docker", "compose", "--file", filepath.Join(dir, "docker-compose.yml"), "--project-directory", dir, "config", "--quiet")
+		command := exec.Command("docker", "compose", "--file", filepath.Join(current, "docker-compose.yml"), "--env-file", filepath.Join(current, ".env"), "--project-directory", dir, "config", "--quiet")
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("%s compose config: %v\n%s", tc.name, err, output)
 		}
@@ -146,6 +151,7 @@ func testConfiguration() contracts.ProjectConfiguration {
 		Services:  contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true},
 		Auth:      contracts.AuthConfig{Enabled: true, JWTExpiry: 3600, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true},
+		Pooler:    contracts.PoolerConfig{SessionPort: 6544, TransactionPort: 6543, PoolSize: 20, MaxClientConnections: 100},
 	}
 }
 
@@ -209,7 +215,7 @@ func TestRenderFunctionsWiresPrivateEnvFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.Compose, "env_file:") || !strings.Contains(out.Compose, "./.env.functions") {
+	if !strings.Contains(out.Compose, "env_file:") || !strings.Contains(out.Compose, "./.manager-runtime/current/.env.functions") {
 		t.Fatal("functions service is not wired to .env.functions")
 	}
 	if strings.Contains(out.Env, "STRIPE_KEY=secret") || !strings.Contains(out.FunctionsEnv, "STRIPE_KEY=secret") {

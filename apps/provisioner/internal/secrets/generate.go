@@ -36,7 +36,8 @@ func Generate(random io.Reader) (contracts.ProjectSecrets, error) {
 	if err != nil {
 		return contracts.ProjectSecrets{}, err
 	}
-	realtimeKey, err := randomString(random, 16)
+	// Realtime's legacy key contract is exactly 16 URL-safe characters.
+	realtimeKey, err := randomString(random, 12)
 	if err != nil {
 		return contracts.ProjectSecrets{}, err
 	}

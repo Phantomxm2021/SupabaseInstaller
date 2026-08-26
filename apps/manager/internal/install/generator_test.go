@@ -25,4 +25,7 @@ func TestCryptoGeneratorMatchesOfficialSecretLengthRequirements(t *testing.T) {
 			t.Errorf("%s secret is empty", name)
 		}
 	}
+	if len(generated.RealtimeDBEncryptionKey) != 16 {
+		t.Fatalf("realtime encryption key length = %d, want 16", len(generated.RealtimeDBEncryptionKey))
+	}
 }

@@ -30,6 +30,19 @@ func TestDownRuntimeDoesNotDeleteVolumes(t *testing.T) {
 	}
 }
 
+func TestRunnerUsesStableProjectDirAndCurrentConfig(t *testing.T) {
+	executor := &fakeExecutor{}
+	runner := NewRunner(executor)
+	project := ProjectRef{Slug: "bee", Dir: "/projects/bee", ComposeFile: "/projects/bee/.manager-runtime/current/docker-compose.yml", EnvFile: "/projects/bee/.manager-runtime/current/.env"}
+	if err := runner.UpDatabase(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"compose", "--file", project.ComposeFile, "--env-file", project.EnvFile, "--project-directory", project.Dir, "--project-name", "supabase-manager-bee", "up", "-d", "--wait", "db"}
+	if !reflect.DeepEqual(executor.args, want) {
+		t.Fatalf("command args = %#v, want %#v", executor.args, want)
+	}
+}
+
 type fakeExecutor struct {
 	command string
 	args    []string

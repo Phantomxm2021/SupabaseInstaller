@@ -33,11 +33,11 @@ func NewBackend(projectFS *projectfs.Root, runner LifecycleRunner, inspector Hea
 }
 
 func (backend *Backend) Lifecycle(ctx context.Context, request contracts.LifecycleRequest) error {
-	directory, err := backend.projectFS.ProjectPath(request.Slug)
+	runtime, err := backend.projectFS.CurrentRuntimeFiles(request.Slug)
 	if err != nil {
 		return err
 	}
-	project := compose.ProjectRef{Slug: request.Slug, Dir: directory}
+	project := compose.ProjectRef{Slug: request.Slug, Dir: runtime.ProjectDir, ComposeFile: runtime.ComposeFile, EnvFile: runtime.EnvFile}
 	switch request.Action {
 	case contracts.LifecycleStart:
 		if err := backend.runner.UpDatabase(ctx, project); err != nil {

@@ -9,8 +9,10 @@ import (
 )
 
 type ProjectRef struct {
-	Slug string
-	Dir  string
+	Slug        string
+	Dir         string
+	ComposeFile string
+	EnvFile     string
 }
 
 type Executor interface {
@@ -91,5 +93,13 @@ func (r *Runner) run(ctx context.Context, project ProjectRef, action ...string) 
 }
 
 func (r *Runner) baseArgs(project ProjectRef) []string {
-	return []string{"compose", "--file", filepath.Join(project.Dir, "docker-compose.yml"), "--project-directory", project.Dir, "--project-name", "supabase-manager-" + project.Slug}
+	composeFile := project.ComposeFile
+	if composeFile == "" {
+		composeFile = filepath.Join(project.Dir, "docker-compose.yml")
+	}
+	args := []string{"compose", "--file", composeFile}
+	if project.EnvFile != "" {
+		args = append(args, "--env-file", project.EnvFile)
+	}
+	return append(args, "--project-directory", project.Dir, "--project-name", "supabase-manager-"+project.Slug)
 }
