@@ -18,7 +18,7 @@ export function MultiFactorPage({ context: provided }: { context?: Authenticatio
   const mfa = form.watch('mfa')
   const set = <K extends keyof MFAConfig>(field: K, value: MFAConfig[K]) => form.setValue(`mfa.${field}` as never, value as never, { shouldDirty: true, shouldValidate: true })
   return <main className="page space-y-12">
-    <header className="page-heading"><div><p className="eyebrow">Authentication</p><h1>Multi-Factor Authentication (MFA)</h1><p className="muted">Require users to provide additional verification factors to authenticate.</p></div></header>
+    <header className="page-heading"><div><h1>Multi-Factor Authentication (MFA)</h1><p className="muted">Require users to provide additional verification factors to authenticate.</p></div></header>
     <form className="space-y-12" onSubmit={form.handleSubmit((value) => context.requestSave({ section: 'auth', value, dirty: form.formState.dirtyFields, setError: (name, message) => form.setError(name as never, { type: 'server', message }) }))}>
       <MFASection title="Multi-Factor Authentication (MFA)">
         <Toggle id="totp-enrollment" label="TOTP (App Authenticator) enrollment" description="Allow users to enroll an authenticator application as an additional factor." checked={mfa.totpEnrollEnabled} onChange={(value) => set('totpEnrollEnabled', value)} />

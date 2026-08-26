@@ -27,7 +27,7 @@ export function RateLimitsPage({ context: provided }: { context?: Authentication
   useResetOnServerRevision(form, initial, context.revision)
   const limits = form.watch('rateLimits')
   return <main className="page space-y-8">
-    <header className="page-heading"><div><p className="eyebrow">Authentication</p><h1>Rate Limits</h1><p className="muted">Safeguard against bursts of incoming traffic to prevent abuse and maximize stability.</p></div></header>
+    <header className="page-heading"><div><h1>Rate Limits</h1><p className="muted">Safeguard against bursts of incoming traffic to prevent abuse and maximize stability.</p></div></header>
     <form onSubmit={form.handleSubmit((value) => context.requestSave({ section: 'auth', value, dirty: form.formState.dirtyFields, setError: (name, message) => form.setError(name as never, { type: 'server', message }) }))}>
       <section className="overflow-hidden rounded-xl border border-border bg-card" aria-label="Authentication rate limits">
         {rows.map((row, index) => <div key={row.field} className={index ? 'grid gap-5 border-t border-border p-5 lg:grid-cols-[minmax(18rem,1.2fr)_minmax(20rem,0.8fr)]' : 'grid gap-5 p-5 lg:grid-cols-[minmax(18rem,1.2fr)_minmax(20rem,0.8fr)]'}>

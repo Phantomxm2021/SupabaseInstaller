@@ -56,4 +56,9 @@ describe('EmailsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Discard changes' }))
     expect(screen.getByRole('link', { name: /Confirm sign up/i })).toBeInTheDocument()
   })
+
+  it('normalizes a legacy configuration without mailer data', () => {
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><EmailsPage context={{ ...context, auth: { ...context.auth, mailer: undefined } }} /></MemoryRouter></QueryClientProvider>)
+    expect(screen.getByRole('link', { name: /Confirm sign up/i })).toBeInTheDocument()
+  })
 })

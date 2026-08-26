@@ -83,7 +83,7 @@ h2 { font-size: 16px; margin-bottom: 5px; }
 .authentication-navigation-list { display: grid; gap: .125rem; margin: 0; padding: 0; list-style: none; }
 .authentication-navigation-link { display: block; padding: .5rem .75rem; border-radius: .375rem; color: var(--muted-foreground); font-size: .875rem; }
 .authentication-navigation-link:hover { color: var(--text); background: var(--surface-2); }
-.authentication-navigation-link[aria-current="page"] { color: var(--text); background: var(--green-soft); font-weight: 600; }
+.authentication-navigation-link[aria-current="page"] { color: var(--text); background: var(--surface-2); font-weight: 600; }
 .authentication-content { min-width: 0; }
 .authentication-navigation-trigger { display: none; margin: 1rem; }
 .authentication-navigation-sheet { gap: 0; padding: 0; }
