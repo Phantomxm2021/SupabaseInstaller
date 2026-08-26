@@ -853,6 +853,46 @@ func TestStageRuntimeFilesFirstMigrationFailureRestoresLegacyAndRemovesCurrent(t
 	}
 }
 
+func TestStageRuntimeFilesRestoreAfterCommittedMigrationRestoresLegacyFiles(t *testing.T) {
+	base := t.TempDir()
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("legacy-restore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacyContents := map[string]string{"docker-compose.yml": "legacy-compose", ".env": "legacy-env", ".env.functions": "legacy-functions"}
+	for name, content := range legacyContents {
+		if err := os.WriteFile(filepath.Join(project, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restore, commit, err := root.StageRuntimeFiles("legacy-restore", RuntimeFiles{Compose: []byte("new"), Env: []byte("new"), FunctionsEnv: []byte("new")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range legacyContents {
+		if got := string(mustRead(t, filepath.Join(project, name))); got != want {
+			t.Errorf("restored legacy %s = %q, want %q", name, got, want)
+		}
+	}
+	current, _ := root.RuntimeComposePath("legacy-restore")
+	if _, err := os.Lstat(current); !os.IsNotExist(err) {
+		t.Fatalf("restored current still exists: %v", err)
+	}
+}
+
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)

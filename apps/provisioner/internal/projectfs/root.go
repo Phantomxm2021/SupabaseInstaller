@@ -176,7 +176,7 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 		// A failed legacy migration must be rolled back before changing the
 		// current pointer. This keeps the returned restore closure coherent even
 		// when cleanup failed after publication.
-		if legacyCleanup != nil && !legacyCleanup.finalized {
+		if legacyCleanup != nil {
 			if err := legacyCleanup.rollback(); err != nil {
 				return err
 			}
@@ -502,12 +502,20 @@ type legacyRuntimeCleanup struct {
 	runtimeRoot string
 	quarantine  string
 	moved       []string
+	backups     map[string]legacyRuntimeBackup
 	finalized   bool
 	rolledBack  bool
 }
 
+type legacyRuntimeBackup struct {
+	data    []byte
+	target  string
+	mode    fs.FileMode
+	symlink bool
+}
+
 func (r *Root) cleanupLegacyRuntimeFiles(projectPath, runtimeRoot string, names []string) (*legacyRuntimeCleanup, error) {
-	cleanup := &legacyRuntimeCleanup{root: r, projectPath: projectPath, runtimeRoot: runtimeRoot}
+	cleanup := &legacyRuntimeCleanup{root: r, projectPath: projectPath, runtimeRoot: runtimeRoot, backups: make(map[string]legacyRuntimeBackup)}
 	if len(names) == 0 {
 		cleanup.finalized = true
 		return cleanup, nil
@@ -529,6 +537,16 @@ func (r *Root) cleanupLegacyRuntimeFiles(projectPath, runtimeRoot string, names 
 		if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
 			continue
 		}
+		backup := legacyRuntimeBackup{mode: info.Mode().Perm(), symlink: info.Mode()&os.ModeSymlink != 0}
+		if backup.symlink {
+			backup.target, err = os.Readlink(path)
+		} else {
+			backup.data, err = os.ReadFile(path)
+		}
+		if err != nil {
+			return cleanup, cleanup.fail(fmt.Errorf("backup legacy runtime file %s: %w", name, err))
+		}
+		cleanup.backups[name] = backup
 		if err := r.moveLegacyRuntime(path, filepath.Join(cleanup.quarantine, name)); err != nil {
 			return cleanup, cleanup.fail(fmt.Errorf("move legacy runtime file %s: %w", name, err))
 		}
@@ -570,7 +588,33 @@ func (c *legacyRuntimeCleanup) fail(err error) error {
 }
 
 func (c *legacyRuntimeCleanup) rollback() error {
-	if c == nil || c.finalized || c.rolledBack {
+	if c == nil || c.rolledBack {
+		return nil
+	}
+	if c.finalized {
+		for _, name := range legacyRuntimeNames {
+			backup, ok := c.backups[name]
+			if !ok {
+				continue
+			}
+			destination := filepath.Join(c.projectPath, name)
+			if _, err := os.Lstat(destination); err == nil {
+				continue
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("inspect legacy runtime destination %s: %w", name, err)
+			}
+			if backup.symlink {
+				if err := os.Symlink(backup.target, destination); err != nil {
+					return fmt.Errorf("restore legacy runtime symlink %s: %w", name, err)
+				}
+			} else if err := writeAtomic(c.projectPath, name, backup.data, backup.mode); err != nil {
+				return fmt.Errorf("restore legacy runtime file %s: %w", name, err)
+			}
+		}
+		if err := c.root.syncRuntimeDirectory(c.projectPath); err != nil {
+			return err
+		}
+		c.rolledBack = true
 		return nil
 	}
 	var rollbackErrs []error
