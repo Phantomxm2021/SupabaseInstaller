@@ -134,6 +134,9 @@ func TestServiceCreationAtomicallyEncryptsAllConfigurationSecrets(t *testing.T) 
 	if _, err := service.Create(context.Background(), draft); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	if cfg.Auth.SMTP.PasswordSet || cfg.Auth.SMTP.Password.Action != "replace" || cfg.Auth.SMTP.Password.Value != "smtp-secret" || cfg.Functions.Variables[0].ValueSet || cfg.Functions.Variables[0].Value.Action != "replace" || cfg.Functions.Variables[0].Value.Value != "function-one" {
+		t.Fatal("creation secret preparation mutated caller-owned aggregate")
+	}
 	for kind, want := range map[string]string{"smtp.password": "smtp-secret", "phone.secret": "phone-secret", "oauth.google.secret": "oauth-secret", "storage.secretAccessKey": "storage-secret", "functions.OPENAI_API_KEY": "function-one", "functions.SECOND_SECRET": "function-two"} {
 		envelope, err := database.GetSecret(context.Background(), "project-1", kind)
 		if err != nil {
@@ -181,7 +184,7 @@ func TestServiceCreationRemoveClearsMarkerAndSecretRow(t *testing.T) {
 	defer database.Close()
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
 	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
-	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", Value: contracts.SecretInput{Action: "remove"}}}
+	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", ValueSet: true, Value: contracts.SecretInput{Action: "remove"}}}
 	service := NewService(database, func() string { return "project-1" }, time.Now)
 	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", Configuration: cfg}); err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -195,5 +198,38 @@ func TestServiceCreationRemoveClearsMarkerAndSecretRow(t *testing.T) {
 	}
 	if _, err := database.GetSecret(context.Background(), "project-1", "functions.OPENAI_API_KEY"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("remove left encrypted secret: %v", err)
+	}
+}
+
+func TestServiceCreationIgnoresMaliciousSecretMarkers(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := DefaultConfiguration(contracts.PresetFull)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	cfg.Auth.SMTP.PasswordSet = true
+	cfg.Auth.Phone = contracts.PhoneAuthConfig{Provider: "messagebird", SecretSet: true}
+	cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {SecretSet: true}}
+	cfg.Storage = contracts.StorageConfig{Backend: contracts.StorageBackendS3, Bucket: "bee", Region: "us-east-1", Endpoint: "https://s3.example.com", AccessKeyID: "access", SecretAccessKeySet: true}
+	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", ValueSet: true}}
+	service := NewService(database, func() string { return "project-1" }, time.Now)
+	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", Configuration: cfg}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	snapshot, err := database.GetConfiguration(context.Background(), "project-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Configuration.Auth.SMTP.PasswordSet || snapshot.Configuration.Auth.Phone.SecretSet || snapshot.Configuration.Auth.OAuth["google"].SecretSet || snapshot.Configuration.Storage.SecretAccessKeySet || snapshot.Configuration.Functions.Variables[0].ValueSet {
+		t.Fatal("creation trusted client-supplied secret markers")
+	}
+	var count int
+	if err := database.DB().QueryRow(`SELECT COUNT(*) FROM project_secrets WHERE project_id = ?`, "project-1").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("malicious marker creation persisted %d secrets", count)
 	}
 }

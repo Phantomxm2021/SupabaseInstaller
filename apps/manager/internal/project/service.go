@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -44,11 +45,15 @@ func (s *Service) Create(ctx context.Context, draft Draft) (Project, error) {
 	if project.ID == "" {
 		return Project{}, fmt.Errorf("project ID generator returned an empty ID")
 	}
-	mutations, err := s.encryptConfigurationSecrets(project.ID, &draft.Configuration)
+	persistedConfiguration, err := cloneConfiguration(draft.Configuration)
 	if err != nil {
 		return Project{}, err
 	}
-	if err := s.store.CreateProjectWithSecrets(ctx, project, draft.Configuration, mutations); err != nil {
+	mutations, err := s.encryptConfigurationSecrets(project.ID, &persistedConfiguration)
+	if err != nil {
+		return Project{}, err
+	}
+	if err := s.store.CreateProjectWithSecrets(ctx, project, persistedConfiguration, mutations); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return Project{}, ErrConflict
 		}
@@ -57,9 +62,24 @@ func (s *Service) Create(ctx context.Context, draft Draft) (Project, error) {
 	return project, nil
 }
 
+func cloneConfiguration(cfg contracts.ProjectConfiguration) (contracts.ProjectConfiguration, error) {
+	payload, err := json.Marshal(cfg)
+	if err != nil {
+		return contracts.ProjectConfiguration{}, fmt.Errorf("clone configuration: %w", err)
+	}
+	var clone contracts.ProjectConfiguration
+	if err := json.Unmarshal(payload, &clone); err != nil {
+		return contracts.ProjectConfiguration{}, fmt.Errorf("clone configuration: %w", err)
+	}
+	return clone, nil
+}
+
 func (s *Service) encryptConfigurationSecrets(projectID string, cfg *contracts.ProjectConfiguration) ([]store.SecretMutation, error) {
 	mutations := make([]store.SecretMutation, 0)
 	add := func(kind string, input *contracts.SecretInput, set *bool) error {
+		// Secret presence is server-derived; client-provided markers are never
+		// trusted during initial creation.
+		*set = false
 		switch input.Action {
 		case "", "retain":
 			if input.Action == "retain" {

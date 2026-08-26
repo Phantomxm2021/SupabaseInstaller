@@ -153,7 +153,11 @@ func TestMigration002UpgradesExistingV1Database(t *testing.T) {
 	if snapshot.Configuration.General.Domain != project.Domain || snapshot.Configuration.General.SiteURL != project.SiteURL || snapshot.Configuration.General.SupabaseVersion != project.SupabaseVersion {
 		t.Fatalf("legacy general projection = %#v", snapshot.Configuration.General)
 	}
-	if snapshot.Configuration.Realtime.MaxConnections != 100 || snapshot.Configuration.Database.MaxConnections != 100 || snapshot.Configuration.Pooler.MaxClientConnections != 100 || snapshot.Configuration.Network.Gateway != "envoy" || snapshot.Configuration.Storage.Backend != "local" {
+	services := snapshot.Configuration.Services
+	if !services.Database || !services.Gateway || !services.Studio || !services.PostgresMeta || services.Imgproxy || services.Storage || services.Logs || services.Vector {
+		t.Fatalf("legacy service defaults/closure invalid: %#v", services)
+	}
+	if snapshot.Configuration.General.SupabaseVersion != "self-hosted/v0.8.0" || snapshot.Configuration.General.Domain == "" || snapshot.Configuration.General.SiteURL == "" || snapshot.Configuration.Realtime.MaxConnections != 100 || snapshot.Configuration.Realtime.DatabasePoolSize != 5 || snapshot.Configuration.Realtime.LogLevel != contracts.LogLevelInfo || snapshot.Configuration.Database.MaxConnections != 100 || snapshot.Configuration.Pooler.PoolSize != 20 || snapshot.Configuration.Pooler.MaxClientConnections != 100 || snapshot.Configuration.Network.Gateway != contracts.GatewayEnvoy || snapshot.Configuration.Network.HTTPSMode != contracts.HTTPSModeExternal || snapshot.Configuration.Storage.Backend != contracts.StorageBackendLocal {
 		t.Fatalf("legacy safe defaults missing: %#v", snapshot.Configuration)
 	}
 }
