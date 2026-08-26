@@ -1,7 +1,23 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Boxes, Database, HardDrive, LogOut, Plus, ServerCog } from 'lucide-react'
+import { Boxes, Database, HardDrive, LogOut, ServerCog, UserCircle } from 'lucide-react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { apiFetch, setCSRFToken } from '../api/client'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+} from '../components/ui/sidebar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
 
 export function AppShell() {
   const navigate = useNavigate()
@@ -15,25 +31,41 @@ export function AppShell() {
     },
   })
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-row sidebar-brand"><span className="brand-mark"><Database size={20} /></span><span>Supabase Manager</span></div>
-        <nav aria-label="Main navigation">
-          <NavLink to="/projects"><Boxes size={17} /> Projects</NavLink>
-          <NavLink to="/projects/new"><Plus size={17} /> New project</NavLink>
-        </nav>
-        <div className="sidebar-status">
-          <span className="status-dot healthy" /><div><strong>Host online</strong><small>Docker connected</small></div>
-        </div>
-        <nav className="sidebar-bottom">
-          <a href="/api/session"><ServerCog size={17} /> Manager settings</a>
-          <button type="button" disabled={logout.isPending} onClick={() => logout.mutate()}><LogOut size={17} /> Sign out</button>
-        </nav>
-      </aside>
+    <SidebarProvider defaultOpen>
+      <div className="app-shell">
+        <Sidebar collapsible="icon">
+          <SidebarHeader>
+            <div className="brand-row sidebar-brand"><span className="brand-mark"><Database size={20} /></span><span>Supabase Manager</span></div>
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarMenu aria-label="Main navigation">
+              <SidebarMenuItem>
+                <SidebarMenuButton tooltip="Projects" render={<NavLink to="/projects" />}>
+                  <Boxes /> <span>Projects</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarContent>
+          <div className="sidebar-status">
+            <span className="status-dot healthy" /><div><strong>Host online</strong><small>Docker connected</small></div>
+          </div>
+          <SidebarFooter>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<SidebarMenuButton tooltip="Account" />}>
+                <UserCircle /><span>Account</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="right" align="end">
+                <DropdownMenuItem render={<NavLink to="/settings" />}><ServerCog /> Manager settings</DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" disabled={logout.isPending} onClick={() => logout.mutate()}><LogOut /> Sign out</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarFooter>
+        </Sidebar>
       <div className="content-shell">
         <header className="topbar"><div><HardDrive size={16} /> Local Docker host</div><span className="badge neutral">Installer Core</span></header>
         <Outlet />
       </div>
-    </div>
+      </div>
+    </SidebarProvider>
   )
 }

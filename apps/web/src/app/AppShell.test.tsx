@@ -13,7 +13,17 @@ it('signs out through the API', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><AppShell /></MemoryRouter></QueryClientProvider>)
 
-  await user.click(screen.getByRole('button', { name: 'Sign out' }))
+  await user.click(screen.getByRole('button', { name: /account/i }))
+  await user.click(await screen.findByRole('menuitem', { name: /sign out/i }))
 
   expect(method).toBe('DELETE')
+})
+
+it('shows Projects in global navigation without a duplicate New Project action', async () => {
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><AppShell /></MemoryRouter></QueryClientProvider>)
+
+  expect(screen.getByRole('link', { name: /projects/i })).toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: /new project/i })).not.toBeInTheDocument()
+  await userEvent.setup().click(screen.getByRole('button', { name: /account/i }))
+  expect(await screen.findByRole('menuitem', { name: /manager settings/i })).toHaveAttribute('href', '/settings')
 })

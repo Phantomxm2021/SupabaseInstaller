@@ -1,4 +1,14 @@
 import { useEffect, useState } from 'react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../components/ui/alert-dialog'
 
 type DeleteMode = 'runtime' | 'data'
 
@@ -25,15 +35,15 @@ export function DeleteProjectDialog({
     }
   }, [open])
 
-  if (!open) return null
   const confirmed = mode === 'runtime' || confirmation === project.name
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="delete-project-title">
-        <p className="eyebrow">Destructive action</p>
-        <h2 id="delete-project-title">Delete {project.name}</h2>
-        <p className="muted">Choose whether to remove only the containers or also erase the project data.</p>
+    <AlertDialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {project.name}</AlertDialogTitle>
+          <AlertDialogDescription>Choose whether to remove only the containers or also erase the project data.</AlertDialogDescription>
+        </AlertDialogHeader>
         <fieldset className="delete-options">
           <label><input type="radio" name="delete-mode" checked={mode === 'runtime'} onChange={() => setMode('runtime')} /> Delete runtime only</label>
           <label><input type="radio" name="delete-mode" checked={mode === 'data'} onChange={() => setMode('data')} /> Delete runtime and data</label>
@@ -43,11 +53,11 @@ export function DeleteProjectDialog({
             <input aria-label={`Type ${project.name} to confirm`} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" />
           </label>
         )}
-        <div className="dialog-actions">
-          <button className="button secondary" type="button" onClick={onClose}>Cancel</button>
-          <button className="button danger" type="button" disabled={!confirmed || busy} onClick={() => onDelete(mode, confirmation)}>Delete permanently</button>
-        </div>
-      </section>
-    </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={onClose}>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" disabled={!confirmed || busy} onClick={() => onDelete(mode, confirmation)}>Delete permanently</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }

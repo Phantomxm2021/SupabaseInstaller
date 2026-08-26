@@ -1,12 +1,21 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import type { QueryClient } from '@tanstack/react-query'
 import { Pause, Play, RotateCw, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../api/client'
 import type { Project } from '../../api/types'
+import { toast } from 'sonner'
 import { DeleteProjectDialog } from './DeleteProjectDialog'
 
 type LifecycleAction = 'start' | 'stop' | 'restart'
+
+export async function refreshProjectQueriesAfterDelete(queryClient: Pick<QueryClient, 'cancelQueries' | 'removeQueries' | 'invalidateQueries'>, projectId: string) {
+  await queryClient.cancelQueries({ queryKey: ['project', projectId] })
+  queryClient.removeQueries({ queryKey: ['project', projectId] })
+  queryClient.removeQueries({ queryKey: ['project-configuration', projectId] })
+  await queryClient.invalidateQueries({ queryKey: ['projects'] })
+}
 
 const actionLabels: Record<LifecycleAction, string> = {
   start: 'Starting project',
@@ -26,7 +35,12 @@ export function LifecycleActions({ project }: { project: Project }) {
   })
   const remove = useMutation({
     mutationFn: ({ mode, confirmation }: { mode: 'runtime' | 'data'; confirmation: string }) => apiFetch(`/api/projects/${project.id}`, { method: 'DELETE', body: JSON.stringify({ mode, confirmation }) }),
-    onSuccess: () => navigate('/projects'),
+    onSuccess: async () => {
+      await refreshProjectQueriesAfterDelete(queryClient, project.id)
+      toast.success('Project deleted')
+      navigate('/projects', { replace: true })
+    },
+    onError: (error) => toast.error(error.message),
   })
 
   return (

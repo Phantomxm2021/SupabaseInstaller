@@ -8,6 +8,7 @@ import { NewProjectPage } from '../features/projects/NewProjectPage'
 import { OverviewPage } from '../features/project/OverviewPage'
 import { ComingSoonPage, ProjectLayout } from '../features/project/ProjectLayout'
 import { AppShell } from './AppShell'
+import { ManagerSettingsPage } from '../features/settings/ManagerSettingsPage'
 
 function EntryGate() {
   const setup = useQuery({ queryKey: ['setup-status'], queryFn: () => apiFetch<{ required: boolean }>('/api/setup/status') })
@@ -40,6 +41,7 @@ export function createAppRouter(_queryClient: QueryClient) {
       element: <AuthenticatedShell />,
       children: [
         { path: '/projects', element: <ProjectsPage /> },
+        { path: '/settings', element: <ManagerSettingsPage /> },
         { path: '/projects/new', element: <NewProjectPage /> },
         {
           path: '/projects/:projectId',

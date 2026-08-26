@@ -8,7 +8,6 @@ import { useOperationEvents } from './useOperationEvents'
 const labels: Record<string, string> = {
   VALIDATE_PORTS: 'Validate ports',
   GENERATE_SECRETS: 'Generate secrets',
-  PREPARE_SUPABASE: 'Prepare Supabase',
   START_RUNTIME: 'Start runtime',
   START_AUTH: 'Start Auth',
   FINAL_HEALTH_CHECK: 'Final health check',
