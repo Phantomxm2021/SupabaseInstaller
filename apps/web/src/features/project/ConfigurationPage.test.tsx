@@ -91,6 +91,7 @@ it.each([
   ['oauth', 'Sign In / Providers'],
   ['smtp', 'Emails'],
 ] as const)('redirects legacy %s configuration routes to the Authentication workspace', async (section, heading) => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(redactedSnapshot()), { status: 200, headers: { 'Content-Type': 'application/json' } })))
   renderConfiguration(section)
   expect(await screen.findByRole('heading', { name: heading })).toBeVisible()
   expect(screen.getByRole('navigation', { name: 'Authentication navigation' })).toBeVisible()
