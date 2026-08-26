@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
@@ -33,6 +34,11 @@ type Backend struct {
 	inspector                   HealthInspector
 	acceptanceInspectorFailOnce atomic.Bool
 }
+
+const (
+	rollbackBudget       = 4 * time.Minute
+	rollbackActionBudget = 90 * time.Second
+)
 
 func NewBackend(projectFS *projectfs.Root, runner LifecycleRunner, inspector HealthInspector) *Backend {
 	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector}
