@@ -73,3 +73,28 @@ Commit: `0841220 fix: close Task 7 create contract gaps`
 Follow-up closure commit: `16cd2da fix: enforce service and storage closures`
 
 DTO modeling commit: `02f65a2 fix: model redacted and editable configuration DTOs`
+
+## Round 3 correction
+
+Manager installation now atomically allocates the complete selected server-owned port set (API, Studio, Direct DB, Supavisor transaction/session), persists the allocated aggregate and SQL projections together, synchronizes Direct DB fields, and releases disabled capability reservations. Allocation uses unique SQLite claims and retries safely on conflicts. The pinned service admission rules now cover Functions/Caddy/Storage and Auth/service drift.
+
+The create wire contract is authoritative: legacy top-level `domain`, `siteUrl`, and `services` projections were removed from `ProjectDraft`/`CreateProjectRequest`; domain, site URL and services are derived from `configuration`. Manager no longer normalizes an omitted aggregate or falls back to legacy fields. The frontend dependency action restores database/gateway closure and clears dependent Studio/Storage/Logs children. IPv4/IPv6/DNS and HTTP(S) validation was tightened to match Go, and redacted secret DTOs always require `{ action: "" }` while create/update actions use discriminated unions.
+
+Round 3 verification:
+
+```text
+go test ./...
+all packages passed
+
+npm test --workspace apps/web -- --run
+Test Files 10 passed (10)
+Tests 38 passed (38)
+
+npm run build --workspace apps/web
+TypeScript check and Vite build passed (existing chunk-size warning only)
+
+git diff --check
+passed
+```
+
+Commit: `add061a fix: make Task 7 aggregate and allocations authoritative`
