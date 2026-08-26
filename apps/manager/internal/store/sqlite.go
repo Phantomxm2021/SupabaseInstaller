@@ -55,7 +55,16 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	// modernc's txlock=immediate makes every Store.InTx begin with
+	// BEGIN IMMEDIATE. Admission therefore serializes its lease, conflict,
+	// snapshot and operation writes as one SQLite write transaction.
+	dsn := path
+	if strings.Contains(dsn, "?") {
+		dsn += "&_txlock=immediate"
+	} else {
+		dsn += "?_txlock=immediate"
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite: %w", err)
 	}

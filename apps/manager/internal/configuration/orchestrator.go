@@ -36,6 +36,10 @@ type PasswordRotationRollbackProvisioner interface {
 	RollbackDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) error
 }
 
+type PasswordRotationPublicationProvisioner interface {
+	ConfirmDatabasePasswordRotation(context.Context, contracts.ConfirmDatabasePasswordRotationRequest) error
+}
+
 type Orchestrator struct {
 	store       *store.Store
 	operations  *operation.Service
@@ -198,27 +202,36 @@ func (o *Orchestrator) releaseLeaseToken(ctx context.Context, projectID, owner s
 	if owner == "" || fence == 0 || o.store == nil {
 		return nil
 	}
+	o.leaseMu.Lock()
+	if lease, ok := o.leases[projectID]; ok && lease.Owner == owner && lease.Fence == fence {
+		delete(o.leases, projectID)
+	}
+	o.leaseMu.Unlock()
 	return o.store.ReleaseConfigurationLeaseOwned(ctx, projectID, owner, fence)
 }
 
 func (o *Orchestrator) renewLease(ctx context.Context, projectID, owner string, fence int64) <-chan struct{} {
 	lost := make(chan struct{})
-	ticker := time.NewTicker(15 * time.Minute)
-	defer ticker.Stop()
-	defer close(lost)
-	for {
-		select {
-		case <-ctx.Done():
-			return lost
-		case now := <-ticker.C:
-			if owner == "" || fence == 0 {
-				return lost
-			}
-			if renewed, err := o.store.RenewConfigurationLease(ctx, projectID, owner, fence, now, 45*time.Minute); err != nil || !renewed {
-				return lost
+	if owner == "" || fence == 0 {
+		close(lost)
+		return lost
+	}
+	go func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+		defer close(lost)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				if renewed, err := o.store.RenewConfigurationLease(ctx, projectID, owner, fence, now, 45*time.Minute); err != nil || !renewed {
+					return
+				}
 			}
 		}
-	}
+	}()
+	return lost
 }
 
 func (o *Orchestrator) currentFence(projectID string) int64 {
@@ -385,6 +398,41 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 				}
 				return o.fail(ctx, queued, step, err, rollback)
 			}
+			if confirmer, ok := o.provisioner.(PasswordRotationPublicationProvisioner); ok {
+				confirmation := contracts.ConfirmDatabasePasswordRotationRequest{OperationID: queued.ID, IdempotencyKey: queued.ID + ":confirm", ProjectID: currentProject.ID, Slug: currentProject.Slug, ExpectedRevision: snapshot.Revision - 1, NextRevision: snapshot.Revision, Fence: snapshot.Fence}
+				if err := confirmer.ConfirmDatabasePasswordRotation(ctx, confirmation); err != nil {
+					rollback := false
+					if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
+						rollbackRequest := rotationRequest
+						rollbackRequest.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
+						rollbackRequest.IdempotencyKey = queued.ID + ":rollback-confirm"
+						rollbackRequest.OldPassword, rollbackRequest.NewPassword = rollbackRequest.NewPassword, rollbackRequest.OldPassword
+						rollback = compensator.RollbackDatabasePassword(ctx, rollbackRequest) == nil
+					}
+					if rollback {
+						if restoreErr := o.store.RestoreConfigurationState(ctx, currentProject.ID, snapshot.Revision); restoreErr != nil {
+							rollback = false
+						}
+					}
+					return o.fail(ctx, queued, step, errors.New("database password rotation confirmation failed"), rollback)
+				}
+			}
+			if err := o.store.MarkConfigurationGood(ctx, currentProject.ID, snapshot.Revision); err != nil {
+				rollback := false
+				if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
+					rollbackRequest := rotationRequest
+					rollbackRequest.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
+					rollbackRequest.IdempotencyKey = queued.ID + ":rollback-mark-good"
+					rollbackRequest.OldPassword, rollbackRequest.NewPassword = rollbackRequest.NewPassword, rollbackRequest.OldPassword
+					rollback = compensator.RollbackDatabasePassword(ctx, rollbackRequest) == nil
+				}
+				if rollback {
+					if restoreErr := o.store.RestoreConfigurationState(ctx, currentProject.ID, snapshot.Revision); restoreErr != nil {
+						rollback = false
+					}
+				}
+				return o.fail(ctx, queued, step, errors.New("configuration publication failed"), rollback)
+			}
 		}
 		if err := o.operations.CompleteStep(ctx, queued.ID, step, progress); err != nil {
 			return queued, err
@@ -533,9 +581,6 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 		}
 		snapshot, err := o.store.GetOperationConfiguration(ctx, queued.ID)
 		if err != nil {
-			snapshot, err = o.store.GetDesiredConfiguration(ctx, queued.ProjectID)
-		}
-		if err != nil {
 			if queued.Status == operation.Queued {
 				_ = o.operations.Start(ctx, queued.ID)
 			}
@@ -553,11 +598,15 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 		if !o.tryAcquire(queued.ProjectID) {
 			continue
 		}
-		lease, leaseErr := o.acquireLease(ctx, queued.ProjectID, queued.ID)
-		if leaseErr != nil || !lease {
+		lease, acquired, leaseErr := o.store.AcquireConfigurationLeaseForOperation(ctx, queued.ProjectID, queued.ID, queued.ID, o.now(), 45*time.Minute)
+		if leaseErr != nil || !acquired {
 			o.release(queued.ProjectID)
 			continue
 		}
+		snapshot.Fence = lease.Fence
+		o.leaseMu.Lock()
+		o.leases[queued.ProjectID] = lease
+		o.leaseMu.Unlock()
 		go func(op operation.Operation, project contracts.Project, snap store.ConfigurationSnapshot, commandKind string, leaseFence int64) {
 			// Resume owns the admission resources before payload decoding. Keep a
 			// single scope around every exit, including corrupt/missing payloads.
@@ -598,7 +647,7 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 				return
 			}
 			_, _ = o.Run(context.Background(), project, op, snap)
-		}(queued, p, snapshot, kind, o.currentFence(queued.ProjectID))
+		}(queued, p, snapshot, kind, lease.Fence)
 	}
 	return nil
 }

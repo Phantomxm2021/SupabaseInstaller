@@ -15,6 +15,7 @@ import (
 var ErrStaleConfiguration = errors.New("stale project configuration revision")
 var ErrConfigurationConflict = errors.New("project configuration conflicts with another project")
 var ErrConfigurationBusy = errors.New("project configuration operation is busy")
+var ErrSecretSnapshotUnavailable = errors.New("encrypted secret snapshot is unavailable")
 
 type ConfigurationSnapshot struct {
 	ProjectID        string                         `json:"projectId"`
@@ -73,6 +74,23 @@ func (s *Store) AdmitConfiguration(ctx context.Context, input ConfigurationAdmis
 	var lease ConfigurationLease
 	err = s.InTx(ctx, func(tx *sql.Tx) error {
 		expires := input.Now.Add(input.LeaseTTL)
+		// Admission owns the complete conflict check. Keeping it in this
+		// transaction prevents a racing project from reserving the same domain
+		// or enabled port between validation and snapshot creation.
+		var conflictID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id <> ? AND (domain = ? OR EXISTS (
+			SELECT 1 FROM port_allocations pa WHERE pa.project_id <> ? AND ((? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?))
+		)) LIMIT 1`, input.ProjectID, input.Configuration.General.Domain, input.ProjectID,
+			input.Configuration.Network.APIPort, input.Configuration.Network.APIPort,
+			input.Configuration.Network.StudioPort, input.Configuration.Network.StudioPort,
+			input.Configuration.Network.DirectDatabasePort, input.Configuration.Network.DirectDatabasePort,
+			input.Configuration.Network.PoolerPort, input.Configuration.Network.PoolerPort,
+			input.Configuration.Pooler.TransactionPort, input.Configuration.Pooler.TransactionPort,
+			input.Configuration.Pooler.SessionPort, input.Configuration.Pooler.SessionPort).Scan(&conflictID); err == nil {
+			return fmt.Errorf("%w: %s", ErrConfigurationConflict, conflictID)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check configuration conflicts: %w", err)
+		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO project_configuration_leases(project_id, owner, fence, acquired_at, expires_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(project_id) DO UPDATE SET owner=excluded.owner, fence=project_configuration_leases.fence+1, acquired_at=excluded.acquired_at, expires_at=excluded.expires_at WHERE project_configuration_leases.expires_at <= excluded.acquired_at`, input.ProjectID, input.Owner, formatTime(input.Now), formatTime(expires))
 		if err != nil {
 			return fmt.Errorf("admit configuration lease: %w", err)
@@ -192,6 +210,44 @@ func (s *Store) OwnsConfigurationLease(ctx context.Context, projectID, owner str
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_configuration_leases WHERE project_id=? AND owner=? AND fence=? AND expires_at > ?`, projectID, owner, fence, formatTime(now)).Scan(&count)
 	return count == 1, err
+}
+
+// AcquireConfigurationLeaseForOperation resumes an operation with a fresh
+// fencing generation and binds that generation to its durable command payload
+// atomically. A resumed worker must never run a payload carrying an old fence.
+func (s *Store) AcquireConfigurationLeaseForOperation(ctx context.Context, projectID, owner, operationID string, now time.Time, ttl time.Duration) (ConfigurationLease, bool, error) {
+	var lease ConfigurationLease
+	err := s.InTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `INSERT INTO project_configuration_leases(project_id,owner,fence,acquired_at,expires_at) VALUES(?,?,1,?,?) ON CONFLICT(project_id) DO UPDATE SET owner=excluded.owner,fence=project_configuration_leases.fence+1,acquired_at=excluded.acquired_at,expires_at=excluded.expires_at WHERE project_configuration_leases.expires_at <= excluded.acquired_at`, projectID, owner, formatTime(now), formatTime(now.Add(ttl)))
+		if err != nil {
+			return err
+		}
+		count, _ := res.RowsAffected()
+		if count != 1 {
+			return ErrConfigurationBusy
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT fence FROM project_configuration_leases WHERE project_id=? AND owner=?`, projectID, owner).Scan(&lease.Fence); err != nil {
+			return err
+		}
+		updated, err := tx.ExecContext(ctx, `UPDATE operation_configurations SET fence=? WHERE operation_id=? AND project_id=?`, lease.Fence, operationID, projectID)
+		if err != nil {
+			return err
+		}
+		if count, err := updated.RowsAffected(); err != nil {
+			return err
+		} else if count != 1 {
+			return ErrNotFound
+		}
+		lease.Owner = owner
+		return nil
+	})
+	if errors.Is(err, ErrConfigurationBusy) {
+		return ConfigurationLease{}, false, nil
+	}
+	if err != nil {
+		return ConfigurationLease{}, false, err
+	}
+	return lease, true, nil
 }
 
 func (s *Store) GetConfiguration(ctx context.Context, projectID string) (ConfigurationSnapshot, error) {
@@ -395,6 +451,13 @@ func (s *Store) RestoreConfigurationState(ctx context.Context, projectID string,
 			return err
 		}
 		if present != 0 {
+			var rows int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_secret_versions WHERE project_id=? AND revision=?`, projectID, failedRevision).Scan(&rows); err != nil {
+				return err
+			}
+			if rows == 0 {
+				return ErrSecretSnapshotUnavailable
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id,kind,envelope_version,nonce,ciphertext,updated_at) SELECT project_id,kind,envelope_version,nonce,ciphertext,? FROM project_secret_versions WHERE project_id=? AND revision=?`, formatTime(time.Now()), projectID, failedRevision); err != nil {
 				return err
 			}
@@ -559,8 +622,10 @@ func (s *Store) PublishConfigurationSecret(ctx context.Context, projectID string
 		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id,kind,envelope_version,nonce,ciphertext,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id,kind) DO UPDATE SET envelope_version=excluded.envelope_version,nonce=excluded.nonce,ciphertext=excluded.ciphertext,updated_at=excluded.updated_at`, projectID, kind, envelope.Version, envelope.Nonce, envelope.Ciphertext, formatTime(now)); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE projects SET last_good_revision=?, updated_at=? WHERE id=?`, revision, formatTime(now), projectID)
-		return err
+		// Secret publication is only one side of a runtime rotation. The
+		// revision becomes last-good after the Provisioner confirms its durable
+		// journal, so compensation can still restore the previous snapshot.
+		return nil
 	})
 }
 

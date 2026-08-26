@@ -44,6 +44,15 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if request.NextRevision <= metadata.Revision || request.Configuration.Revision != request.NextRevision {
 			return contracts.ErrInvalidReconcileRevision
 		}
+		// Claim the highest fence durably before rendering or touching Docker.
+		// The projectfs file lock serializes this claim across Provisioner
+		// processes; every later metadata publication carries the same token.
+		if request.Fence > 0 && metadata.Fence < request.Fence {
+			metadata.Fence = request.Fence
+			if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
+				return err
+			}
+		}
 		fail := func(err error) error {
 			var outcome *contracts.ReconcileFailure
 			if !errors.As(err, &outcome) {

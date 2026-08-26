@@ -48,6 +48,20 @@ func TestRotateDatabasePasswordPublishesNewGenerationAndMetadata(t *testing.T) {
 	if err != nil || metadata.Revision != 2 {
 		t.Fatalf("metadata = %#v, %v", metadata, err)
 	}
+	if metadata.Rotation == nil || metadata.Rotation.Phase != "provisioner-committed" {
+		t.Fatalf("rotation journal = %#v, want provisioner-committed until Manager confirmation", metadata.Rotation)
+	}
+	confirmation := contracts.ConfirmDatabasePasswordRotationRequest{OperationID: request.OperationID, IdempotencyKey: "confirm-key", ProjectID: request.ProjectID, Slug: request.Slug, ExpectedRevision: request.ExpectedRevision, NextRevision: request.NextRevision}
+	if err := backend.ConfirmDatabasePasswordRotation(context.Background(), confirmation); err != nil {
+		t.Fatalf("confirm rotation publication: %v", err)
+	}
+	metadata, err = root.Metadata("bee")
+	if err != nil || metadata.Rotation != nil {
+		t.Fatalf("confirmed metadata = %#v, %v; want cleared journal", metadata, err)
+	}
+	if err := backend.ConfirmDatabasePasswordRotation(context.Background(), confirmation); err != nil {
+		t.Fatalf("idempotent rotation confirmation: %v", err)
+	}
 }
 
 func TestRotateDatabasePasswordHealthFailureRestoresOldRoleAndReportsRollback(t *testing.T) {

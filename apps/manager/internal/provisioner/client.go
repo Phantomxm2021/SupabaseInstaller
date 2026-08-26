@@ -82,6 +82,10 @@ func (c *Client) RollbackDatabasePassword(ctx context.Context, input contracts.R
 	return c.post(ctx, "/internal/v1/projects/rollback-database-password", input, nil)
 }
 
+func (c *Client) ConfirmDatabasePasswordRotation(ctx context.Context, input contracts.ConfirmDatabasePasswordRotationRequest) error {
+	return c.post(ctx, "/internal/v1/projects/confirm-database-password-rotation", input, nil)
+}
+
 func (c *Client) post(ctx context.Context, path string, input, output any) error {
 	body, err := json.Marshal(input)
 	if err != nil {

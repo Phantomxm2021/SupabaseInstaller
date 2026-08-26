@@ -17,6 +17,32 @@ type PasswordRotator interface {
 	RotateDatabasePassword(context.Context, compose.ProjectRef, string, string) error
 }
 
+// ConfirmDatabasePasswordRotation is the Manager publication boundary. It is
+// separate from rotation so the journal cannot be closed before the encrypted
+// secret transaction succeeds.
+func (backend *Backend) ConfirmDatabasePasswordRotation(ctx context.Context, request contracts.ConfirmDatabasePasswordRotationRequest) error {
+	if request.OperationID == "" || request.ProjectID == "" || request.Slug == "" || request.NextRevision <= request.ExpectedRevision {
+		return contracts.ErrInvalidReconcileRevision
+	}
+	_, err := backend.projectFS.UpdateMetadata(request.Slug, func(metadata *projectfs.Metadata) error {
+		if metadata.ProjectID != request.ProjectID || metadata.Revision != request.NextRevision {
+			return contracts.ErrStaleConfigRevision
+		}
+		if request.Fence > 0 && metadata.Fence > request.Fence {
+			return contracts.ErrStaleConfigRevision
+		}
+		if metadata.Rotation == nil {
+			return nil // idempotent after the completed confirmation
+		}
+		if metadata.Rotation.OperationID != request.OperationID || metadata.Rotation.Phase != "provisioner-committed" || metadata.Rotation.NextRevision != request.NextRevision {
+			return contracts.ErrStaleConfigRevision
+		}
+		metadata.Rotation = nil
+		return nil
+	})
+	return err
+}
+
 // RollbackDatabasePassword compensates a successful runtime rotation when the
 // Manager cannot publish its encrypted secret envelope.
 func (backend *Backend) RollbackDatabasePassword(ctx context.Context, request contracts.RotateDatabasePasswordRequest) error {
@@ -156,6 +182,12 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		if metadata.Revision != request.ExpectedRevision || request.NextRevision <= request.ExpectedRevision || request.OldPassword == "" || request.NewPassword == "" || request.OldPassword == request.NewPassword {
 			return contracts.ErrInvalidReconcileRevision
 		}
+		if request.Fence > 0 && metadata.Fence < request.Fence {
+			metadata.Fence = request.Fence
+			if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
+				return err
+			}
+		}
 		rotator, ok := backend.runner.(PasswordRotator)
 		if !ok {
 			return &contracts.ReconcileFailure{Cause: errors.New("rotation unavailable"), RollbackSucceeded: false}
@@ -170,8 +202,10 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 			return oldRefErr
 		}
 		oldRef := compose.ProjectRef{Slug: request.Slug, Dir: oldRuntimeRef.ProjectDir, ComposeFile: oldRuntimeRef.ComposeFile, EnvFile: oldRuntimeRef.EnvFile}
-		metadata.Rotation = &projectfs.RotationJournal{OperationID: request.OperationID, Phase: "prepared", ExpectedRevision: request.ExpectedRevision, NextRevision: request.NextRevision}
-		_ = backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata)
+		metadata.Rotation = &projectfs.RotationJournal{OperationID: request.OperationID, Phase: "prepared", OldGeneration: filepath.Base(filepath.Dir(oldRef.ComposeFile)), ExpectedRevision: request.ExpectedRevision, NextRevision: request.NextRevision}
+		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
+			return err
+		}
 		restoreRuntime := func() error { return nil }
 		if request.Configuration.General.SupabaseVersion != "" {
 			rendered, renderErr := render.Project(render.Input{ProjectID: request.ProjectID, Slug: request.Slug, APIPort: request.Configuration.Network.APIPort, Configuration: request.Configuration, Secrets: request.Secrets, RuntimeSecrets: request.RuntimeSecrets})
@@ -200,7 +234,10 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 			metadata.Rotation.NewGeneration = filepath.Base(filepath.Dir(publishedRef.ComposeFile))
 			metadata.Rotation.OldGeneration = filepath.Base(filepath.Dir(oldRef.ComposeFile))
 			metadata.Rotation.Phase = "runtime-published"
-			_ = backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata)
+			if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
+				rollbackErr := restore()
+				return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil}
+			}
 		}
 		services := without(enabledServices(metadata.Configuration), "db")
 		if err := rotator.RotateDatabasePassword(ctx, ref, request.OldPassword, request.NewPassword); err != nil {
@@ -208,7 +245,11 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 			return &contracts.ReconcileFailure{Cause: errors.New("database password update failed"), RollbackSucceeded: false}
 		}
 		metadata.Rotation.Phase = "db-rotated"
-		_ = backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata)
+		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
+			rollbackErr := rotator.RotateDatabasePassword(ctx, oldRef, request.NewPassword, request.OldPassword)
+			restoreErr := restoreRuntime()
+			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil && restoreErr == nil}
+		}
 		rollback := func() error {
 			if err := restoreRuntime(); err != nil {
 				return err
@@ -238,7 +279,10 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 			return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: true}
 		}
 		metadata.Rotation.Phase = "services-verified"
-		_ = backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata)
+		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
+			rollbackErr := rollback()
+			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil}
+		}
 		metadata.Rotation.Phase = "provisioner-committed"
 		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
 			return err
@@ -252,7 +296,6 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		metadata.EnabledServices = enabledServices(request.Configuration)
 		raw, _ := json.Marshal(result)
 		metadata.Idempotency[request.IdempotencyKey] = raw
-		metadata.Rotation.Phase = "manager-published"
 		return nil
 	}, func() error {
 		if compensation == nil {

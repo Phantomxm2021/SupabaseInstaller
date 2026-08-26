@@ -74,6 +74,18 @@ type RotateDatabasePasswordResponse struct {
 	Error       *APIError `json:"error,omitempty"`
 }
 
+// ConfirmDatabasePasswordRotation closes the durable rotation journal only
+// after Manager has committed the encrypted secret.
+type ConfirmDatabasePasswordRotationRequest struct {
+	OperationID      string `json:"operationId"`
+	IdempotencyKey   string `json:"idempotencyKey"`
+	ProjectID        string `json:"projectId"`
+	Slug             string `json:"slug"`
+	ExpectedRevision int64  `json:"expectedRevision"`
+	NextRevision     int64  `json:"nextRevision"`
+	Fence            int64  `json:"fence,omitempty"`
+}
+
 type ProjectSecrets struct {
 	DatabasePassword           string `json:"databasePassword"`
 	JWTSecret                  string `json:"jwtSecret"`

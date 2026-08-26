@@ -37,6 +37,7 @@ func New(options Options) http.Handler {
 	private.HandleFunc("POST /internal/v1/projects/reconcile", service.reconcile)
 	private.HandleFunc("POST /internal/v1/projects/rotate-database-password", service.rotateDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/rollback-database-password", service.rollbackDatabasePassword)
+	private.HandleFunc("POST /internal/v1/projects/confirm-database-password-rotation", service.confirmDatabasePasswordRotation)
 	root := http.NewServeMux()
 	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
 	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
@@ -168,6 +169,32 @@ func (s *server) rollbackDatabasePassword(response http.ResponseWriter, request 
 			return
 		}
 		writeJSON(response, http.StatusUnprocessableEntity, contracts.RotateDatabasePasswordResponse{OperationID: input.OperationID, ProjectID: input.ProjectID, Revision: input.ExpectedRevision, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rollback failed"}})
+		return
+	}
+	response.WriteHeader(http.StatusNoContent)
+}
+
+type passwordRotationConfirmationBackend interface {
+	ConfirmDatabasePasswordRotation(context.Context, contracts.ConfirmDatabasePasswordRotationRequest) error
+}
+
+func (s *server) confirmDatabasePasswordRotation(response http.ResponseWriter, request *http.Request) {
+	backend, ok := s.backend.(passwordRotationConfirmationBackend)
+	if !ok {
+		writeError(response, http.StatusServiceUnavailable, "ROTATION_UNAVAILABLE", "Database password rotation is unavailable")
+		return
+	}
+	var input contracts.ConfirmDatabasePasswordRotationRequest
+	if err := decodeJSON(response, request, &input); err != nil || input.OperationID == "" || input.IdempotencyKey == "" || input.ProjectID == "" || input.Slug == "" || input.NextRevision <= input.ExpectedRevision {
+		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed rotation confirmation request is required")
+		return
+	}
+	if err := backend.ConfirmDatabasePasswordRotation(request.Context(), input); err != nil {
+		if errors.Is(err, contracts.ErrStaleConfigRevision) {
+			writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
+			return
+		}
+		writeError(response, http.StatusUnprocessableEntity, "ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation confirmation failed")
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)

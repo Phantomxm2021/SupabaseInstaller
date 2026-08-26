@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"supabase-manager/internal/contracts"
@@ -920,6 +921,11 @@ func (r *Root) ProjectPath(slug string) (string, error) {
 func (r *Root) Metadata(slug string) (Metadata, error) {
 	r.metadataMu.Lock()
 	defer r.metadataMu.Unlock()
+	unlock, err := r.lockMetadataFile(slug)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer unlock()
 	return r.readMetadata(slug)
 }
 
@@ -929,6 +935,11 @@ func (r *Root) UpdateMetadata(slug string, mutate func(*Metadata) error) (Metada
 	// runtime code must never acquire metadataMu.
 	r.metadataMu.Lock()
 	defer r.metadataMu.Unlock()
+	unlock, err := r.lockMetadataFile(slug)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer unlock()
 	metadata, err := r.readMetadata(slug)
 	if errors.Is(err, ErrNotFound) {
 		metadata = Metadata{Slug: slug, Idempotency: make(map[string]json.RawMessage)}
@@ -953,6 +964,11 @@ func (r *Root) UpdateMetadata(slug string, mutate func(*Metadata) error) (Metada
 func (r *Root) UpdateMetadataWithRollback(slug string, mutate func(*Metadata) error, rollback func() error) (Metadata, error) {
 	r.metadataMu.Lock()
 	defer r.metadataMu.Unlock()
+	unlock, err := r.lockMetadataFile(slug)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer unlock()
 	metadata, err := r.readMetadata(slug)
 	if errors.Is(err, ErrNotFound) {
 		metadata = Metadata{Slug: slug, Idempotency: make(map[string]json.RawMessage)}
@@ -976,6 +992,26 @@ func (r *Root) UpdateMetadataWithRollback(slug string, mutate func(*Metadata) er
 		return Metadata{}, writeErr
 	}
 	return metadata, mutationErr
+}
+
+func (r *Root) lockMetadataFile(slug string) (func(), error) {
+	projectPath, err := r.ProjectPath(slug)
+	if err != nil {
+		return nil, err
+	}
+	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
+	if err := os.MkdirAll(runtimeRoot, 0o700); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(filepath.Join(runtimeRoot, "fence.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return func() { _ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN); _ = file.Close() }, nil
 }
 
 func (r *Root) readMetadata(slug string) (Metadata, error) {

@@ -58,6 +58,17 @@ func main() {
 	if err := configurationManager.Resume(context.Background(), projects.Get); err != nil {
 		slog.Error("resume configuration operations failed", "error", err)
 	}
+	// Resume is durable: a worker whose lease expired while the process was
+	// unavailable is retried by this scheduler once the lease can be acquired.
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := configurationManager.Resume(context.Background(), projects.Get); err != nil {
+				slog.Error("scheduled configuration resume failed", "error", err)
+			}
+		}
+	}()
 	lifecycleManager := lifecycle.NewService(database, operations, provisionerClient)
 	api := httpapi.NewRouter(httpapi.RouterOptions{
 		Auth:          httpapi.AuthOptions{Service: adminAuth, PublicOrigin: cfg.PublicOrigin, SecureCookies: cfg.SecureCookies},
