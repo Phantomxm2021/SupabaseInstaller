@@ -12,6 +12,8 @@ import { ComingSoonPage, ProjectLayout } from '../features/project/ProjectLayout
 import { AppShell } from './AppShell'
 import { ManagerSettingsPage } from '../features/settings/ManagerSettingsPage'
 import { AuthenticationWorkspace, EmailsRoute, EmailTemplateEditorRoute, MultiFactorRoute, RateLimitsRoute, SignInProvidersRoute, URLConfigurationRoute } from '../features/authentication/AuthenticationWorkspace'
+import { AuthenticationUnavailablePage } from '../features/authentication/AuthenticationUnavailablePage'
+import { unsupportedAuthenticationRoutes } from '../features/authentication/navigation'
 
 function EntryGate() {
   const setup = useQuery({ queryKey: ['setup-status'], queryFn: () => apiFetch<{ required: boolean }>('/api/setup/status') })
@@ -56,6 +58,7 @@ export function createAppRouter(_queryClient: QueryClient) {
                 { path: 'rate-limits', element: <RateLimitsRoute /> },
                 { path: 'multi-factor', element: <MultiFactorRoute /> },
                 { path: 'url-configuration', element: <URLConfigurationRoute /> },
+                ...unsupportedAuthenticationRoutes.map(([path, label]) => ({ path, element: <AuthenticationUnavailablePage title={label} /> })),
               ],
             },
             { path: 'logs', element: <ComingSoonPage /> },
