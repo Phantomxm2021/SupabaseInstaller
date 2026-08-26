@@ -36,6 +36,9 @@ func main() {
 		os.Exit(1)
 	}
 	backend := provisionerruntime.NewBackend(root, compose.NewRunner(compose.OSExecutor{}), health.NewInspector(dockerSource))
+	if cfg.AcceptanceInspectorFailOnce {
+		backend.EnableAcceptanceInspectorFailure()
+	}
 	handler := provisionerserver.New(provisionerserver.Options{ManagerToken: cfg.ManagerToken, ProjectFS: root, Backend: backend})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,

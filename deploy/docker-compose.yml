@@ -51,6 +51,7 @@ services:
     environment:
       PROVISIONER_LISTEN_ADDR: 0.0.0.0:9090
       MANAGER_TOKEN: ${PROVISIONER_TOKEN:?set PROVISIONER_TOKEN in deploy/.env}
+      ACCEPTANCE_INSPECTOR_FAIL_ONCE: ${ACCEPTANCE_INSPECTOR_FAIL_ONCE:-0}
       PROJECT_ROOT: ${PROJECT_ROOT:-/opt/supabase-manager/projects}
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:

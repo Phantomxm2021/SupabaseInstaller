@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,29 @@ func TestConfigurationReconcile(t *testing.T) {
 		composeProject = os.Getenv("SUPABASE_MANAGER_E2E_COMPOSE_PROJECT")
 	}
 	before := inspectContainerIDs(t, composeProject)
+	slug := project["slug"].(string)
+	beforeFiles := snapshotRuntimeFiles(t, slug)
+	t.Log("captured initial runtime files; submitting inspector-failure mutation")
 	google := map[string]any{"enabled": true, "clientId": "acceptance-client", "secretSet": true, "secret": map[string]any{"action": "replace", "value": acceptanceValue()}, "fields": map[string]any{}}
+	if os.Getenv("SUPABASE_MANAGER_E2E_INSPECTOR_FAIL_ONCE") == "1" {
+		failedPatch := patchJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration/oauth/google", map[string]any{"expectedRevision": revision, "value": google}, cookie, csrf)
+		t.Log("inspector-failure mutation admitted; waiting for rollback")
+		outcome := waitOperationOutcome(t, client, baseURL, failedPatch["operationId"].(string), cookie, csrf)
+		t.Logf("inspector-failure operation terminal status=%v", outcome["status"])
+		if outcome["status"] != "ROLLED_BACK" {
+			t.Fatalf("inspector failpoint operation status=%v, want ROLLED_BACK", outcome["status"])
+		}
+		restored := getJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration", cookie, csrf)
+		if int64(restored["revision"].(float64)) != revision || int64(restored["lastGoodRevision"].(float64)) != revision {
+			t.Fatalf("failed candidate changed desired/last-good revision: %v", restored)
+		}
+		afterFailure := inspectContainerIDs(t, composeProject)
+		assertServiceChange(t, before, afterFailure, "auth", false)
+		assertServiceHealthy(t, afterFailure["auth"])
+		assertRuntimeFilesEqual(t, beforeFiles, snapshotRuntimeFiles(t, slug))
+		config = restored
+		revision = int64(config["revision"].(float64))
+	}
 	op := patchJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration/oauth/google", map[string]any{"expectedRevision": revision, "value": google}, cookie, csrf)
 	waitOperation(t, client, baseURL, op["operationId"].(string), cookie, csrf)
 	afterOAuth := inspectContainerIDs(t, composeProject)
@@ -241,6 +264,48 @@ func assertOnlyServicesChanged(t *testing.T, before, after map[string]string, ch
 	}
 }
 
+func assertServiceHealthy(t *testing.T, containerID string) {
+	t.Helper()
+	if containerID == "" {
+		t.Fatal("cannot verify health of an empty container ID")
+	}
+	output, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", containerID).Output()
+	if err != nil {
+		t.Fatalf("inspect service health: %v", err)
+	}
+	state := strings.TrimSpace(string(output))
+	if state != "true healthy" {
+		t.Fatalf("service %s is not healthy: %q", containerID, state)
+	}
+}
+
+func snapshotRuntimeFiles(t *testing.T, slug string) map[string][]byte {
+	t.Helper()
+	root := os.Getenv("SUPABASE_MANAGER_E2E_PROJECT_ROOT")
+	if root == "" {
+		t.Fatal("SUPABASE_MANAGER_E2E_PROJECT_ROOT is required for runtime rollback inspection")
+	}
+	current := filepath.Join(root, slug, ".manager-runtime", "current")
+	files := make(map[string][]byte, 3)
+	for _, name := range []string{"docker-compose.yml", ".env", ".env.functions"} {
+		content, err := os.ReadFile(filepath.Join(current, name))
+		if err != nil {
+			t.Fatalf("read current runtime file %s: %v", name, err)
+		}
+		files[name] = content
+	}
+	return files
+}
+
+func assertRuntimeFilesEqual(t *testing.T, before, after map[string][]byte) {
+	t.Helper()
+	for _, name := range []string{"docker-compose.yml", ".env", ".env.functions"} {
+		if !bytes.Equal(before[name], after[name]) {
+			t.Fatalf("runtime file %s was not restored after inspector failure", name)
+		}
+	}
+}
+
 func acceptanceValue() string { return fmt.Sprintf("task10-acceptance-%d", time.Now().UnixNano()) }
 
 func loginAcceptance(t *testing.T, client *http.Client, baseURL, username, password string) (string, string) {
@@ -364,4 +429,19 @@ func waitOperation(t *testing.T, client *http.Client, baseURL, operationID, cook
 		time.Sleep(2 * time.Second)
 	}
 	t.Fatal("operation did not complete within acceptance timeout")
+}
+
+func waitOperationOutcome(t *testing.T, client *http.Client, baseURL, operationID, cookie, csrf string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Minute)
+	for time.Now().Before(deadline) {
+		result := getJSON(t, client, baseURL+"/api/operations/"+operationID, cookie, csrf)
+		switch result["status"] {
+		case "SUCCEEDED", "FAILED", "ROLLED_BACK", "CANCELLED":
+			return result
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatal("operation did not complete within acceptance timeout")
+	return nil
 }

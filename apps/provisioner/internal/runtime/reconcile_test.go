@@ -111,6 +111,40 @@ func TestAcceptanceInspectorFailureRestoresPreviousRuntimeAndRecreatesPriorAuth(
 	}
 }
 
+func TestAcceptanceInspectorFailpointForcesCandidateRollback(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	backend.EnableAcceptanceInspectorFailure()
+	changed := baseConfig()
+	changed.General.SiteURL = "https://failpoint.example.com"
+	changed.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: false}}
+	result, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil {
+		t.Fatal("failpoint reconcile unexpectedly succeeded")
+	}
+	var failure *contracts.ReconcileFailure
+	if !errors.As(err, &failure) || !failure.RollbackSucceeded || !result.RolledBack {
+		t.Fatalf("failpoint result=%#v failure=%v, want successful rollback", result, err)
+	}
+	metadata, err := root.Metadata("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Revision != 1 {
+		t.Fatalf("metadata revision=%d, want 1 after failpoint rollback", metadata.Revision)
+	}
+	if len(runner.recreated) < 2 {
+		t.Fatalf("inspector failpoint recreated services=%#v, want candidate and previous runtime", runner.recreated)
+	}
+}
+
 func TestReconcileRenderFailureReportsRuntimeUnchangedForManagerRecovery(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {

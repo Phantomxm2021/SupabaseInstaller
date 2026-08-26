@@ -115,8 +115,8 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 					recoveryErr = err
 				}
 			}
-			if recoveryErr == nil && len(previousServices) > 0 {
-				if err := backend.waitHealthy(ctx, request.Slug, previousServices); err != nil {
+			if recoveryErr == nil && len(rollbackServices) > 0 {
+				if err := backend.waitHealthy(ctx, request.Slug, rollbackServices); err != nil {
 					recoveryErr = err
 				}
 			}
@@ -160,6 +160,17 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		}
 		if err := backend.waitHealthy(ctx, request.Slug, newServices); err != nil {
 			return fail(rollback(err))
+		}
+		// The disposable acceptance harness injects one inspector failure after
+		// candidate runtime apply. The normal rollback path then restores the
+		// previous pointer and recreates its affected services.
+		if backend.acceptanceInspectorFailOnce.Load() && request.Configuration.Auth.OAuth != nil && backend.consumeAcceptanceInspectorFailure() {
+			_, inspectErr := backend.inspector.Project(ctx, health.ProjectRef{Slug: request.Slug, Enabled: newServices})
+			cause := errors.New("acceptance inspector failure")
+			if inspectErr != nil {
+				cause = errors.Join(cause, inspectErr)
+			}
+			return fail(rollback(cause))
 		}
 		result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.NextRevision, EnabledServices: newServices, RecreatedServices: intersect(affectedServices(previousConfig, request.Configuration), newServices)}
 		encoded, _ := json.Marshal(result)

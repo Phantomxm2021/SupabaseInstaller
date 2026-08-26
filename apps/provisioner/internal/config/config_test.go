@@ -43,3 +43,15 @@ func TestLoadRejectsPublishedZeroToken(t *testing.T) {
 		t.Fatal("Load accepted published zero token")
 	}
 }
+
+func TestLoadEnablesInspectorFailpointOnlyWhenExplicitlyRequested(t *testing.T) {
+	t.Setenv("MANAGER_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("ACCEPTANCE_INSPECTOR_FAIL_ONCE", "1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AcceptanceInspectorFailOnce {
+		t.Fatal("explicit acceptance inspector failpoint was not loaded")
+	}
+}

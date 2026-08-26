@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
@@ -27,13 +28,25 @@ type HealthInspector interface {
 }
 
 type Backend struct {
-	projectFS *projectfs.Root
-	runner    LifecycleRunner
-	inspector HealthInspector
+	projectFS                   *projectfs.Root
+	runner                      LifecycleRunner
+	inspector                   HealthInspector
+	acceptanceInspectorFailOnce atomic.Bool
 }
 
 func NewBackend(projectFS *projectfs.Root, runner LifecycleRunner, inspector HealthInspector) *Backend {
 	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector}
+}
+
+// EnableAcceptanceInspectorFailure is only wired by the disposable acceptance
+// compose environment. It consumes one candidate inspection and lets the
+// normal runtime rollback path run against the real Inspector afterward.
+func (backend *Backend) EnableAcceptanceInspectorFailure() {
+	backend.acceptanceInspectorFailOnce.Store(true)
+}
+
+func (backend *Backend) consumeAcceptanceInspectorFailure() bool {
+	return backend.acceptanceInspectorFailOnce.CompareAndSwap(true, false)
 }
 
 func (backend *Backend) Lifecycle(ctx context.Context, request contracts.LifecycleRequest) error {
