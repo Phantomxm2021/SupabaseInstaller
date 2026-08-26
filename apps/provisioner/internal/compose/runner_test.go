@@ -38,6 +38,12 @@ func TestRotateDatabasePasswordKeepsSecretsOutOfArgv(t *testing.T) {
 	}
 }
 
+func TestRotateDatabasePasswordRequiresControlledInputExecutor(t *testing.T) {
+	if err := NewRunner(&fakeExecutor{}).RotateDatabasePassword(context.Background(), ProjectRef{Slug: "bee", Dir: "/tmp/project"}, "old", "new"); err == nil || !strings.Contains(err.Error(), "secure database password input") {
+		t.Fatalf("rotation without controlled input error = %v", err)
+	}
+}
+
 func TestRunnerUsesArgumentVectorAndFixedProjectDirectory(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)

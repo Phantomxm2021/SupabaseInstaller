@@ -3,6 +3,7 @@ package compose
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -62,12 +63,7 @@ func (r *Runner) RotateDatabasePassword(ctx context.Context, project ProjectRef,
 		}
 		return nil
 	}
-	args = append(args, "-v", "new_password="+newPassword, "-c", "ALTER ROLE postgres PASSWORD :'new_password'")
-	output, err := r.executor.Run(ctx, "docker", args, nil)
-	if err != nil {
-		return fmt.Errorf("database password update failed; output length=%d", len(output))
-	}
-	return nil
+	return errors.New("secure database password input is unavailable")
 }
 
 // composeServices is the closed set emitted by the pinned renderer. Reconcile
