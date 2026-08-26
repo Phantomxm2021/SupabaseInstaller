@@ -14,7 +14,7 @@ it('renders the installed project configuration workspace from the redacted snap
   expect(screen.getByLabelText('Maximum connections')).toBeVisible()
   expect(screen.getByRole('tab', { name: 'API & Secrets' })).toBeVisible()
   expect(screen.getByRole('tablist')).toHaveClass('h-auto')
-  expect(screen.getByRole('tablist')).toHaveClass('overflow-visible')
+  expect(screen.getByRole('tablist')).toHaveClass('flex-nowrap', 'overflow-x-auto')
 })
 
 function redactedSnapshot(domain = 'bee.example.com') {
@@ -168,7 +168,7 @@ it('enables Studio with Gateway and postgres-meta, then persists the closure', a
   vi.stubGlobal('PointerEvent', MouseEvent)
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === 'PATCH') { patchBody = String(init.body); return new Response(JSON.stringify({ projectId: 'bee', operationId: 'op-studio', revision: 5 }), { status: 202 }) }
-    const snapshot = redactedSnapshot(); snapshot.configuration.services = { ...defaultConfiguration('LIGHTWEIGHT').services, gateway: false, studio: false, postgresMeta: true }; return new Response(JSON.stringify(snapshot), { status: 200 })
+    const snapshot = redactedSnapshot(); snapshot.configuration.services = { ...defaultConfiguration('LIGHTWEIGHT').services, gateway: false, studio: false, postgresMeta: false }; return new Response(JSON.stringify(snapshot), { status: 200 })
   }))
   renderConfiguration('services')
   await user.click(await screen.findByRole('switch', { name: 'Studio' }))
@@ -177,6 +177,39 @@ it('enables Studio with Gateway and postgres-meta, then persists the closure', a
   await user.click(screen.getByRole('button', { name: 'Save Services' }))
   await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
   await waitFor(() => expect(patchBody).toContain('"gateway":true'))
+  expect(patchBody).toContain('"postgresMeta":true')
+})
+
+it('does not submit Services when a toggle is returned to its baseline', async () => {
+  const user = userEvent.setup(); let patchCount = 0
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === 'PATCH') patchCount += 1
+    return new Response(JSON.stringify(redactedSnapshot()), { status: init?.method === 'PATCH' ? 202 : 200 })
+  }))
+  renderConfiguration('services')
+  const directDb = await screen.findByRole('switch', { name: 'Direct PostgreSQL port' })
+  await user.click(directDb)
+  expect(screen.getByRole('button', { name: 'Save Services' })).toBeEnabled()
+  await user.click(directDb)
+  expect(screen.getByRole('button', { name: 'Save Services' })).toBeDisabled()
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  expect(patchCount).toBe(0)
+})
+
+it('keeps postgres-meta when Studio is disabled and persists the independent intent', async () => {
+  const user = userEvent.setup(); let patchBody = ''
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === 'PATCH') { patchBody = String(init.body); return new Response(JSON.stringify({ projectId: 'bee', operationId: 'op-studio-off', revision: 5 }), { status: 202 }) }
+    const snapshot = redactedSnapshot(); snapshot.configuration.services = { ...defaultConfiguration('LIGHTWEIGHT').services, gateway: true, studio: true, postgresMeta: true }; return new Response(JSON.stringify(snapshot), { status: 200 })
+  }))
+  renderConfiguration('services')
+  await user.click(await screen.findByRole('switch', { name: 'Studio' }))
+  expect(screen.getByRole('switch', { name: 'postgres-meta' })).toHaveAttribute('data-checked')
+  await user.click(screen.getByRole('button', { name: 'Save Services' }))
+  await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
+  await waitFor(() => expect(patchBody).toContain('"studio":false'))
   expect(patchBody).toContain('"postgresMeta":true')
 })
 
