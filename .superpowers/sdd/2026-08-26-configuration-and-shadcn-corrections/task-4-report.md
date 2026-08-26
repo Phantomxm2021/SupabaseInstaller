@@ -33,11 +33,16 @@ an extra generation and startup did not restore quarantine entries.
 - Hardened compatibility writes to invoke restore after commit failure.
 - Added durable legacy quarantine startup recovery/cleanup for interrupted and
   partially populated migrations, restricted to the three legacy runtime names.
+- Retained an in-memory backup of migrated legacy entries so a later runtime
+  failure can restore them after quarantine finalization.
 
 ## Commit
 
 The implementation is committed as `feat: reconcile project configuration with rollback`
 (`10feb83`). This report is updated in the follow-up documentation commit.
+
+Legacy post-commit rollback hardening is in `fix: preserve legacy runtime rollback`
+(`3347616`).
 
 ## Residual risks
 
