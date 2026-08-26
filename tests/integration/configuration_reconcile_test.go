@@ -70,7 +70,12 @@ func TestConfigurationReconcile(t *testing.T) {
 	assertServiceChange(t, afterOAuth, afterFunctions, "functions", true)
 	supabaseURL := strings.TrimRight(os.Getenv("SUPABASE_MANAGER_E2E_SUPABASE_URL"), "/")
 	if supabaseURL == "" {
-		t.Fatal("SUPABASE_MANAGER_E2E_SUPABASE_URL is required")
+		network, networkOK := canonical["network"].(map[string]any)
+		apiPort, portOK := network["apiPort"].(float64)
+		if !networkOK || !portOK || apiPort < 1 {
+			t.Fatal("SUPABASE_MANAGER_E2E_SUPABASE_URL or canonical network.apiPort is required")
+		}
+		supabaseURL = fmt.Sprintf("http://127.0.0.1:%d", int(apiPort))
 	}
 	request, err := http.NewRequest(http.MethodGet, supabaseURL+"/auth/v1/settings", nil)
 	if err != nil {
