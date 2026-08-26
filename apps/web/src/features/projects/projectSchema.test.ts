@@ -10,6 +10,8 @@ it.each(['LIGHTWEIGHT', 'STANDARD', 'FULL', 'CUSTOM'] as const)('default %s conf
   project.configuration = { ...defaultConfiguration(preset), general: project.configuration.general }
   expect(projectSchema.safeParse(project).success).toBe(true)
   expect(project.configuration.auth.enabled).toBe(project.configuration.services.auth)
+  expect(project.configuration.pooler.transactionPort).toBe(0)
+  expect(project.configuration.pooler.sessionPort).toBe(0)
 })
 
 it('applies the complete service closure for presets', () => {
@@ -84,4 +86,16 @@ it('keeps redacted and update secret truth tables distinct', () => {
   expect(updateSecretSchema.safeParse({ action: 'remove', value: 'leak' }).success).toBe(false)
   expect(updateSecretSchema.safeParse({ action: 'replace' }).success).toBe(false)
   expect(updateSecretSchema.safeParse({ action: 'replace', value: 'secret' }).success).toBe(true)
+})
+
+it.each([
+  ['SMTP', (configuration: any) => { configuration.auth.smtp = { ...configuration.auth.smtp, enabled: true, host: 'smtp.example.com', username: 'bee', senderEmail: 'bee@example.com', senderName: 'Bee', password: { action: 'replace', value: ' ' } } }, ['auth', 'smtp', 'password', 'value']],
+  ['OAuth', (configuration: any) => { configuration.auth.oauth = { google: { enabled: true, clientId: 'client', secretSet: false, secret: { action: 'replace', value: ' ' }, fields: {} } } }, ['auth', 'oauth', 'google', 'secret', 'value']],
+  ['Storage', (configuration: any) => { configuration.services.storage = true; configuration.storage = { ...configuration.storage, backend: 's3', bucket: 'bee', region: 'us-east-1', endpoint: 'https://s3.example.com', accessKeyId: 'access', secretAccessKey: { action: 'replace', value: ' ' } } }, ['storage', 'secretAccessKey', 'value']],
+] as const)('reports %s whitespace secret at its nested value path', (_label, mutate, path) => {
+  const configuration = validProject().configuration as any
+  mutate(configuration)
+  const result = projectConfigurationSchema.safeParse(configuration)
+  expect(result.success).toBe(false)
+  expect(result.success ? [] : result.error.issues.map((issue) => issue.path)).toContainEqual(path)
 })

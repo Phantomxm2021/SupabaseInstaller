@@ -95,6 +95,29 @@ func TestConfigurationServiceRejectsEmptySecretReplacement(t *testing.T) {
 	}
 }
 
+func TestConfigurationServiceRequiresExplicitActionForExistingSecret(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cipher, _ := managersecrets.NewCipher(bytes.Repeat([]byte{7}, 32))
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	project := contracts.Project{ID: "project-1", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0", Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", ValueSet: true, Value: contracts.SecretInput{}}}
+	service := NewConfigurationService(database, cipher, time.Now)
+	if _, err := service.Patch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); err == nil {
+		t.Fatal("Patch() accepted an implicit retain marker")
+	}
+	got, err := database.GetConfiguration(context.Background(), project.ID)
+	if err != nil || got.Revision != 1 {
+		t.Fatalf("failed patch changed revision: %#v, %v", got, err)
+	}
+}
+
 func TestConfigurationServiceRejectsStaleRevision(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
@@ -129,7 +152,7 @@ func TestServiceCreationAtomicallyEncryptsAllConfigurationSecrets(t *testing.T) 
 	cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true, ClientID: "client", Secret: contracts.SecretInput{Action: "replace", Value: "oauth-secret"}}}
 	cfg.Storage = contracts.StorageConfig{Backend: contracts.StorageBackendS3, Bucket: "bee", Region: "us-east-1", Endpoint: "https://s3.example.com", AccessKeyID: "access", SecretAccessKey: contracts.SecretInput{Action: "replace", Value: "storage-secret"}}
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", Value: contracts.SecretInput{Action: "replace", Value: "function-one"}}, {Name: "SECOND_SECRET", Value: contracts.SecretInput{Action: "replace", Value: "function-two"}}}
-	draft := Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg, Preset: contracts.PresetFull}
+	draft := Draft{Name: "Bee", Slug: "bee", Configuration: cfg, Preset: contracts.PresetFull}
 	service := NewServiceWithCipher(database, func() string { return "project-1" }, time.Now, cipher)
 	if _, err := service.Create(context.Background(), draft); err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -168,7 +191,7 @@ func TestServiceCreationRejectsReplacementWithoutCipher(t *testing.T) {
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", Value: contracts.SecretInput{Action: "replace", Value: "secret"}}}
 	service := NewService(database, func() string { return "project-1" }, time.Now)
-	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg}); err == nil {
+	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", Configuration: cfg}); err == nil {
 		t.Fatal("Create() accepted replacement without cipher")
 	}
 	if _, err := database.GetProject(context.Background(), "project-1"); !errors.Is(err, store.ErrNotFound) {
@@ -186,7 +209,7 @@ func TestServiceCreationRejectsUpdateOnlyRemoveMarker(t *testing.T) {
 	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", ValueSet: true, Value: contracts.SecretInput{Action: "remove"}}}
 	service := NewService(database, func() string { return "project-1" }, time.Now)
-	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg}); err == nil {
+	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", Configuration: cfg}); err == nil {
 		t.Fatal("Create() accepted update-only remove marker")
 	}
 	if _, err := database.GetProject(context.Background(), "project-1"); !errors.Is(err, store.ErrNotFound) {
@@ -208,7 +231,7 @@ func TestServiceCreationIgnoresMaliciousSecretMarkers(t *testing.T) {
 	cfg.Storage = contracts.StorageConfig{Backend: contracts.StorageBackendS3, Bucket: "bee", Region: "us-east-1", Endpoint: "https://s3.example.com", AccessKeyID: "access", SecretAccessKeySet: true}
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", ValueSet: true}}
 	service := NewService(database, func() string { return "project-1" }, time.Now)
-	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg}); err != nil {
+	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", Configuration: cfg}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	snapshot, err := database.GetConfiguration(context.Background(), "project-1")

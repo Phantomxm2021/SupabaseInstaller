@@ -107,10 +107,9 @@ func TestValidateDraftRejectsLatestRuntimeVersion(t *testing.T) {
 
 func validDraft() Draft {
 	return Draft{
-		Name:            "Bee",
-		Slug:            "bee",
-		SupabaseVersion: "self-hosted/v0.8.0",
-		Preset:          PresetLightweight,
+		Name:   "Bee",
+		Slug:   "bee",
+		Preset: PresetLightweight,
 		Configuration: func() contracts.ProjectConfiguration {
 			cfg := DefaultConfiguration(PresetLightweight)
 			cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}

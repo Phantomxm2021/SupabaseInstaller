@@ -86,6 +86,23 @@ func TestInstallAllocatesAndPersistsAllServerOwnedPorts(t *testing.T) {
 	}
 }
 
+func TestInstallFailsWhenDesiredAggregateCannotBeRead(t *testing.T) {
+	orchestrator, provisioner, project := newTestOrchestrator(t)
+	if _, err := orchestrator.store.DB().Exec(`DELETE FROM project_configs WHERE project_id = ?`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := orchestrator.Install(context.Background(), project)
+	if err == nil {
+		t.Fatal("Install() succeeded without a desired aggregate")
+	}
+	if result.Status != operation.RolledBack {
+		t.Fatalf("operation status = %s, want ROLLED_BACK", result.Status)
+	}
+	if provisioner.reconcile.Configuration.General.Domain != "" {
+		t.Fatalf("reconcile used a projection fallback: %#v", provisioner.reconcile.Configuration)
+	}
+}
+
 func TestHydrateConfiguredSecretsSkipsDisabledAuthConsumers(t *testing.T) {
 	orchestrator, _, project := newTestOrchestrator(t)
 	envelope, err := orchestrator.cipher.Encrypt(project.ID, "smtp.password", []byte("auth-secret-sentinel"))

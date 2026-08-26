@@ -98,7 +98,7 @@ type fakeInstaller struct{ projectID string }
 func projectDraftFixture() contracts.ProjectDraft {
 	cfg := project.DefaultConfiguration(contracts.PresetLightweight)
 	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
-	return contracts.ProjectDraft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Preset: contracts.PresetLightweight, Configuration: cfg}
+	return contracts.ProjectDraft{Name: "Bee", Slug: "bee", Preset: contracts.PresetLightweight, Configuration: cfg}
 }
 
 func (fake *fakeInstaller) CreateOperation(_ context.Context, projectID string) (operation.Operation, error) {

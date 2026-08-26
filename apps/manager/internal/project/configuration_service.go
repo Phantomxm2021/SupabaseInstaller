@@ -46,6 +46,9 @@ func (s *ConfigurationService) GetDesired(ctx context.Context, projectID string)
 }
 
 func (s *ConfigurationService) Save(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration) (store.ConfigurationSnapshot, error) {
+	if err := requireExplicitSecretActions(cfg); err != nil {
+		return store.ConfigurationSnapshot{}, err
+	}
 	return s.save(ctx, projectID, expected, cfg)
 }
 
@@ -96,7 +99,9 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	if patch.Network != nil {
 		cfg.Network = *patch.Network
 	}
-	normalizeRetainedSecrets(&cfg)
+	if err := requireExplicitSecretActionsForPatch(patch); err != nil {
+		return contracts.ProjectConfiguration{}, err
+	}
 	if err := ValidateConfiguration(cfg); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
@@ -118,7 +123,6 @@ func (s *ConfigurationService) ApplyPatch(ctx context.Context, projectID string,
 }
 
 func (s *ConfigurationService) save(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration) (store.ConfigurationSnapshot, error) {
-	normalizeRetainedSecrets(&cfg)
 	if err := ValidateConfiguration(cfg); err != nil {
 		return store.ConfigurationSnapshot{}, err
 	}
@@ -129,29 +133,56 @@ func (s *ConfigurationService) save(ctx context.Context, projectID string, expec
 	return s.store.SaveConfigurationWithSecrets(ctx, projectID, expected, cfg, s.now(), mutations)
 }
 
-// Snapshots intentionally omit secret actions. When a client submits an
-// unchanged redacted snapshot, the corresponding set flag means retain.
-func normalizeRetainedSecrets(cfg *contracts.ProjectConfiguration) {
-	if cfg.Auth.SMTP.PasswordSet && cfg.Auth.SMTP.Password.Action == "" {
-		cfg.Auth.SMTP.Password.Action = "retain"
+func requireExplicitSecretActionsForPatch(patch contracts.ConfigurationPatch) error {
+	if patch.Configuration != nil {
+		return requireExplicitSecretActions(*patch.Configuration)
 	}
-	if cfg.Auth.Phone.SecretSet && cfg.Auth.Phone.Secret.Action == "" {
-		cfg.Auth.Phone.Secret.Action = "retain"
-	}
-	for provider, oauth := range cfg.Auth.OAuth {
-		if oauth.SecretSet && oauth.Secret.Action == "" {
-			oauth.Secret.Action = "retain"
-			cfg.Auth.OAuth[provider] = oauth
+	if patch.Auth != nil {
+		if err := requireExplicitAuthSecretActions(patch.Auth); err != nil {
+			return err
 		}
+	}
+	if patch.Storage != nil && patch.Storage.SecretAccessKeySet && patch.Storage.SecretAccessKey.Action == "" {
+		return fmt.Errorf("storage.secretAccessKey requires explicit retain, remove, or replace action")
+	}
+	if patch.Functions != nil {
+		for index, variable := range patch.Functions.Variables {
+			if variable.ValueSet && variable.Value.Action == "" {
+				return fmt.Errorf("functions.variables[%d].value requires explicit retain, remove, or replace action", index)
+			}
+		}
+	}
+	return nil
+}
+
+func requireExplicitSecretActions(cfg contracts.ProjectConfiguration) error {
+	if err := requireExplicitAuthSecretActions(&cfg.Auth); err != nil {
+		return err
 	}
 	if cfg.Storage.SecretAccessKeySet && cfg.Storage.SecretAccessKey.Action == "" {
-		cfg.Storage.SecretAccessKey.Action = "retain"
+		return fmt.Errorf("storage.secretAccessKey requires explicit retain, remove, or replace action")
 	}
-	for index := range cfg.Functions.Variables {
-		if cfg.Functions.Variables[index].ValueSet && cfg.Functions.Variables[index].Value.Action == "" {
-			cfg.Functions.Variables[index].Value.Action = "retain"
+	for index, variable := range cfg.Functions.Variables {
+		if variable.ValueSet && variable.Value.Action == "" {
+			return fmt.Errorf("functions.variables[%d].value requires explicit retain, remove, or replace action", index)
 		}
 	}
+	return nil
+}
+
+func requireExplicitAuthSecretActions(auth *contracts.AuthConfig) error {
+	if auth.SMTP.PasswordSet && auth.SMTP.Password.Action == "" {
+		return fmt.Errorf("auth.smtp.password requires explicit retain, remove, or replace action")
+	}
+	if auth.Phone.SecretSet && auth.Phone.Secret.Action == "" {
+		return fmt.Errorf("auth.phone.secret requires explicit retain, remove, or replace action")
+	}
+	for provider, oauth := range auth.OAuth {
+		if oauth.SecretSet && oauth.Secret.Action == "" {
+			return fmt.Errorf("auth.oauth.%s.secret requires explicit retain, remove, or replace action", provider)
+		}
+	}
+	return nil
 }
 
 func (s *ConfigurationService) secretMutations(ctx context.Context, projectID string, cfg *contracts.ProjectConfiguration) ([]store.SecretMutation, error) {

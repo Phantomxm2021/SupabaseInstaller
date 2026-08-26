@@ -55,7 +55,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true, Directory: "./functions"},
 		Database:  contracts.DatabaseConfig{Version: "15", MaxConnections: 100},
-		Pooler:    contracts.PoolerConfig{TransactionPort: 6543, SessionPort: 6544, PoolSize: 20, MaxClientConnections: 100},
+		Pooler:    contracts.PoolerConfig{PoolSize: 20, MaxClientConnections: 100},
 		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},
 	}
 }
@@ -157,6 +157,9 @@ func validateServicesConfiguration(services contracts.Services, validation *Vali
 }
 
 func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
+	if auth.JWTExpiry < 0 || auth.JWTExpiry > 31536000 {
+		validation.add("auth.jwtExpiry", "must be between 0 and 31536000 seconds")
+	}
 	if auth.DisableSignup != !auth.Email.AllowSignup {
 		validation.add("auth.disableSignup", "must equal the inverse of auth.email.allowSignup")
 		validation.add("auth.email.allowSignup", "must equal the inverse of auth.disableSignup")
@@ -170,8 +173,6 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 	}
 	validateSecretInput(auth.SMTP.Password, "auth.smtp.password", validation)
 	validatePhone(auth.Phone, validation)
-	if auth.SMTP.Enabled {
-	}
 	if auth.SMTP.Enabled {
 		if strings.TrimSpace(auth.SMTP.Host) == "" {
 			validation.add("auth.smtp.host", "is required when SMTP is enabled")

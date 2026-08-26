@@ -56,7 +56,7 @@ type WithSecret<T, S> = T extends SecretInput ? S : T extends Array<infer U> ? A
 /** Create DTO uses only empty/replace actions; retain/remove are update-only. */
 export type CreateProjectConfiguration = WithSecret<ProjectConfiguration, CreateSecretInput>
 export type UpdateProjectConfiguration = WithSecret<ProjectConfiguration, UpdateSecretInput>
-export interface CreateProjectRequest { name: string; slug: string; supabaseVersion: string; preset: Preset; configuration: CreateProjectConfiguration }
+export interface CreateProjectRequest { name: string; slug: string; preset: Preset; configuration: CreateProjectConfiguration }
 export interface ProjectDraft extends CreateProjectRequest {}
 
 export interface Project {

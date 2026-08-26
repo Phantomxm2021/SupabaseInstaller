@@ -52,11 +52,10 @@ type Services struct {
 }
 
 type ProjectDraft struct {
-	Name            string               `json:"name"`
-	Slug            string               `json:"slug"`
-	SupabaseVersion string               `json:"supabaseVersion"`
-	Preset          Preset               `json:"preset"`
-	Configuration   ProjectConfiguration `json:"configuration"`
+	Name          string               `json:"name"`
+	Slug          string               `json:"slug"`
+	Preset        Preset               `json:"preset"`
+	Configuration ProjectConfiguration `json:"configuration"`
 }
 
 type Project struct {

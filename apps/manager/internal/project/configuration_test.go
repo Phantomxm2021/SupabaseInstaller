@@ -11,6 +11,9 @@ import (
 
 func TestDefaultConfiguration(t *testing.T) {
 	got := DefaultConfiguration(contracts.PresetLightweight)
+	if got.Pooler.TransactionPort != 0 || got.Pooler.SessionPort != 0 {
+		t.Fatalf("manager-owned pooler ports = %d/%d, want zero create defaults", got.Pooler.TransactionPort, got.Pooler.SessionPort)
+	}
 	if !got.Services.Database || !got.Services.Auth || got.Services.Storage || got.Auth.SMTP.Enabled {
 		t.Fatalf("unexpected Lightweight defaults: %#v", got)
 	}
@@ -138,6 +141,17 @@ func TestAuthSignupAndEmailChangeTruthTables(t *testing.T) {
 				t.Fatalf("ValidateConfiguration() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestAuthJWTExpiryMatchesPinnedRuntimeRange(t *testing.T) {
+	for _, expiry := range []int{-1, 31536001} {
+		cfg := DefaultConfiguration(contracts.PresetLightweight)
+		cfg.Auth.JWTExpiry = expiry
+		var validation *ValidationError
+		if err := ValidateConfiguration(cfg); !errors.As(err, &validation) || validation.Fields["auth.jwtExpiry"] == "" {
+			t.Fatalf("ValidateConfiguration(jwtExpiry=%d) = %v, want auth.jwtExpiry error", expiry, err)
+		}
 	}
 }
 

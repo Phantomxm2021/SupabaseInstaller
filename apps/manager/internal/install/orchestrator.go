@@ -55,11 +55,12 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 	}
 	_ = orchestrator.store.UpdateProjectStatus(ctx, project.ID, contracts.ProjectStatusInstalling, contracts.HealthStarting)
 
-	configuration := contracts.ProjectConfiguration{Revision: 1, General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services}
-	if snapshot, readErr := orchestrator.store.GetDesiredConfiguration(ctx, project.ID); readErr == nil {
-		configuration = snapshot.Configuration
-		configuration.Revision = 1
+	snapshot, readErr := orchestrator.store.GetDesiredConfiguration(ctx, project.ID)
+	if readErr != nil {
+		return orchestrator.rollback(ctx, project, current.ID, "LOAD_CONFIGURATION", readErr)
 	}
+	configuration := snapshot.Configuration
+	configuration.Revision = 1
 	if err := orchestrator.step(ctx, current.ID, "VALIDATE_PORTS", 5, func() error {
 		if err := orchestrator.allocateConfigurationPorts(ctx, project.ID, &configuration); err != nil {
 			return err

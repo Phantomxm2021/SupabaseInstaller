@@ -38,9 +38,6 @@ func ValidateDraft(draft Draft) error {
 	if cfg.General.SupabaseVersion == "" || strings.EqualFold(cfg.General.SupabaseVersion, "latest") || strings.EqualFold(cfg.General.SupabaseVersion, "master") {
 		errs = append(errs, FieldError{Field: "configuration.general.supabaseVersion", Message: "must be a pinned supported version"})
 	}
-	if draft.SupabaseVersion != cfg.General.SupabaseVersion {
-		errs = append(errs, FieldError{Field: "supabaseVersion", Message: "must match configuration.general.supabaseVersion"})
-	}
 	if errConfiguration := ValidateConfiguration(cfg); errConfiguration != nil {
 		errs = append(errs, errConfiguration)
 	}
