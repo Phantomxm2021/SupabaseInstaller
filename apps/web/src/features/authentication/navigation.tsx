@@ -40,7 +40,7 @@ export function AuthenticationNavigation() {
   const navigation = <AuthenticationNavigationContent projectId={projectId} onNavigate={() => setOpen(false)} />
 
   if (isCompact) return <>
-    <Button variant="outline" className="authentication-navigation-trigger" aria-expanded={open} aria-controls="authentication-navigation-panel" onClick={() => setOpen((value) => !value)}>
+    <Button variant="outline" className="authentication-navigation-trigger" aria-haspopup="dialog" aria-expanded={open} aria-controls="authentication-navigation-panel" onClick={() => setOpen((value) => !value)}>
       <PanelLeft /> {open ? 'Close authentication navigation' : 'Open authentication navigation'}
     </Button>
     <Sheet open={open} onOpenChange={setOpen}>

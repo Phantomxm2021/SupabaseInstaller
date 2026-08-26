@@ -44,6 +44,7 @@ it('opens the Authentication navigation from an accessible mobile trigger', asyn
   render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>)
 
   const trigger = await screen.findByRole('button', { name: 'Open authentication navigation' })
+  expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
   expect(trigger).toHaveAttribute('aria-expanded', 'false')
   await user.click(trigger)
   expect(trigger).toHaveAttribute('aria-expanded', 'true')
