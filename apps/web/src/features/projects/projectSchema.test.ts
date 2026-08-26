@@ -1,4 +1,4 @@
-import { applyPreset, defaultConfiguration, normalizeCreateConfiguration, projectConfigurationSchema, projectSchema, redactedSecretSchema, updateSecretSchema } from './projectSchema'
+import { applyPreset, defaultConfiguration, normalizeCreateConfiguration, projectConfigurationSchema, projectSchema, redactedSecretSchema, updateSecretSchema, type ProjectConfigurationForm } from './projectSchema'
 import { toUpdateSecretInput } from '../../api/types'
 
 function validProject() {
@@ -82,6 +82,13 @@ it('rejects update-only remove action in create configuration', () => {
 
 it('accepts canonical unset marker in update secret schema', () => {
   expect(updateSecretSchema.safeParse({ action: '' }).success).toBe(true)
+})
+
+it('does not expose unsupported manual TLS fields in defaults or create payload', () => {
+  const configuration = validProject().configuration as ProjectConfigurationForm
+  expect('certificate' in configuration.network).toBe(false)
+  expect('manual').not.toBe(configuration.network.httpsMode)
+  expect(JSON.stringify(normalizeCreateConfiguration(configuration))).not.toContain('certificate')
 })
 
 it('keeps redacted and update secret truth tables distinct', () => {

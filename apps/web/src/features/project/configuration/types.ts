@@ -45,9 +45,10 @@ export function sectionEndpoint(section: ConfigurationSection, provider?: string
   return provider && section === 'oauth' ? `oauth/${encodeURIComponent(provider)}` : section
 }
 
-export function sectionImpact(section: ConfigurationSection, value: unknown, services?: Services): PendingConfigurationSave['impact'] {
-  if ((section === 'smtp' || section === 'oauth') && value && typeof value === 'object' && 'enabled' in value && (value as { enabled?: unknown }).enabled === false) return 'none'
-  if (section === 'auth' && value && typeof value === 'object' && (value as { enabled?: unknown }).enabled === false) return 'none'
+export function sectionImpact(section: ConfigurationSection, value: unknown, services?: Services, previous?: unknown): PendingConfigurationSave['impact'] {
+  if ((section === 'smtp' || section === 'oauth' || section === 'auth') && value && typeof value === 'object' && 'enabled' in value && (value as { enabled?: unknown }).enabled === false) {
+    return previous && typeof previous === 'object' && (previous as { enabled?: unknown }).enabled === true ? 'recreate' : 'none'
+  }
   if (services && ['auth', 'smtp', 'oauth', 'storage', 'realtime', 'functions'].includes(section)) {
     const owner = section === 'smtp' || section === 'oauth' || section === 'auth' ? 'auth' : section
     if (!(services as unknown as Record<string, boolean>)[owner]) return 'none'

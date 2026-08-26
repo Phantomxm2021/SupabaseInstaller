@@ -116,3 +116,20 @@ it('keeps removal reachable for disabled configured SMTP and previews no runtime
   await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
   await waitFor(() => expect(patchBody).toContain('"action":"remove"'))
 })
+
+it('closes only public dependents when Gateway is disabled', async () => {
+  const user = userEvent.setup()
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    const snapshot = redactedSnapshot()
+    snapshot.configuration.services = { ...defaultConfiguration('FULL').services, supavisor: true, logs: true, vector: true, directDb: true }
+    return new Response(JSON.stringify(snapshot), { status: 200 })
+  }))
+  renderConfiguration('services')
+  await user.click(await screen.findByRole('switch', { name: 'Envoy Gateway' }))
+  expect(screen.getByRole('switch', { name: 'Auth' })).toHaveAttribute('data-unchecked')
+  expect(screen.getByRole('switch', { name: 'PostgREST' })).toHaveAttribute('data-unchecked')
+  expect(screen.getByRole('switch', { name: 'Supavisor' })).toHaveAttribute('data-checked')
+  expect(screen.getByRole('switch', { name: 'Logs / Logflare' })).toHaveAttribute('data-checked')
+  expect(screen.getByRole('switch', { name: 'Direct PostgreSQL port' })).toHaveAttribute('data-checked')
+})

@@ -45,7 +45,7 @@ export interface FunctionVariable { name: string; valueSet: boolean; value: Secr
 export interface FunctionsConfig { defaultJwtVerification: boolean; directory: string; variables: FunctionVariable[] }
 export interface DatabaseConfig { version: string; directPort: boolean; directPortNumber: number; maxConnections: number; sharedBuffers: string; extensions: string[] }
 export interface PoolerConfig { transactionPort: number; sessionPort: number; poolSize: number; maxClientConnections: number }
-export interface NetworkConfig { gateway: 'envoy' | 'kong'; httpsMode: 'external' | 'caddy' | 'manual'; internalGatewayPort?: number; apiPort: number; studioPort: number; directDatabasePort: number; poolerPort: number; certificate?: string }
+export interface NetworkConfig { gateway: 'envoy' | 'kong'; httpsMode: 'external' | 'caddy'; internalGatewayPort?: number; apiPort: number; studioPort: number; directDatabasePort: number; poolerPort: number }
 /** Redacted aggregate returned by GET endpoints (never contains secret values). */
 export interface RedactedPhoneAuthConfig { enabled: boolean; provider?: string; secretSet: boolean; secret: RedactedSecretInput; fields?: Record<string, string> }
 export interface RedactedSMTPConfig { enabled: boolean; host: string; port: number; username: string; passwordSet: boolean; password: RedactedSecretInput; senderEmail: string; senderName: string }
@@ -55,7 +55,7 @@ export interface RedactedStorageConfig { backend: StorageBackend; s3CompatibleAp
 export interface RedactedFunctionVariable { name: string; valueSet: boolean; value: RedactedSecretInput }
 export interface RedactedFunctionsConfig { defaultJwtVerification: boolean; directory: string; variables?: RedactedFunctionVariable[] }
 export interface RedactedDatabaseConfig { version: string; directPort: boolean; directPortNumber: number; maxConnections: number; sharedBuffers: string; extensions?: string[] }
-export interface RedactedNetworkConfig { gateway: 'envoy' | 'kong'; httpsMode: 'external' | 'caddy' | 'manual'; internalGatewayPort?: number; apiPort: number; studioPort: number; directDatabasePort: number; poolerPort: number; certificate?: string }
+export interface RedactedNetworkConfig { gateway: 'envoy' | 'kong'; httpsMode: 'external' | 'caddy'; internalGatewayPort?: number; apiPort: number; studioPort: number; directDatabasePort: number; poolerPort: number }
 export interface RedactedProjectConfiguration { revision: number; general: GeneralConfig; services: Services; auth: RedactedAuthConfig; storage: RedactedStorageConfig; realtime: RealtimeConfig; functions: RedactedFunctionsConfig; database: RedactedDatabaseConfig; pooler: PoolerConfig; network: RedactedNetworkConfig }
 /** Full editable aggregate used by the wizard before it is converted to a wire DTO. */
 export interface ProjectConfiguration { revision: number; general: GeneralConfig; services: Services; auth: AuthConfig; storage: StorageConfig; realtime: RealtimeConfig; functions: FunctionsConfig; database: DatabaseConfig; pooler: PoolerConfig; network: NetworkConfig }

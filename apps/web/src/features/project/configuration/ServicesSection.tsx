@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm, type Resolver } from 'react-hook-form'
 import type { Services } from '../../../api/types'
 import { servicesSchema } from './schema'
-import { SectionCard, Toggle, SectionSaveButton, useResetOnServerRevision } from './fields'
+import { SectionCard, Toggle, SectionSaveButton, useResetOnServerRevision, errorAt } from './fields'
 
 const labels: Record<keyof Services, string> = { database: 'PostgreSQL', gateway: 'Envoy Gateway', auth: 'Auth', rest: 'PostgREST', studio: 'Studio', postgresMeta: 'postgres-meta', realtime: 'Realtime', storage: 'Storage', imgproxy: 'Image Transformation', functions: 'Edge Functions', supavisor: 'Supavisor', logs: 'Logs / Logflare', vector: 'Vector', directDb: 'Direct PostgreSQL port' }
 const locked: ReadonlySet<keyof Services> = new Set(['database'])
@@ -26,11 +26,11 @@ export function ServicesSection({ initial, revision, onSave }: { initial: Servic
       if (name === 'vector') next.logs = false
       if (name === 'storage') next.imgproxy = false
       if (name === 'rest') { next.storage = false; next.imgproxy = false }
-      if (name === 'gateway') Object.assign(next, { auth: false, rest: false, studio: false, postgresMeta: false, realtime: false, storage: false, imgproxy: false, functions: false, supavisor: false, logs: false, vector: false, directDb: false })
+      if (name === 'gateway') Object.assign(next, { auth: false, rest: false, studio: false, postgresMeta: false, realtime: false, storage: false, imgproxy: false, functions: false })
     }
     form.reset(next, { keepDirty: true })
     for (const key of Object.keys(next) as Array<keyof Services>) if (next[key] !== initial[key]) form.setValue(key, next[key], { shouldDirty: true, shouldValidate: true })
   }
   const setError = (name: string, message: string) => form.setError(name as never, { type: 'server', message })
-  return <form id="configuration-services-form" onSubmit={form.handleSubmit((value) => onSave(value, form.formState.dirtyFields, setError))} className="space-y-5"><SectionCard title="Services" description="This is the only section that owns service enablement. Dependencies are validated by Manager."><div className="grid gap-3 md:grid-cols-2">{(Object.keys(labels) as Array<keyof Services>).map((name) => <Toggle key={name} id={`service-${name}`} label={labels[name]} checked={Boolean(form.watch(name))} disabled={locked.has(name)} onChange={(value) => change(name, value)} description={locked.has(name) ? 'Required by the pinned runtime.' : name === 'logs' ? 'Logs and Vector are managed as one feature.' : name === 'imgproxy' ? 'Image Transformation requires Storage.' : undefined} />)}</div></SectionCard><SectionSaveButton label="Services" disabled={!form.formState.isDirty} /></form>
+  return <form id="configuration-services-form" onSubmit={form.handleSubmit((value) => onSave(value, form.formState.dirtyFields, setError))} className="space-y-5"><SectionCard title="Services" description="This is the only section that owns service enablement. Dependencies are validated by Manager."><div className="grid gap-3 md:grid-cols-2">{(Object.keys(labels) as Array<keyof Services>).map((name) => <Toggle key={name} id={`service-${name}`} label={labels[name]} checked={Boolean(form.watch(name))} disabled={locked.has(name)} onChange={(value) => change(name, value)} error={errorAt(form.formState.errors, String(name))} description={locked.has(name) ? 'Required by the pinned runtime.' : name === 'logs' ? 'Logs and Vector are managed as one feature.' : name === 'imgproxy' ? 'Image Transformation requires Storage.' : undefined} />)}</div></SectionCard><SectionSaveButton label="Services" disabled={!form.formState.isDirty} /></form>
 }

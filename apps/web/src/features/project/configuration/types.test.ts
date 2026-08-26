@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { RedactedProjectConfiguration } from '../../../api/types'
 import { normalizeRedactedConfiguration, sectionImpact, affectedServices } from './types'
+import { normalizeConfigurationValue } from './useConfigurationMutation'
 import { storageSchema, smtpSchema, oauthProviderSchema, authSchema, functionsSchema } from './schema'
 
 function omittedConfiguration(): RedactedProjectConfiguration {
@@ -58,5 +59,17 @@ describe('configuration projection normalization', () => {
     const auth = { enabled: true, jwtExpiry: 3600, disableSignup: false, email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false }, phone, anonymousSignIn: false, redirectUrls: [], oauth: {}, smtp: { ...smtp, password: { action: 'retain' as const } } }
     expect(authSchema.safeParse(auth).success).toBe(false)
     expect(functionsSchema.safeParse({ defaultJwtVerification: true, directory: './functions', variables: [{ name: 'SUPABASE_URL', valueSet: false, value: { action: '' } }] }).success).toBe(false)
+  })
+
+  it('accepts redacted configured function values and sends retain at update boundary', () => {
+    const initial = { defaultJwtVerification: true, directory: './functions', variables: [{ name: 'OPENAI_API_KEY', valueSet: true, value: { action: '' as const } }] }
+    expect(functionsSchema.safeParse(initial).success).toBe(true)
+    expect(normalizeConfigurationValue(initial)).toEqual({ defaultJwtVerification: true, directory: './functions', variables: [{ name: 'OPENAI_API_KEY', valueSet: true, value: { action: 'retain' } }] })
+  })
+
+  it('distinguishes service disable from removing a secret on an already disabled section', () => {
+    const services = { auth: true } as import('../../../api/types').Services
+    expect(sectionImpact('smtp', { enabled: false }, services, { enabled: true })).toBe('recreate')
+    expect(sectionImpact('smtp', { enabled: false }, services, { enabled: false })).toBe('none')
   })
 })

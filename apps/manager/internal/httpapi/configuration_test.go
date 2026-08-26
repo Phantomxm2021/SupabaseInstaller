@@ -19,31 +19,45 @@ import (
 
 func TestConfigurationHTTPGetRedactsSecretLeaves(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer database.Close()
 	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
 	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	project := contracts.Project{ID: "bee", Name: "Bee", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	if err := database.CreateProject(context.Background(), project, cfg); err != nil { t.Fatal(err) }
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
 	h := configurationHandlers{options: ConfigurationOptions{Orchestrator: configuration.NewOrchestrator(database, nil)}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/projects/{id}/configuration", h.get)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/projects/bee/configuration", nil))
-	if response.Code != http.StatusOK { t.Fatalf("GET status = %d, body = %s", response.Code, response.Body.String()) }
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", response.Code, response.Body.String())
+	}
 	var payload map[string]any
-	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil { t.Fatal(err) }
-	if _, ok := payload["anonKey"]; ok || strings.Contains(response.Body.String(), "service_role") || strings.Contains(response.Body.String(), "jwt_secret") { t.Fatalf("configuration response leaked secret material: %s", response.Body.String()) }
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["anonKey"]; ok || strings.Contains(response.Body.String(), "service_role") || strings.Contains(response.Body.String(), "jwt_secret") {
+		t.Fatalf("configuration response leaked secret material: %s", response.Body.String())
+	}
 }
 
 func TestConfigurationHTTPOAuthPatchUsesProviderSubresource(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer database.Close()
 	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
 	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	project := contracts.Project{ID: "bee", Name: "Bee", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	if err := database.CreateProject(context.Background(), project, cfg); err != nil { t.Fatal(err) }
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
 	operations := operation.NewService(database, func() string { return "oauth-op" }, time.Now)
 	manager := configuration.NewOrchestrator(database, operations)
 	mux := http.NewServeMux()
@@ -51,7 +65,31 @@ func TestConfigurationHTTPOAuthPatchUsesProviderSubresource(t *testing.T) {
 	body := strings.NewReader(`{"expectedRevision":1,"value":{"enabled":false,"clientId":"","secretSet":false,"secret":{"action":""},"fields":{}}}`)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/projects/bee/configuration/oauth/google", body))
-	if response.Code != http.StatusAccepted { t.Fatalf("OAuth PATCH status = %d, body = %s", response.Code, response.Body.String()) }
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("OAuth PATCH status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestConfigurationHTTPRejectsUnsupportedNetworkFields(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "bee", Name: "Bee", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: configuration.NewOrchestrator(database, nil)})
+	body := strings.NewReader(`{"expectedRevision":1,"value":{"gateway":"envoy","httpsMode":"external","certificate":"unexpected"}}`)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/projects/bee/configuration/network", body))
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unsupported network field status = %d, body = %s", response.Code, response.Body.String())
+	}
 }
 
 func TestConfigurationBusyIsTypedConflict(t *testing.T) {

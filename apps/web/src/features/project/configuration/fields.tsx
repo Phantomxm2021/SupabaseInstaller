@@ -68,4 +68,10 @@ function useStateMemory() {
   useEffect(() => () => setValue(''), [])
   return [value, setValue] as const
 }
-export function errorAt(errors: unknown, path: string) { let current: any = errors; for (const part of path.split('.')) current = current?.[part]; return current?.message ?? current?.root?.message }
+export function errorAt(errors: unknown, path: string) {
+  let current: unknown = errors
+  for (const part of path.split('.')) current = current && typeof current === 'object' ? (current as Record<string, unknown>)[part] : undefined
+  if (!current || typeof current !== 'object') return undefined
+  const node = current as { message?: unknown; root?: { message?: unknown } }
+  return typeof node.message === 'string' ? node.message : typeof node.root?.message === 'string' ? node.root.message : undefined
+}

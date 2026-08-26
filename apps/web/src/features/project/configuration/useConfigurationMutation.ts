@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query'
 import { useQueryClient } from '@tanstack/react-query'
-import { apiFetch } from '../../../api/client'
+import { APIError, apiFetch } from '../../../api/client'
 import type { UpdateSecretInput } from '../../../api/types'
 import { sectionEndpoint, type ConfigurationSection, type PendingConfigurationSave } from './types'
 
@@ -39,10 +39,7 @@ export function useConfigurationMutation(projectId: string, revision: number, on
       void queryClient.invalidateQueries({ queryKey: ['project', projectId] })
     },
     onError: (error, pending) => {
-      if (error && typeof error === 'object' && 'fields' in error) {
-        const fields = (error as { fields?: Record<string, string> }).fields
-        if (fields && pending.setError) for (const [path, message] of Object.entries(fields)) pending.setError(stripFieldPath(pending, path), message)
-      }
+      if (error instanceof APIError && error.fields && pending.setError) for (const [path, message] of Object.entries(error.fields)) pending.setError(stripFieldPath(pending, path), message)
       onError?.(error instanceof Error ? error : new Error('Configuration update failed'))
     },
   })
