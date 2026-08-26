@@ -16,9 +16,15 @@ export const emailNotifications = [['password-changed', 'passwordChanged', 'Pass
 
 export function EmailsPage({ context: provided }: { context?: AuthenticationWorkspaceContext }) {
   const workspace = useAuthenticationWorkspace(); const context = provided ?? workspace
+  if (!hasMailerConfiguration(context.auth)) return <main className="page"><header className="page-heading"><div><h1>Emails</h1><p className="muted">This project uses an earlier Authentication configuration and must be migrated before email settings can be edited.</p></div></header></main>
   const [tab, setTab] = useState('templates'); const [smtpDirty, setSMTPDirty] = useState(false); const [nextTab, setNextTab] = useState<string>()
   const changeTab = (next: string) => { if (next === tab) return; if (tab === 'smtp' && smtpDirty) { setNextTab(next); return }; setTab(next) }
   return <main className="page space-y-8"><header className="page-heading"><div><h1>Emails</h1><p className="muted">Configure what emails your users receive and how they are sent.</p></div></header><Tabs value={tab} onValueChange={changeTab} className="gap-8"><TabsList aria-label="Email settings" variant="line" className="border-b border-border pb-1"><TabsTrigger value="templates">Templates</TabsTrigger><TabsTrigger value="smtp">SMTP Settings</TabsTrigger></TabsList><TabsContent value="templates"><TemplateList context={context} /></TabsContent><TabsContent value="smtp"><SMTPSettings initial={context.auth.smtp} revision={context.revision} requestSave={context.requestSave} onDirty={setSMTPDirty} /></TabsContent></Tabs><AlertDialog open={Boolean(nextTab)} onOpenChange={(open) => !open && setNextTab(undefined)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Discard SMTP changes?</AlertDialogTitle><AlertDialogDescription>Your unsaved SMTP settings will be lost.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => { setSMTPDirty(false); setTab(nextTab ?? 'templates'); setNextTab(undefined) }}>Discard changes</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></main>
+}
+
+function hasMailerConfiguration(auth: AuthenticationWorkspaceContext['auth']): auth is AuthenticationWorkspaceContext['auth'] & { mailer: MailerConfig } {
+  const mailer = auth.mailer
+  return Boolean(mailer?.templates && mailer.notifications)
 }
 
 function TemplateList({ context }: { context: AuthenticationWorkspaceContext }) {
