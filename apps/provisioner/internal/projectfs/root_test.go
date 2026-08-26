@@ -151,6 +151,26 @@ func TestMetadataLockDoesNotSuppressFreshEmbeddedTemplateHydration(t *testing.T)
 	}
 }
 
+func TestStageRuntimeFilesHydratesMetadataOnlyFreshProject(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.UpdateMetadata("fresh", func(metadata *Metadata) error {
+		metadata.ProjectID = "project-1"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := root.StageRuntimeFiles("fresh", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")}); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := root.ProjectPath("fresh")
+	if _, err := os.Stat(filepath.Join(project, "volumes", "db", "_supabase.sql")); err != nil {
+		t.Fatalf("template was not restored for metadata-only project: %v", err)
+	}
+}
+
 func TestStageRuntimeFilesRestoreSwitchesToPriorGeneration(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {

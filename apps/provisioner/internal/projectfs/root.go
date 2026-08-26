@@ -222,6 +222,18 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 		}
 	} else if err != nil {
 		return RuntimeRef{}, nil, nil, fmt.Errorf("inspect project directory: %w", err)
+	} else {
+		// Metadata may have been durably written before a render/stage failure
+		// on a brand-new project. Such a directory is not hydrated yet; restore
+		// only the authoritative template paths before staging the generation.
+		marker := filepath.Join(projectPath, "volumes", "db", "_supabase.sql")
+		if _, markerErr := os.Stat(marker); errors.Is(markerErr, os.ErrNotExist) {
+			if err := copyEmbeddedTemplate(projectPath); err != nil {
+				return RuntimeRef{}, nil, nil, fmt.Errorf("hydrate incomplete project template: %w", err)
+			}
+		} else if markerErr != nil {
+			return RuntimeRef{}, nil, nil, fmt.Errorf("inspect project template: %w", markerErr)
+		}
 	}
 	legacyFiles, err := identifyLegacyRuntimeFiles(projectPath)
 	if err != nil {
