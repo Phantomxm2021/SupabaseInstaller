@@ -14,6 +14,7 @@ describe('EmailTemplateEditorPage', () => {
   it('edits only the GoTrue-supported subject and template URL fields', async () => {
     const user = userEvent.setup(); const requestSave = vi.fn()
     render(<MemoryRouter><EmailTemplateEditorPage context={{ ...context, requestSave }} templateKey="confirm-signup" /></MemoryRouter>)
+    expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', expect.stringContaining('/auth-email-templates'))
     expect(screen.queryByLabelText('HTML body')).not.toBeInTheDocument()
     await user.clear(screen.getByLabelText('Template URL')); await user.type(screen.getByLabelText('Template URL'), 'https://cdn.example.test/confirm.html')
     await user.click(screen.getByRole('button', { name: 'Save changes' }))

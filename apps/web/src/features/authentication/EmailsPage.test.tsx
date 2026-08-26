@@ -26,7 +26,9 @@ describe('EmailsPage', () => {
     expect(screen.getByRole('link', { name: /Confirm sign up/i })).toHaveAttribute('href', '/projects/bee/authentication/emails/confirm-signup')
     expect(screen.getByRole('heading', { name: 'Security' })).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: 'Enable password changed notification' })).toHaveAttribute('aria-checked', 'false')
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+    const save = screen.getByRole('button', { name: 'Save changes' })
+    expect(save).toBeDisabled()
+    expect(save.closest('.auth-settings-card')).toHaveAttribute('aria-label', 'Security templates')
   })
 
   it('shows an SMTP form and queues a dirty SMTP update through the workspace confirmation path', async () => {
