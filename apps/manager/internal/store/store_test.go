@@ -132,6 +132,9 @@ func TestMigration002UpgradesExistingV1Database(t *testing.T) {
 	if _, err := legacy.Exec(`INSERT INTO projects(id, name, slug, domain, site_url, status, health, supabase_version, preset, services_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, project.ID, project.Name, project.Slug, project.Domain, project.SiteURL, project.Status, project.Health, project.SupabaseVersion, project.Preset, servicesJSON, formatTime(project.CreatedAt), formatTime(project.UpdatedAt)); err != nil {
 		t.Fatalf("insert legacy project: %v", err)
 	}
+	if _, err := legacy.Exec(`UPDATE projects SET config_revision = 7 WHERE id = ?`, project.ID); err != nil {
+		t.Fatalf("set legacy revision: %v", err)
+	}
 	if err := legacy.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -144,8 +147,14 @@ func TestMigration002UpgradesExistingV1Database(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConfiguration() upgraded database: %v", err)
 	}
-	if snapshot.Revision != 1 || snapshot.Configuration.Services != project.Services {
+	if snapshot.Revision != 7 || snapshot.LastGoodRevision != 7 {
 		t.Fatalf("upgraded snapshot = %#v", snapshot)
+	}
+	if snapshot.Configuration.General.Domain != project.Domain || snapshot.Configuration.General.SiteURL != project.SiteURL || snapshot.Configuration.General.SupabaseVersion != project.SupabaseVersion {
+		t.Fatalf("legacy general projection = %#v", snapshot.Configuration.General)
+	}
+	if snapshot.Configuration.Realtime.MaxConnections != 100 || snapshot.Configuration.Database.MaxConnections != 100 || snapshot.Configuration.Pooler.MaxClientConnections != 100 || snapshot.Configuration.Network.Gateway != "envoy" || snapshot.Configuration.Storage.Backend != "local" {
+		t.Fatalf("legacy safe defaults missing: %#v", snapshot.Configuration)
 	}
 }
 

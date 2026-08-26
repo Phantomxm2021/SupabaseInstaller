@@ -44,7 +44,7 @@ func (s *Service) Create(ctx context.Context, draft Draft) (Project, error) {
 	if project.ID == "" {
 		return Project{}, fmt.Errorf("project ID generator returned an empty ID")
 	}
-	mutations, err := s.encryptConfigurationSecrets(project.ID, draft.Configuration)
+	mutations, err := s.encryptConfigurationSecrets(project.ID, &draft.Configuration)
 	if err != nil {
 		return Project{}, err
 	}
@@ -57,9 +57,9 @@ func (s *Service) Create(ctx context.Context, draft Draft) (Project, error) {
 	return project, nil
 }
 
-func (s *Service) encryptConfigurationSecrets(projectID string, cfg contracts.ProjectConfiguration) ([]store.SecretMutation, error) {
+func (s *Service) encryptConfigurationSecrets(projectID string, cfg *contracts.ProjectConfiguration) ([]store.SecretMutation, error) {
 	mutations := make([]store.SecretMutation, 0)
-	add := func(kind string, input contracts.SecretInput) error {
+	add := func(kind string, input *contracts.SecretInput, set *bool) error {
 		switch input.Action {
 		case "", "retain":
 			if input.Action == "retain" {
@@ -77,28 +77,34 @@ func (s *Service) encryptConfigurationSecrets(projectID string, cfg contracts.Pr
 				return fmt.Errorf("encrypt %s: %w", kind, err)
 			}
 			mutations = append(mutations, store.SecretMutation{Kind: kind, Envelope: envelope})
+			*set = true
 		case "remove":
+			*set = false
 		default:
 			return fmt.Errorf("%s: unknown secret action %q", kind, input.Action)
 		}
+		input.Action = ""
+		input.Value = ""
 		return nil
 	}
-	if err := add("smtp.password", cfg.Auth.SMTP.Password); err != nil {
+	if err := add("smtp.password", &cfg.Auth.SMTP.Password, &cfg.Auth.SMTP.PasswordSet); err != nil {
 		return nil, err
 	}
-	if err := add("phone.secret", cfg.Auth.Phone.Secret); err != nil {
+	if err := add("phone.secret", &cfg.Auth.Phone.Secret, &cfg.Auth.Phone.SecretSet); err != nil {
 		return nil, err
 	}
 	for provider, oauth := range cfg.Auth.OAuth {
-		if err := add("oauth."+provider+".secret", oauth.Secret); err != nil {
+		if err := add("oauth."+provider+".secret", &oauth.Secret, &oauth.SecretSet); err != nil {
 			return nil, err
 		}
+		cfg.Auth.OAuth[provider] = oauth
 	}
-	if err := add("storage.secretAccessKey", cfg.Storage.SecretAccessKey); err != nil {
+	if err := add("storage.secretAccessKey", &cfg.Storage.SecretAccessKey, &cfg.Storage.SecretAccessKeySet); err != nil {
 		return nil, err
 	}
-	for _, variable := range cfg.Functions.Variables {
-		if err := add("functions."+variable.Name, variable.Value); err != nil {
+	for index := range cfg.Functions.Variables {
+		variable := &cfg.Functions.Variables[index]
+		if err := add("functions."+variable.Name, &variable.Value, &variable.ValueSet); err != nil {
 			return nil, err
 		}
 	}
