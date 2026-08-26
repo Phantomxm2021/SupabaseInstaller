@@ -24,7 +24,7 @@ it('normalizes update-only retain markers and never keeps plaintext for non-repl
   configuration.functions.variables = [{ name: 'FOO', valueSet: false, value: { action: 'remove', value: 'discard-me' } }]
   const normalized = normalizeCreateConfiguration(configuration) as any
   expect(normalized.auth.smtp.password).toEqual({ action: '' })
-  expect(normalized.functions.variables[0].value).toEqual({ action: 'remove' })
+  expect(normalized.functions.variables[0].value).toEqual({ action: '' })
 })
 
 it('rejects Go-invalid domain, renderer fields, duplicate ports and service drift', () => {
@@ -65,10 +65,16 @@ it('does not require hidden phone fields while disabled, but validates Twilio fi
   expect(projectConfigurationSchema.safeParse(enabled).success).toBe(true)
 })
 
-it.each(['', 'replace', 'remove'] as const)('accepts create secret action %s', (action) => {
+it.each(['', 'replace'] as const)('accepts create secret action %s', (action) => {
   const configuration = validProject().configuration as any
   configuration.auth.smtp.password = action === 'replace' ? { action, value: 'secret' } : { action }
   expect(projectConfigurationSchema.safeParse(configuration).success).toBe(true)
+})
+
+it('rejects update-only remove action in create configuration', () => {
+  const configuration = validProject().configuration as any
+  configuration.auth.smtp.password = { action: 'remove' }
+  expect(projectConfigurationSchema.safeParse(configuration).success).toBe(false)
 })
 
 it('keeps redacted and update secret truth tables distinct', () => {

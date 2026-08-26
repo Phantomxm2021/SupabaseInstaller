@@ -176,7 +176,7 @@ func TestServiceCreationRejectsReplacementWithoutCipher(t *testing.T) {
 	}
 }
 
-func TestServiceCreationRemoveClearsMarkerAndSecretRow(t *testing.T) {
+func TestServiceCreationRejectsUpdateOnlyRemoveMarker(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -186,18 +186,11 @@ func TestServiceCreationRemoveClearsMarkerAndSecretRow(t *testing.T) {
 	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", ValueSet: true, Value: contracts.SecretInput{Action: "remove"}}}
 	service := NewService(database, func() string { return "project-1" }, time.Now)
-	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg}); err != nil {
-		t.Fatalf("Create() error = %v", err)
+	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg}); err == nil {
+		t.Fatal("Create() accepted update-only remove marker")
 	}
-	snapshot, err := database.GetConfiguration(context.Background(), "project-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Configuration.Functions.Variables[0].ValueSet || snapshot.Configuration.Functions.Variables[0].Value.Action != "" || snapshot.Configuration.Functions.Variables[0].Value.Value != "" {
-		t.Fatal("remove did not clear function secret marker")
-	}
-	if _, err := database.GetSecret(context.Background(), "project-1", "functions.OPENAI_API_KEY"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("remove left encrypted secret: %v", err)
+	if _, err := database.GetProject(context.Background(), "project-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("rejected creation left project row: %v", err)
 	}
 }
 

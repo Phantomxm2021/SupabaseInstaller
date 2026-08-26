@@ -81,10 +81,7 @@ func (s *Service) encryptConfigurationSecrets(projectID string, cfg *contracts.P
 		// trusted during initial creation.
 		*set = false
 		switch input.Action {
-		case "", "retain":
-			if input.Action == "retain" {
-				return fmt.Errorf("%s cannot retain a secret during project creation", kind)
-			}
+		case "":
 		case "replace":
 			if input.Value == "" {
 				return fmt.Errorf("%s: replace requires a value", kind)
@@ -98,8 +95,8 @@ func (s *Service) encryptConfigurationSecrets(projectID string, cfg *contracts.P
 			}
 			mutations = append(mutations, store.SecretMutation{Kind: kind, Envelope: envelope})
 			*set = true
-		case "remove":
-			*set = false
+		case "retain", "remove":
+			return fmt.Errorf("%s cannot use %s during project creation", kind, input.Action)
 		default:
 			return fmt.Errorf("%s: unknown secret action %q", kind, input.Action)
 		}
