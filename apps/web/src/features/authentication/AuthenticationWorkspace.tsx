@@ -11,6 +11,7 @@ import { affectedServices, normalizeRedactedConfiguration, sectionImpact, sectio
 import { useConfigurationMutation } from '../project/configuration/useConfigurationMutation'
 import { AuthenticationNavigation } from './navigation'
 import { SignInProvidersPage } from './SignInProvidersPage'
+import { EmailsPage } from './EmailsPage'
 
 type Snapshot = { projectId: string; revision: number; configuration: RedactedProjectConfiguration }
 type SaveRequest = Omit<PendingConfigurationSave, 'labels' | 'services' | 'impact'> & { dirty: unknown; onQueued?: () => void }
@@ -43,7 +44,7 @@ export function SignInProvidersRoute() {
 }
 
 export function EmailsRoute() {
-  return <section className="page"><h1>Emails</h1></section>
+  return <EmailsPage />
 }
 
 export function URLConfigurationRoute() {
