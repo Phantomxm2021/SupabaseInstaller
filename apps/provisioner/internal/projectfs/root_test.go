@@ -608,6 +608,101 @@ func TestStageRuntimeFilesCurrentSyncFailureRestoresPreviousCurrent(t *testing.T
 	}
 }
 
+func TestWriteRuntimeFilesRestoresWhenCommitFails(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commit, err := root.StageRuntimeFiles("write-failure", RuntimeFiles{Compose: []byte("old"), Env: []byte("old"), FunctionsEnv: []byte("old")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	failed := false
+	root.hooks.syncDirectory = func(directory string) error {
+		if filepath.Base(directory) == "generations" && !failed {
+			failed = true
+			return errors.New("injected write commit failure")
+		}
+		return syncDirectory(directory)
+	}
+	if err := root.WriteRuntimeFiles("write-failure", []byte("new"), []byte("new")); err == nil || !strings.Contains(err.Error(), "injected write commit failure") {
+		t.Fatalf("WriteRuntimeFiles error = %v, want commit failure", err)
+	}
+	path, _ := root.RuntimeComposePath("write-failure")
+	if got := string(mustRead(t, path)); got != "old" {
+		t.Fatalf("current after failed write = %q, want old", got)
+	}
+	entries, _ := os.ReadDir(filepath.Join(filepath.Dir(filepath.Dir(path)), "generations"))
+	if len(entries) != 1 {
+		t.Fatalf("generations after failed write = %d, want 1", len(entries))
+	}
+}
+
+func TestNewRecoversAbandonedLegacyQuarantineWithoutCurrent(t *testing.T) {
+	base := t.TempDir()
+	project := filepath.Join(base, "legacy")
+	runtimeRoot := filepath.Join(project, ".manager-runtime")
+	quarantine := filepath.Join(runtimeRoot, ".legacy-quarantine-orphan")
+	if err := os.MkdirAll(quarantine, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range legacyRuntimeNames {
+		if err := os.WriteFile(filepath.Join(quarantine, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range legacyRuntimeNames {
+		if got := string(mustRead(t, filepath.Join(project, name))); got != name {
+			t.Fatalf("recovered %s = %q", name, got)
+		}
+	}
+	if _, err := os.Lstat(quarantine); !os.IsNotExist(err) {
+		t.Fatalf("quarantine remains after recovery: %v", err)
+	}
+	if err := root.CleanupAbandonedRuntimeCandidates("legacy"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewCleansLegacyQuarantineAfterCurrentWasPublished(t *testing.T) {
+	base := t.TempDir()
+	project := filepath.Join(base, "legacy")
+	runtimeRoot := filepath.Join(project, ".manager-runtime")
+	generation := filepath.Join(runtimeRoot, "generations", "generation-good")
+	quarantine := filepath.Join(runtimeRoot, ".legacy-quarantine-after-publish")
+	if err := os.MkdirAll(generation, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(quarantine, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generation, "docker-compose.yml"), []byte("good"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(quarantine, "docker-compose.yml"), []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("generations", "generation-good"), filepath.Join(runtimeRoot, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(quarantine); !os.IsNotExist(err) {
+		t.Fatalf("published quarantine remains: %v", err)
+	}
+	if got := string(mustRead(t, filepath.Join(runtimeRoot, "current", "docker-compose.yml"))); got != "good" {
+		t.Fatalf("current changed to %q", got)
+	}
+}
+
 func TestStageRuntimeFilesLegacyMoveFailureRollsBackBeforeCurrentRestore(t *testing.T) {
 	base := t.TempDir()
 	root, err := New(base)

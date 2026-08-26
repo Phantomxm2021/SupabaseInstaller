@@ -16,6 +16,10 @@ type LifecycleRunner interface {
 	Stop(ctx context.Context, project compose.ProjectRef) error
 	Restart(ctx context.Context, project compose.ProjectRef, services ...string) error
 	DownRuntime(ctx context.Context, project compose.ProjectRef) error
+	Validate(ctx context.Context, project compose.ProjectRef) error
+	UpSelected(ctx context.Context, project compose.ProjectRef, services ...string) error
+	Recreate(ctx context.Context, project compose.ProjectRef, services ...string) error
+	RemoveStopped(ctx context.Context, project compose.ProjectRef, services ...string) error
 }
 
 type HealthInspector interface {

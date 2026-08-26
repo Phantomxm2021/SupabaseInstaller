@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"supabase-manager/internal/contracts"
 	"supabase-manager/internal/templates"
 )
 
@@ -20,11 +21,13 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 var ErrNotFound = errors.New("project metadata not found")
 
 type Metadata struct {
-	ProjectID   string                     `json:"projectId"`
-	ProjectName string                     `json:"projectName"`
-	Slug        string                     `json:"slug"`
-	Revision    int64                      `json:"revision"`
-	Idempotency map[string]json.RawMessage `json:"idempotency"`
+	ProjectID       string                         `json:"projectId"`
+	ProjectName     string                         `json:"projectName"`
+	Slug            string                         `json:"slug"`
+	Revision        int64                          `json:"revision"`
+	Idempotency     map[string]json.RawMessage     `json:"idempotency"`
+	Configuration   contracts.ProjectConfiguration `json:"configuration,omitempty"`
+	EnabledServices []string                       `json:"enabledServices,omitempty"`
 }
 
 func (r *Root) DeleteProjectData(slug string) error {
@@ -272,7 +275,62 @@ func cleanupAbandonedRuntimeCandidates(projectPath string) error {
 		removed = true
 	}
 	if removed {
-		return syncDirectory(runtimeRoot)
+		if err := syncDirectory(runtimeRoot); err != nil {
+			return err
+		}
+	}
+	return cleanupAbandonedLegacyQuarantines(projectPath)
+}
+
+// cleanupAbandonedLegacyQuarantines repairs interrupted compatibility-file
+// migrations. A quarantine with a valid current generation is safe to discard;
+// without a valid current generation its exact legacy entries are restored to
+// the project root before the quarantine is removed.
+func cleanupAbandonedLegacyQuarantines(projectPath string) error {
+	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
+	matches, err := filepath.Glob(filepath.Join(runtimeRoot, ".legacy-quarantine-*"))
+	if err != nil {
+		return err
+	}
+	for _, quarantine := range matches {
+		current := filepath.Join(runtimeRoot, "current")
+		target, targetErr := os.Readlink(current)
+		currentValid := targetErr == nil && target != ""
+		if currentValid {
+			if _, err := os.Stat(current); err != nil {
+				currentValid = false
+			}
+		}
+		if !currentValid {
+			for _, name := range legacyRuntimeNames {
+				source := filepath.Join(quarantine, name)
+				if _, err := os.Lstat(source); errors.Is(err, os.ErrNotExist) {
+					continue
+				} else if err != nil {
+					return fmt.Errorf("inspect abandoned legacy quarantine %s: %w", name, err)
+				}
+				destination := filepath.Join(projectPath, name)
+				if _, err := os.Lstat(destination); err == nil {
+					// Never overwrite a project file during conservative recovery;
+					// retain the quarantine for an operator to resolve explicitly.
+					return fmt.Errorf("legacy recovery conflict at %s", name)
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("inspect legacy recovery destination %s: %w", name, err)
+				}
+				if err := os.Rename(source, destination); err != nil {
+					return fmt.Errorf("recover legacy runtime file %s: %w", name, err)
+				}
+			}
+		}
+		if err := os.RemoveAll(quarantine); err != nil {
+			return fmt.Errorf("remove abandoned legacy quarantine: %w", err)
+		}
+		if err := syncDirectory(projectPath); err != nil {
+			return err
+		}
+		if err := syncDirectory(runtimeRoot); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -280,11 +338,14 @@ func cleanupAbandonedRuntimeCandidates(projectPath string) error {
 // WriteRuntimeFiles is retained for old callers; new code should stage all
 // three runtime files and commit them as one set.
 func (r *Root) WriteRuntimeFiles(slug string, compose, environment []byte) error {
-	_, commit, err := r.StageRuntimeFiles(slug, RuntimeFiles{Compose: compose, Env: environment})
+	restore, commit, err := r.StageRuntimeFiles(slug, RuntimeFiles{Compose: compose, Env: environment})
 	if err != nil {
 		return err
 	}
 	if err := commit(); err != nil {
+		if restoreErr := restore(); restoreErr != nil {
+			return errors.Join(err, restoreErr)
+		}
 		return err
 	}
 	return nil
@@ -493,6 +554,9 @@ func (r *Root) cleanupLegacyRuntimeFiles(projectPath, runtimeRoot string, names 
 	}
 	if err := os.RemoveAll(cleanup.quarantine); err != nil {
 		return cleanup, cleanup.fail(fmt.Errorf("remove legacy quarantine: %w", err))
+	}
+	if err := r.syncRuntimeDirectory(runtimeRoot); err != nil {
+		return cleanup, cleanup.fail(err)
 	}
 	cleanup.finalized = true
 	return cleanup, nil

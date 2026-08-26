@@ -1,6 +1,21 @@
 package contracts
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var ErrStaleConfigRevision = errors.New("stale config revision")
+
+// ReconcileFailure preserves the runtime outcome without exposing rendered
+// files or secret material through an API error.
+type ReconcileFailure struct {
+	Cause             error
+	RollbackSucceeded bool
+}
+
+func (e *ReconcileFailure) Error() string { return "runtime reconciliation failed" }
+func (e *ReconcileFailure) Unwrap() error { return e.Cause }
 
 type PrepareProjectRequest struct {
 	OperationID      string         `json:"operationId"`

@@ -73,6 +73,19 @@ func (runner *recordingRunner) Restart(context.Context, compose.ProjectRef, ...s
 	return nil
 }
 func (runner *recordingRunner) DownRuntime(context.Context, compose.ProjectRef) error { return nil }
+func (runner *recordingRunner) Validate(context.Context, compose.ProjectRef) error    { return nil }
+func (runner *recordingRunner) UpSelected(_ context.Context, _ compose.ProjectRef, services ...string) error {
+	runner.calls = append(runner.calls, "selected:"+strings.Join(services, "|"))
+	return nil
+}
+func (runner *recordingRunner) Recreate(_ context.Context, _ compose.ProjectRef, services ...string) error {
+	runner.calls = append(runner.calls, "recreate:"+strings.Join(services, "|"))
+	return nil
+}
+func (runner *recordingRunner) RemoveStopped(_ context.Context, _ compose.ProjectRef, services ...string) error {
+	runner.calls = append(runner.calls, "remove:"+strings.Join(services, "|"))
+	return nil
+}
 
 type staticInspector struct{}
 

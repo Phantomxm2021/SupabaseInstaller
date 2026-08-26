@@ -35,6 +35,14 @@ type Runner struct {
 	executor Executor
 }
 
+// composeServices is the closed set emitted by the pinned renderer. Reconcile
+// never accepts arbitrary compose arguments from a request.
+var composeServices = map[string]struct{}{
+	"db": {}, "api-gw": {}, "envoy": {}, "kong": {}, "auth": {}, "rest": {}, "meta": {},
+	"studio": {}, "realtime": {}, "storage": {}, "imgproxy": {}, "functions": {},
+	"supavisor": {}, "db-config": {}, "analytics": {}, "logflare": {}, "vector": {}, "deno-cache": {}, "caddy": {},
+}
+
 func NewRunner(executor Executor) *Runner {
 	return &Runner{executor: executor}
 }
@@ -62,7 +70,42 @@ func (r *Runner) Restart(ctx context.Context, project ProjectRef, services ...st
 }
 
 func (r *Runner) Recreate(ctx context.Context, project ProjectRef, services ...string) error {
-	args := append([]string{"up", "-d", "--force-recreate", "--wait"}, services...)
+	if err := validateServices(services); err != nil {
+		return err
+	}
+	if len(services) == 0 {
+		return nil
+	}
+	args := append([]string{"up", "-d", "--force-recreate", "--remove-orphans"}, services...)
+	return r.run(ctx, project, args...)
+}
+
+// Validate validates a candidate Compose model without changing containers.
+func (r *Runner) Validate(ctx context.Context, project ProjectRef) error {
+	return r.run(ctx, project, "config", "--quiet")
+}
+
+// UpSelected starts only renderer-selected services.
+func (r *Runner) UpSelected(ctx context.Context, project ProjectRef, services ...string) error {
+	if err := validateServices(services); err != nil {
+		return err
+	}
+	if len(services) == 0 {
+		return nil
+	}
+	args := append([]string{"up", "-d", "--remove-orphans"}, services...)
+	return r.run(ctx, project, args...)
+}
+
+// RemoveStopped removes disabled containers while preserving all volumes.
+func (r *Runner) RemoveStopped(ctx context.Context, project ProjectRef, services ...string) error {
+	if err := validateServices(services); err != nil {
+		return err
+	}
+	if len(services) == 0 {
+		return nil
+	}
+	args := append([]string{"rm", "-s", "-f"}, services...)
 	return r.run(ctx, project, args...)
 }
 
@@ -102,4 +145,13 @@ func (r *Runner) baseArgs(project ProjectRef) []string {
 		args = append(args, "--env-file", project.EnvFile)
 	}
 	return append(args, "--project-directory", project.Dir, "--project-name", "supabase-manager-"+project.Slug)
+}
+
+func validateServices(services []string) error {
+	for _, service := range services {
+		if _, ok := composeServices[service]; !ok {
+			return fmt.Errorf("unsupported compose service %q", service)
+		}
+	}
+	return nil
 }

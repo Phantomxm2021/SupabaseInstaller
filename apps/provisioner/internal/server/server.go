@@ -15,6 +15,7 @@ import (
 type Backend interface {
 	Lifecycle(ctx context.Context, request contracts.LifecycleRequest) error
 	Inspect(ctx context.Context, request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error)
+	Reconcile(ctx context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error)
 }
 
 type Options struct {
@@ -34,6 +35,7 @@ func New(options Options) http.Handler {
 	private.HandleFunc("POST /internal/v1/projects/prepare", service.prepare)
 	private.HandleFunc("POST /internal/v1/projects/lifecycle", service.lifecycle)
 	private.HandleFunc("POST /internal/v1/projects/inspect", service.inspect)
+	private.HandleFunc("POST /internal/v1/projects/reconcile", service.reconcile)
 	root := http.NewServeMux()
 	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
 	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
@@ -121,6 +123,30 @@ func (s *server) inspect(response http.ResponseWriter, request *http.Request) {
 	result, err := s.backend.Inspect(request.Context(), input)
 	if err != nil {
 		writeError(response, http.StatusUnprocessableEntity, "INSPECT_FAILED", err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
+}
+
+func (s *server) reconcile(response http.ResponseWriter, request *http.Request) {
+	if s.backend == nil {
+		writeError(response, http.StatusServiceUnavailable, "BACKEND_UNAVAILABLE", "Provisioner reconciliation backend is unavailable")
+		return
+	}
+	var input contracts.ReconcileProjectRequest
+	if err := decodeJSON(response, request, &input); err != nil || input.OperationID == "" || input.IdempotencyKey == "" || input.ProjectID == "" || input.Slug == "" {
+		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed reconcile request is required")
+		return
+	}
+	result, err := s.backend.Reconcile(request.Context(), input)
+	if errors.Is(err, contracts.ErrStaleConfigRevision) {
+		writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
+		return
+	}
+	if err != nil {
+		// Runtime errors are deliberately generic: rendered environment files
+		// and secret values must never cross this private API boundary.
+		writeError(response, http.StatusUnprocessableEntity, "RECONCILE_FAILED", "Project runtime reconciliation failed")
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
