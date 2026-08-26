@@ -71,3 +71,5 @@ passed
 Commit: `0841220 fix: close Task 7 create contract gaps`
 
 Follow-up closure commit: `16cd2da fix: enforce service and storage closures`
+
+DTO modeling commit: `02f65a2 fix: model redacted and editable configuration DTOs`
