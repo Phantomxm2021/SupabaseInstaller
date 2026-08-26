@@ -97,7 +97,7 @@ func (s *Store) AdmitConfiguration(ctx context.Context, input ConfigurationAdmis
 		expires := input.Now.Add(input.LeaseTTL)
 		// Admission owns the complete conflict check and reservation. Keeping
 		// both in this write transaction prevents a racing project from passing
-		// while the candidate is still pending (before MarkConfigurationGood).
+		// while the candidate is still pending (before owned publication).
 		resources := configurationResources(input.Configuration)
 		for kind, key := range resources {
 			var conflictID string
@@ -459,7 +459,7 @@ func (s *Store) saveConfiguration(ctx context.Context, projectID string, expecte
 			return fmt.Errorf("mark encrypted secret snapshot: %w", err)
 		}
 		// Canonical project/service/port rows are applied only by
-		// MarkConfigurationGood after Provisioner health succeeds. This desired
+		// owned publication after Provisioner health succeeds. This desired
 		// snapshot transaction must never make an unhealthy revision look live.
 		for _, mutation := range mutations {
 			if mutation.Delete {
@@ -498,27 +498,6 @@ func projectServiceProjection(services contracts.Services) []serviceProjection {
 		{"functions", services.Functions}, {"supavisor", services.Supavisor}, {"logs", services.Logs},
 		{"vector", services.Vector}, {"directDb", services.DirectDB},
 	}
-}
-
-// RestoreSecretsRevision restores the encrypted secret set that existed just
-// before the specified configuration revision was attempted.
-func (s *Store) RestoreSecretsRevision(ctx context.Context, projectID string, revision int64) error {
-	return s.InTx(ctx, func(tx *sql.Tx) error {
-		var present int
-		if err := tx.QueryRowContext(ctx, `SELECT present FROM project_secret_snapshot_markers WHERE project_id = ? AND revision = ?`, projectID, revision).Scan(&present); errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		} else if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id = ?`, projectID); err != nil {
-			return err
-		}
-		if present == 0 {
-			return nil
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id, kind, envelope_version, nonce, ciphertext, updated_at) SELECT project_id, kind, envelope_version, nonce, ciphertext, ? FROM project_secret_versions WHERE project_id = ? AND revision = ?`, formatTime(time.Now()), projectID, revision)
-		return err
-	})
 }
 
 // RestoreConfigurationStateOwned is the only production compensation path.
@@ -688,121 +667,6 @@ func (s *Store) GetSecretAtRevision(ctx context.Context, projectID string, revis
 		return envelope, ErrNotFound
 	}
 	return envelope, err
-}
-
-// CleanupTerminalConfigurationCandidates repairs only candidates whose
-// operation journal explicitly proves that runtime was unchanged or rollback
-// completed. Legacy terminal rows without that phase remain for operator
-// recovery; status=FAILED alone is never evidence that old runtime is safe.
-func (s *Store) CleanupTerminalConfigurationCandidates(ctx context.Context) error {
-	return s.InTx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT id,config_revision,last_good_revision FROM projects`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var projectID string
-			var current, lastGood int64
-			if err := rows.Scan(&projectID, &current, &lastGood); err != nil {
-				return err
-			}
-			candidateRows, err := tx.QueryContext(ctx, `SELECT revision FROM project_configs WHERE project_id=? AND section='aggregate' AND revision>? ORDER BY revision`, projectID, lastGood)
-			if err != nil {
-				return err
-			}
-			var candidates []int64
-			for candidateRows.Next() {
-				var revision int64
-				if err := candidateRows.Scan(&revision); err != nil {
-					candidateRows.Close()
-					return err
-				}
-				candidates = append(candidates, revision)
-			}
-			if err := candidateRows.Err(); err != nil {
-				candidateRows.Close()
-				return err
-			}
-			candidateRows.Close()
-			for _, revision := range candidates {
-				var active int
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operation_configurations oc JOIN operations o ON o.id=oc.operation_id WHERE oc.project_id=? AND oc.revision=? AND o.status IN ('QUEUED','RUNNING','ROLLING_BACK')`, projectID, revision).Scan(&active); err != nil {
-					return err
-				}
-				if active != 0 {
-					continue
-				}
-				var recoverable int
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operation_configurations oc JOIN operations o ON o.id=oc.operation_id WHERE oc.project_id=? AND oc.revision=? AND o.compensation_phase IN ('PRE_RUNTIME_NO_CHANGE','STATE_RESTORED','ROLLED_BACK')`, projectID, revision).Scan(&recoverable); err != nil {
-					return err
-				}
-				if recoverable == 0 {
-					continue
-				}
-				if revision == current {
-					if err := restoreSecretsRevisionTx(ctx, tx, projectID, revision); err != nil && !errors.Is(err, ErrNotFound) {
-						return err
-					}
-					var raw string
-					if err := tx.QueryRowContext(ctx, `SELECT config_json FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, projectID, lastGood).Scan(&raw); err != nil {
-						return err
-					}
-					var cfg contracts.ProjectConfiguration
-					if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-						return err
-					}
-					if _, err := tx.ExecContext(ctx, `UPDATE projects SET config_revision=?,updated_at=? WHERE id=? AND config_revision=?`, lastGood, formatTime(time.Now()), projectID, current); err != nil {
-						return err
-					}
-					if err := updateCanonicalProjectionTx(ctx, tx, projectID, cfg, time.Now()); err != nil {
-						return err
-					}
-				}
-				if _, err := tx.ExecContext(ctx, `DELETE FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, projectID, revision); err != nil {
-					return err
-				}
-				if _, err := tx.ExecContext(ctx, `DELETE FROM project_secret_versions WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
-					return err
-				}
-				if _, err := tx.ExecContext(ctx, `DELETE FROM project_secret_snapshot_markers WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
-					return err
-				}
-				if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
-					return err
-				}
-			}
-			var activeOperations int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations WHERE project_id=? AND status IN ('QUEUED','RUNNING','ROLLING_BACK')`, projectID).Scan(&activeOperations); err != nil {
-				return err
-			}
-			if activeOperations == 0 {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id=?`, projectID); err != nil {
-					return err
-				}
-			}
-		}
-		return rows.Err()
-	})
-}
-
-func restoreSecretsRevisionTx(ctx context.Context, tx *sql.Tx, projectID string, revision int64) error {
-	var present int
-	if err := tx.QueryRowContext(ctx, `SELECT present FROM project_secret_snapshot_markers WHERE project_id=? AND revision=?`, projectID, revision).Scan(&present); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id=?`, projectID); err != nil {
-		return err
-	}
-	if present == 0 {
-		return nil
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id,kind,envelope_version,nonce,ciphertext,updated_at) SELECT project_id,kind,envelope_version,nonce,ciphertext,? FROM project_secret_versions WHERE project_id=? AND revision=?`, formatTime(time.Now()), projectID, revision)
-	return err
-}
-
-func (s *Store) MarkConfigurationGood(ctx context.Context, projectID string, revision int64) error {
-	return s.MarkConfigurationGoodOwned(ctx, projectID, revision, "", 0, "", time.Now())
 }
 
 // MarkConfigurationGoodOwned atomically publishes a candidate revision and

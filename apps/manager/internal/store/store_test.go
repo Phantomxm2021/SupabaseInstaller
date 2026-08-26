@@ -33,36 +33,6 @@ func TestStoreCreatesAndReadsProject(t *testing.T) {
 	}
 }
 
-func TestSecretVersionSnapshotRestoresPrePatchSet(t *testing.T) {
-	s := openTestStore(t)
-	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
-		t.Fatal(err)
-	}
-	cipher, _ := secrets.NewCipher(bytes.Repeat([]byte{7}, 32))
-	old, _ := cipher.Encrypt(project.ID, "smtp.password", []byte("old"))
-	if err := s.PutSecret(context.Background(), project.ID, "smtp.password", old); err != nil {
-		t.Fatal(err)
-	}
-	cfg := configurationFixture()
-	cfg.Auth.SMTP.PasswordSet = true
-	newEnvelope, _ := cipher.Encrypt(project.ID, "smtp.password", []byte("new"))
-	if _, err := s.SaveConfigurationWithSecrets(context.Background(), project.ID, 1, cfg, time.Now(), []SecretMutation{{Kind: "smtp.password", Envelope: newEnvelope}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RestoreSecretsRevision(context.Background(), project.ID, 2); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.GetSecret(context.Background(), project.ID, "smtp.password")
-	if err != nil {
-		t.Fatal(err)
-	}
-	plain, _ := cipher.Decrypt(project.ID, "smtp.password", got)
-	if string(plain) != "old" {
-		t.Fatalf("restored secret=%q, want old", plain)
-	}
-}
-
 func TestConfigurationLeaseSerializesAndRecoversAfterExpiry(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
@@ -253,62 +223,6 @@ func TestRestoreConfigurationStateOwnedAllowsExpiredOriginalFence(t *testing.T) 
 	}
 }
 
-func TestCleanupTerminalConfigurationCandidatesRecoversLegacyFailedRevision(t *testing.T) {
-	s := openTestStore(t)
-	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
-		t.Fatal(err)
-	}
-	candidate := configurationFixture()
-	candidate.General.Domain = "legacy-failed.example.com"
-	now := time.Now().UTC()
-	op := contracts.Operation{ID: "legacy-failed-op", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
-	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.DB().Exec(`UPDATE operations SET status='FAILED', compensation_phase='STATE_RESTORED' WHERE id=?`, op.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CleanupTerminalConfigurationCandidates(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: contracts.Operation{ID: "legacy-next", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now.Add(time.Second)}, ProjectID: project.ID, Owner: "legacy-next", ExpectedRevision: 1, Configuration: configurationFixture(), OperationKind: "UPDATE_CONFIG", Now: now.Add(time.Second)}); err != nil {
-		t.Fatalf("admission after startup cleanup = %v", err)
-	}
-}
-
-func TestCleanupTerminalConfigurationCandidatesLeavesLegacyUnknownPhase(t *testing.T) {
-	s := openTestStore(t)
-	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	candidate := configurationFixture()
-	candidate.General.Domain = "unknown-phase.example.com"
-	op := contracts.Operation{ID: "unknown-phase-op", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
-	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.DB().Exec(`UPDATE operations SET status='FAILED' WHERE id=?`, op.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CleanupTerminalConfigurationCandidates(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	var revision int64
-	if err := s.DB().QueryRow(`SELECT config_revision FROM projects WHERE id=?`, project.ID).Scan(&revision); err != nil {
-		t.Fatal(err)
-	}
-	if revision != 2 {
-		t.Fatalf("unknown-phase current revision = %d, want candidate preserved at 2", revision)
-	}
-	var candidates int
-	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM project_configs WHERE project_id=? AND revision=2`, project.ID).Scan(&candidates); err != nil || candidates != 1 {
-		t.Fatalf("unknown-phase candidate rows = %d, %v; want retained", candidates, err)
-	}
-}
-
 func TestOperationCompensationStateIsDurable(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
@@ -385,9 +299,6 @@ func TestSnapshotMarkerDistinguishesEmptyRevision(t *testing.T) {
 	var present int
 	if err := s.DB().QueryRow(`SELECT present FROM project_secret_snapshot_markers WHERE project_id = ? AND revision = 1`, project.ID).Scan(&present); err != nil || present != 0 {
 		t.Fatalf("revision-1 empty marker = %d, %v", present, err)
-	}
-	if err := s.RestoreSecretsRevision(context.Background(), project.ID, 1); err != nil {
-		t.Fatalf("restore empty snapshot: %v", err)
 	}
 }
 
@@ -580,35 +491,6 @@ func TestGetConfigurationRedactsLegacyNestedPlaintext(t *testing.T) {
 		if value != "" {
 			t.Fatalf("legacy plaintext crossed read boundary: %q", value)
 		}
-	}
-}
-
-func TestMarkConfigurationGoodRequiresCurrentRevisionAndNeverRegresses(t *testing.T) {
-	s := openTestStore(t)
-	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.SaveConfiguration(context.Background(), project.ID, 1, configurationFixture(), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	for _, revision := range []int64{0, 1, 3} {
-		if err := s.MarkConfigurationGood(context.Background(), project.ID, revision); !errors.Is(err, ErrStaleConfiguration) {
-			t.Fatalf("MarkConfigurationGood(%d) = %v, want stale error", revision, err)
-		}
-	}
-	if err := s.MarkConfigurationGood(context.Background(), project.ID, 2); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.MarkConfigurationGood(context.Background(), project.ID, 1); !errors.Is(err, ErrStaleConfiguration) {
-		t.Fatalf("regressing MarkConfigurationGood() = %v", err)
-	}
-	var lastGood int64
-	if err := s.DB().QueryRow(`SELECT last_good_revision FROM projects WHERE id = ?`, project.ID).Scan(&lastGood); err != nil {
-		t.Fatal(err)
-	}
-	if lastGood != 2 {
-		t.Fatalf("last_good_revision = %d, want 2", lastGood)
 	}
 }
 

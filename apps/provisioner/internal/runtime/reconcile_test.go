@@ -57,7 +57,7 @@ func TestReconcileRecreatesOnlyAffectedService(t *testing.T) {
 	}
 }
 
-func TestReconcileFailureRestoresPreviousRuntimeAndRecreatesIt(t *testing.T) {
+func TestAcceptanceInspectorFailureRestoresPreviousRuntimeAndRecreatesPriorAuth(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

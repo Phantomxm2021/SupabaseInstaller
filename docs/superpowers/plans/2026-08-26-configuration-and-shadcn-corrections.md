@@ -260,7 +260,7 @@ type ConfigurationSnapshot struct {
 
 func (s *Store) GetConfiguration(ctx context.Context, projectID string) (ConfigurationSnapshot, error)
 func (s *Store) SaveConfiguration(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration, now time.Time) (ConfigurationSnapshot, error)
-func (s *Store) MarkConfigurationGood(ctx context.Context, projectID string, revision int64) error
+func (s *Store) MarkConfigurationGoodOwned(ctx context.Context, projectID string, revision int64, owner string, fence int64, phase string, now time.Time) error
 ```
 
 Before JSON encoding, clear every `SecretInput.Value`; persist only `PasswordSet`/`SecretSet` flags in configuration JSON. Use a transaction and `UPDATE ... WHERE config_revision = ?` to implement optimistic concurrency.

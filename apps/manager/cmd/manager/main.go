@@ -41,10 +41,6 @@ func main() {
 		os.Exit(1)
 	}
 	defer database.Close()
-	if err := database.CleanupTerminalConfigurationCandidates(context.Background()); err != nil {
-		slog.Error("repair terminal configuration candidates", "error", err)
-		os.Exit(1)
-	}
 	cipher, err := managersecrets.NewCipher(cfg.MasterEncryptionKey)
 	if err != nil {
 		slog.Error("initialize encryption", "error", err)

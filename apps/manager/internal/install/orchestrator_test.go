@@ -86,11 +86,13 @@ func TestInstallAllocatesAndPersistsAllServerOwnedPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot.Configuration.Services = project.Services
-	saved, err := orchestrator.store.SaveConfiguration(context.Background(), project.ID, snapshot.Revision, snapshot.Configuration, time.Now())
+	snapshot.Configuration.Services = project.Services
+	configOperation := contracts.Operation{ID: "install-config-op", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: operation.Queued, CreatedAt: time.Now()}
+	saved, lease, err := orchestrator.store.AdmitConfiguration(context.Background(), store.ConfigurationAdmission{Operation: configOperation, ProjectID: project.ID, Owner: configOperation.ID, ExpectedRevision: snapshot.Revision, Configuration: snapshot.Configuration, OperationKind: "UPDATE_CONFIG", Now: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := orchestrator.store.MarkConfigurationGood(context.Background(), project.ID, saved.Revision); err != nil {
+	if err := orchestrator.store.MarkConfigurationGoodOwned(context.Background(), project.ID, saved.Revision, configOperation.ID, lease.Fence, "COMMITTED", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	result, err := orchestrator.Install(context.Background(), project)

@@ -306,7 +306,7 @@ func randomSecret() (string, error) {
 
 // allocateUpdatePorts applies the same server-owned allocator used by install
 // to installed-project updates. It only chooses candidate values. Canonical
-// allocations are promoted or released by MarkConfigurationGood in the same
+// allocations are promoted or released by the owned publication transaction in the same
 // transaction as the desired revision; a failed render therefore cannot
 // change the last-good runtime's ports.
 func (o *Orchestrator) allocateUpdatePorts(ctx context.Context, projectID string, cfg *contracts.ProjectConfiguration) error {
