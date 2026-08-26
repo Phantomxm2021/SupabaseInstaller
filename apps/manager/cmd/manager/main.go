@@ -50,7 +50,7 @@ func main() {
 	adminAuth := auth.NewService(database, auth.NewPasswordHasher(auth.DefaultParams), rand.Reader, now)
 	operations := operation.NewService(database, randomID, now)
 	projects := project.NewServiceWithCipher(database, randomID, now, cipher)
-	provisionerHTTP := &http.Client{Timeout: 45 * time.Minute}
+	provisionerHTTP := &http.Client{Timeout: provisioner.DefaultRequestTimeout}
 	provisionerClient := provisioner.NewClient(cfg.ProvisionerURL, cfg.ProvisionerToken, provisionerHTTP)
 	allocator := ports.NewAllocator(database, cfg.PortRangeStart, cfg.PortRangeEnd, ports.NetworkProbe{})
 	installer := install.NewOrchestrator(database, operations, allocator, cipher, provisionerClient, install.CryptoGenerator{Random: rand.Reader, Now: now}, now)

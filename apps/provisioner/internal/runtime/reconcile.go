@@ -158,12 +158,10 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				return fail(rollback(err))
 			}
 		}
-		if err := backend.waitHealthy(ctx, request.Slug, newServices); err != nil {
-			return fail(rollback(err))
-		}
 		// The disposable acceptance harness injects one inspector failure after
-		// candidate runtime apply. The normal rollback path then restores the
-		// previous pointer and recreates its affected services.
+		// candidate runtime apply, before normal candidate health publication.
+		// The normal rollback path then restores the previous pointer and
+		// recreates its affected services.
 		if backend.acceptanceInspectorFailOnce.Load() && request.Configuration.Auth.OAuth != nil && backend.consumeAcceptanceInspectorFailure() {
 			_, inspectErr := backend.inspector.Project(ctx, health.ProjectRef{Slug: request.Slug, Enabled: newServices})
 			cause := errors.New("acceptance inspector failure")
@@ -171,6 +169,9 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				cause = errors.Join(cause, inspectErr)
 			}
 			return fail(rollback(cause))
+		}
+		if err := backend.waitHealthy(ctx, request.Slug, newServices); err != nil {
+			return fail(rollback(err))
 		}
 		result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.NextRevision, EnabledServices: newServices, RecreatedServices: intersect(affectedServices(previousConfig, request.Configuration), newServices)}
 		encoded, _ := json.Marshal(result)
@@ -240,7 +241,11 @@ func writeCandidateCompose(path string, contents []byte) error {
 	return file.Close()
 }
 
-const reconcileHealthTimeout = 30 * time.Second
+// Compose service replacement can legitimately take several minutes while
+// dependent databases and migrations settle. This deadline is independent of
+// the HTTP request lifecycle; the Manager runs reconciliation in a durable
+// background operation.
+const reconcileHealthTimeout = 5 * time.Minute
 const reconcileHealthPoll = 50 * time.Millisecond
 
 func (backend *Backend) waitHealthy(ctx context.Context, slug string, enabled []string) error {

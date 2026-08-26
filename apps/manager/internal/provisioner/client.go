@@ -19,6 +19,8 @@ type Client struct {
 	http    *http.Client
 }
 
+const DefaultRequestTimeout = 45 * time.Minute
+
 // ClientError is a redacted error returned by the private Provisioner API.
 // Only the typed code and user-safe message are retained; response bodies are
 // never embedded in the error so rendered secrets cannot escape this boundary.
@@ -49,7 +51,7 @@ func (e *ClientError) Unwrap() error {
 
 func NewClient(baseURL, token string, client *http.Client) *Client {
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{Timeout: DefaultRequestTimeout}
 	}
 	return &Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: client}
 }

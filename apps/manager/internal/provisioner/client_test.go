@@ -8,9 +8,17 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"supabase-manager/internal/contracts"
 )
+
+func TestClientDefaultRequestTimeoutAllowsDurableRuntimeRecovery(t *testing.T) {
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), nil)
+	if client.http.Timeout != DefaultRequestTimeout || client.http.Timeout < 5*time.Minute {
+		t.Fatalf("default provisioner timeout=%s, want at least five minutes", client.http.Timeout)
+	}
+}
 
 func TestClientReturnsProvisionerErrorCode(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
