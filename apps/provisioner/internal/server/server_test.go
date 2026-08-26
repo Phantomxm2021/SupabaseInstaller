@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -111,4 +112,24 @@ func authenticatedJSON(t *testing.T, handler http.Handler, path string, payload 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func TestReconcileEndpointReturnsTypedRedactedRollbackOutcome(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	stub := &reconcileStub{err: &contracts.ReconcileFailure{RollbackSucceeded: true, Response: contracts.ReconcileProjectResponse{OperationID: "op", ProjectID: "project", Revision: 1, RolledBack: true, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Project runtime reconciliation failed"}}}}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: stub})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", contracts.ReconcileProjectRequest{OperationID: "op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee"})
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"rolledBack":true`) || strings.Contains(response.Body.String(), "secret") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+type reconcileStub struct{ err error }
+
+func (s *reconcileStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
+func (s *reconcileStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
+	return contracts.InspectProjectResponse{}, nil
+}
+func (s *reconcileStub) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, s.err
 }

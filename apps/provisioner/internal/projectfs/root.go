@@ -111,52 +111,59 @@ func (r *Root) RuntimeFunctionsEnvPath(slug string) (string, error) {
 // symlink is the sole publication switch; candidate generations are never
 // visible to Compose callers.
 func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func() error, commit func() error, err error) {
+	_, restore, commit, err = r.StageRuntimeFilesWithRef(slug, files)
+	return restore, commit, err
+}
+
+// StageRuntimeFilesWithRef exposes candidate paths while keeping the stable
+// project directory. The candidate is unpublished until commit succeeds.
+func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candidate RuntimeRef, restore func() error, commit func() error, err error) {
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
 	projectPath, err := r.ProjectPath(slug)
 	if err != nil {
-		return nil, nil, err
+		return RuntimeRef{}, nil, nil, err
 	}
 	if _, err := os.Stat(projectPath); errors.Is(err, os.ErrNotExist) {
 		staging, err := os.MkdirTemp(r.base, "."+slug+"-staging-")
 		if err != nil {
-			return nil, nil, fmt.Errorf("create project staging directory: %w", err)
+			return RuntimeRef{}, nil, nil, fmt.Errorf("create project staging directory: %w", err)
 		}
 		if err := copyEmbeddedTemplate(staging); err != nil {
 			_ = os.RemoveAll(staging)
-			return nil, nil, err
+			return RuntimeRef{}, nil, nil, err
 		}
 		if err := os.Rename(staging, projectPath); err != nil {
 			_ = os.RemoveAll(staging)
-			return nil, nil, fmt.Errorf("publish project directory: %w", err)
+			return RuntimeRef{}, nil, nil, fmt.Errorf("publish project directory: %w", err)
 		}
 	} else if err != nil {
-		return nil, nil, fmt.Errorf("inspect project directory: %w", err)
+		return RuntimeRef{}, nil, nil, fmt.Errorf("inspect project directory: %w", err)
 	}
 	legacyFiles, err := identifyLegacyRuntimeFiles(projectPath)
 	if err != nil {
-		return nil, nil, err
+		return RuntimeRef{}, nil, nil, err
 	}
 
 	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
 	if err := os.MkdirAll(filepath.Join(runtimeRoot, "generations"), 0o700); err != nil {
-		return nil, nil, fmt.Errorf("create runtime generations: %w", err)
+		return RuntimeRef{}, nil, nil, fmt.Errorf("create runtime generations: %w", err)
 	}
 	current := filepath.Join(runtimeRoot, "current")
 	candidateDir, err := os.MkdirTemp(runtimeRoot, ".candidate-")
 	if err != nil {
-		return nil, nil, fmt.Errorf("create runtime staging directory: %w", err)
+		return RuntimeRef{}, nil, nil, fmt.Errorf("create runtime staging directory: %w", err)
 	}
-	candidate := RuntimeFiles{Compose: append([]byte(nil), files.Compose...), Env: append([]byte(nil), files.Env...), FunctionsEnv: append([]byte(nil), files.FunctionsEnv...)}
-	for name, data := range map[string][]byte{"docker-compose.yml": candidate.Compose, ".env": candidate.Env, ".env.functions": candidate.FunctionsEnv} {
+	candidateFiles := RuntimeFiles{Compose: append([]byte(nil), files.Compose...), Env: append([]byte(nil), files.Env...), FunctionsEnv: append([]byte(nil), files.FunctionsEnv...)}
+	for name, data := range map[string][]byte{"docker-compose.yml": candidateFiles.Compose, ".env": candidateFiles.Env, ".env.functions": candidateFiles.FunctionsEnv} {
 		if err := writeAtomic(candidateDir, name, data, 0o600); err != nil {
 			_ = os.RemoveAll(candidateDir)
-			return nil, nil, err
+			return RuntimeRef{}, nil, nil, err
 		}
 	}
 	if err := r.syncRuntimeDirectory(candidateDir); err != nil {
 		_ = os.RemoveAll(candidateDir)
-		return nil, nil, err
+		return RuntimeRef{}, nil, nil, err
 	}
 	generationName := fmt.Sprintf("generation-%d", time.Now().UnixNano())
 	generationPath := filepath.Join(runtimeRoot, "generations", generationName)
@@ -245,7 +252,8 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 		}
 		return nil
 	}
-	return restore, commit, nil
+	candidate = RuntimeRef{ProjectDir: projectPath, ComposeFile: filepath.Join(candidateDir, "docker-compose.yml"), EnvFile: filepath.Join(candidateDir, ".env"), FunctionsFile: filepath.Join(candidateDir, ".env.functions")}
+	return candidate, restore, commit, nil
 }
 
 // CleanupAbandonedRuntimeCandidates removes pre-commit candidate directories
@@ -497,14 +505,16 @@ func removeLegacyRuntimeFiles(projectPath string, names []string) error {
 }
 
 type legacyRuntimeCleanup struct {
-	root        *Root
-	projectPath string
-	runtimeRoot string
-	quarantine  string
-	moved       []string
-	backups     map[string]legacyRuntimeBackup
-	finalized   bool
-	rolledBack  bool
+	root              *Root
+	projectPath       string
+	runtimeRoot       string
+	quarantine        string
+	moved             []string
+	backups           map[string]legacyRuntimeBackup
+	quarantineRemoved bool
+	deletionDurable   bool
+	finalized         bool
+	rolledBack        bool
 }
 
 type legacyRuntimeBackup struct {
@@ -570,12 +580,14 @@ func (r *Root) cleanupLegacyRuntimeFiles(projectPath, runtimeRoot string, names 
 	if err := r.syncRuntimeDirectory(runtimeRoot); err != nil {
 		return cleanup, cleanup.fail(err)
 	}
-	if err := os.RemoveAll(cleanup.quarantine); err != nil {
+	if err := r.removeRuntimePath(cleanup.quarantine); err != nil {
 		return cleanup, cleanup.fail(fmt.Errorf("remove legacy quarantine: %w", err))
 	}
+	cleanup.quarantineRemoved = true
 	if err := r.syncRuntimeDirectory(runtimeRoot); err != nil {
 		return cleanup, cleanup.fail(err)
 	}
+	cleanup.deletionDurable = true
 	cleanup.finalized = true
 	return cleanup, nil
 }
@@ -622,6 +634,9 @@ func (c *legacyRuntimeCleanup) rollback() error {
 		name := c.moved[index]
 		source := filepath.Join(c.quarantine, name)
 		if _, err := os.Lstat(source); errors.Is(err, os.ErrNotExist) {
+			if err := c.restoreBackup(name); err != nil {
+				rollbackErrs = append(rollbackErrs, err)
+			}
 			continue
 		} else if err != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("inspect quarantined legacy runtime file %s: %w", name, err))
@@ -643,9 +658,10 @@ func (c *legacyRuntimeCleanup) rollback() error {
 		return errors.Join(rollbackErrs...)
 	}
 	if c.quarantine != "" {
-		if err := os.RemoveAll(c.quarantine); err != nil {
+		if err := c.root.removeRuntimePath(c.quarantine); err != nil {
 			return fmt.Errorf("remove legacy quarantine after rollback: %w", err)
 		}
+		c.quarantineRemoved = true
 	}
 	if err := c.root.syncRuntimeDirectory(c.projectPath); err != nil {
 		return err
@@ -654,6 +670,27 @@ func (c *legacyRuntimeCleanup) rollback() error {
 		return err
 	}
 	c.rolledBack = true
+	return nil
+}
+
+func (c *legacyRuntimeCleanup) restoreBackup(name string) error {
+	backup, ok := c.backups[name]
+	if !ok {
+		return nil
+	}
+	destination := filepath.Join(c.projectPath, name)
+	if _, err := os.Lstat(destination); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect legacy runtime destination %s: %w", name, err)
+	}
+	if backup.symlink {
+		if err := os.Symlink(backup.target, destination); err != nil {
+			return fmt.Errorf("restore legacy runtime symlink %s: %w", name, err)
+		}
+	} else if err := writeAtomic(c.projectPath, name, backup.data, backup.mode); err != nil {
+		return fmt.Errorf("restore legacy runtime file %s: %w", name, err)
+	}
 	return nil
 }
 
@@ -710,7 +747,15 @@ type Root struct {
 type runtimeHooks struct {
 	syncDirectory func(string) error
 	moveLegacy    func(string, string) error
+	removeAll     func(string) error
+	writeMetadata func(string, Metadata) error
 	operation     func(string)
+}
+
+// SetMetadataWriteHookForTest injects a metadata publication fault in package
+// tests; production callers never set this hook.
+func (r *Root) SetMetadataWriteHookForTest(hook func(string, Metadata) error) {
+	r.hooks.writeMetadata = hook
 }
 
 func (r *Root) syncRuntimeDirectory(directory string) error {
@@ -726,6 +771,13 @@ func (r *Root) moveLegacyRuntime(source, destination string) error {
 		return r.hooks.moveLegacy(source, destination)
 	}
 	return os.Rename(source, destination)
+}
+
+func (r *Root) removeRuntimePath(path string) error {
+	if r.hooks.removeAll != nil {
+		return r.hooks.removeAll(path)
+	}
+	return os.RemoveAll(path)
 }
 
 func (r *Root) recordRuntimeOperation(operation string) {
@@ -818,6 +870,36 @@ func (r *Root) UpdateMetadata(slug string, mutate func(*Metadata) error) (Metada
 	return metadata, nil
 }
 
+// UpdateMetadataWithRollback keeps a runtime rollback closure live until the
+// metadata publication succeeds. Mutation errors are persisted deliberately so
+// typed idempotent failure outcomes can be replayed without Docker work.
+func (r *Root) UpdateMetadataWithRollback(slug string, mutate func(*Metadata) error, rollback func() error) (Metadata, error) {
+	r.metadataMu.Lock()
+	defer r.metadataMu.Unlock()
+	metadata, err := r.readMetadata(slug)
+	if errors.Is(err, ErrNotFound) {
+		metadata = Metadata{Slug: slug, Idempotency: make(map[string]json.RawMessage)}
+	} else if err != nil {
+		return Metadata{}, err
+	}
+	if metadata.Idempotency == nil {
+		metadata.Idempotency = make(map[string]json.RawMessage)
+	}
+	mutationErr := mutate(&metadata)
+	if errors.Is(mutationErr, contracts.ErrStaleConfigRevision) {
+		return Metadata{}, mutationErr
+	}
+	if writeErr := r.writeMetadata(slug, metadata); writeErr != nil {
+		if rollback != nil {
+			if rollbackErr := rollback(); rollbackErr != nil {
+				return Metadata{}, errors.Join(writeErr, rollbackErr)
+			}
+		}
+		return Metadata{}, writeErr
+	}
+	return metadata, mutationErr
+}
+
 func (r *Root) readMetadata(slug string) (Metadata, error) {
 	projectPath, err := r.ProjectPath(slug)
 	if err != nil {
@@ -838,6 +920,9 @@ func (r *Root) readMetadata(slug string) (Metadata, error) {
 }
 
 func (r *Root) writeMetadata(slug string, metadata Metadata) error {
+	if r.hooks.writeMetadata != nil {
+		return r.hooks.writeMetadata(slug, metadata)
+	}
 	projectPath, err := r.ProjectPath(slug)
 	if err != nil {
 		return err

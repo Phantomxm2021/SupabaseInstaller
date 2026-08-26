@@ -143,7 +143,16 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 		writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
 		return
 	}
+	if errors.Is(err, contracts.ErrInvalidReconcileRevision) {
+		writeError(response, http.StatusBadRequest, "INVALID_CONFIG_REVISION", "Next revision must advance the typed configuration snapshot")
+		return
+	}
 	if err != nil {
+		var failure *contracts.ReconcileFailure
+		if errors.As(err, &failure) && failure.Response.Error != nil {
+			writeJSON(response, http.StatusUnprocessableEntity, failure.Response)
+			return
+		}
 		// Runtime errors are deliberately generic: rendered environment files
 		// and secret values must never cross this private API boundary.
 		writeError(response, http.StatusUnprocessableEntity, "RECONCILE_FAILED", "Project runtime reconciliation failed")

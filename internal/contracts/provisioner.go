@@ -6,12 +6,14 @@ import (
 )
 
 var ErrStaleConfigRevision = errors.New("stale config revision")
+var ErrInvalidReconcileRevision = errors.New("invalid reconcile revision")
 
 // ReconcileFailure preserves the runtime outcome without exposing rendered
 // files or secret material through an API error.
 type ReconcileFailure struct {
 	Cause             error
 	RollbackSucceeded bool
+	Response          ReconcileProjectResponse
 }
 
 func (e *ReconcileFailure) Error() string { return "runtime reconciliation failed" }
@@ -46,12 +48,13 @@ type ReconcileProjectRequest struct {
 }
 
 type ReconcileProjectResponse struct {
-	OperationID       string   `json:"operationId"`
-	ProjectID         string   `json:"projectId"`
-	Revision          int64    `json:"revision"`
-	EnabledServices   []string `json:"enabledServices"`
-	RecreatedServices []string `json:"recreatedServices"`
-	RolledBack        bool     `json:"rolledBack"`
+	OperationID       string    `json:"operationId"`
+	ProjectID         string    `json:"projectId"`
+	Revision          int64     `json:"revision"`
+	EnabledServices   []string  `json:"enabledServices"`
+	RecreatedServices []string  `json:"recreatedServices"`
+	RolledBack        bool      `json:"rolledBack"`
+	Error             *APIError `json:"error,omitempty"`
 }
 
 type ProjectSecrets struct {

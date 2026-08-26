@@ -893,6 +893,64 @@ func TestStageRuntimeFilesRestoreAfterCommittedMigrationRestoresLegacyFiles(t *t
 	}
 }
 
+func TestStageRuntimeFilesQuarantineDeleteSyncFailureRestoresAllLegacyFiles(t *testing.T) {
+	base := t.TempDir()
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _ := root.ProjectPath("quarantine-sync-failure")
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := map[string]string{"docker-compose.yml": "compose", ".env": "env", ".env.functions": "functions"}
+	for name, data := range legacy {
+		if err := os.WriteFile(filepath.Join(project, name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed := false
+	failed := false
+	root.hooks.removeAll = func(path string) error {
+		if strings.Contains(path, ".legacy-quarantine-") {
+			removed = true
+		}
+		return os.RemoveAll(path)
+	}
+	root.hooks.syncDirectory = func(directory string) error {
+		if removed && filepath.Base(directory) == ".manager-runtime" && !failed {
+			failed = true
+			return errors.New("injected post-delete runtime fsync failure")
+		}
+		return syncDirectory(directory)
+	}
+	restore, commit, err := root.StageRuntimeFiles("quarantine-sync-failure", RuntimeFiles{Compose: []byte("new"), Env: []byte("new"), FunctionsEnv: []byte("new")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err == nil || !strings.Contains(err.Error(), "post-delete runtime fsync") {
+		t.Fatalf("commit error = %v", err)
+	}
+	if err := restore(); err != nil {
+		t.Fatalf("restore = %v", err)
+	}
+	for name, want := range legacy {
+		if got := string(mustRead(t, filepath.Join(project, name))); got != want {
+			t.Errorf("legacy %s = %q, want %q", name, got, want)
+		}
+	}
+	current, _ := root.RuntimeComposePath("quarantine-sync-failure")
+	if _, err := os.Lstat(current); !os.IsNotExist(err) {
+		t.Fatalf("current remains after rollback: %v", err)
+	}
+	entries, _ := os.ReadDir(filepath.Join(project, ".manager-runtime"))
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".legacy-quarantine-") || strings.HasPrefix(entry.Name(), ".candidate-") {
+			t.Errorf("transient entry leaked: %s", entry.Name())
+		}
+	}
+}
+
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)
