@@ -5,42 +5,36 @@ import { describe, expect, it, vi } from 'vitest'
 import { EmailTemplateEditorPage } from './EmailTemplateEditorPage'
 import type { AuthenticationWorkspaceContext } from './AuthenticationWorkspace'
 import type { Services } from '../../api/types'
+import { defaultMailerConfiguration } from '../projects/projectSchema'
 
-const context = { projectId: 'bee', revision: 3, general: { domain: 'bee.example.test', siteUrl: 'https://bee.example.test', supabaseVersion: '2.0.0' }, services: { auth: true } as Services, requestSave: vi.fn(), auth: { mailer: { templates: { confirmation: { subject: 'Confirm your email address', body: '<p>{{ .ConfirmationURL }}</p>' } }, notifications: {} } } } as unknown as AuthenticationWorkspaceContext
+const defaults = defaultMailerConfiguration()
+const context = { projectId: 'bee', revision: 3, general: { domain: 'bee.example.test', siteUrl: 'https://bee.example.test', supabaseVersion: '2.0.0' }, services: { auth: true } as Services, requestSave: vi.fn(), auth: { mailer: { ...defaults, templates: { ...defaults.templates, confirmation: { subject: 'Confirm your email address', templateUrl: 'https://templates.example.test/confirmation.html' } } } } } as unknown as AuthenticationWorkspaceContext
 
 describe('EmailTemplateEditorPage', () => {
-  it('inserts documented template variables at the focused subject or body caret', async () => {
-    const user = userEvent.setup()
-    render(<MemoryRouter><EmailTemplateEditorPage context={context} templateKey="confirm-signup" /></MemoryRouter>)
-    await user.click(screen.getByLabelText('Subject'))
-    await user.click(screen.getByRole('button', { name: '{{ .Token }}' }))
-    expect(screen.getByLabelText('Subject')).toHaveValue('Confirm your email address{{ .Token }}')
-    await user.click(screen.getByLabelText('HTML body'))
-    await user.click(screen.getByRole('button', { name: '{{ .Token }}' }))
-    expect(screen.getByLabelText('HTML body')).toHaveValue('<p>{{ .ConfirmationURL }}</p>{{ .Token }}')
-    await user.clear(screen.getByLabelText('Subject'))
-    await user.type(screen.getByLabelText('Subject'), 'Please {{ .NotSupported }}')
+  it('edits only the GoTrue-supported subject and template URL fields', async () => {
+    const user = userEvent.setup(); const requestSave = vi.fn()
+    render(<MemoryRouter><EmailTemplateEditorPage context={{ ...context, requestSave }} templateKey="confirm-signup" /></MemoryRouter>)
+    expect(screen.queryByLabelText('HTML body')).not.toBeInTheDocument()
+    await user.clear(screen.getByLabelText('Template URL')); await user.type(screen.getByLabelText('Template URL'), 'https://cdn.example.test/confirm.html')
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
-    expect(screen.getByText(/template action|Unsupported template variable/)).toBeInTheDocument()
-    expect(context.requestSave).not.toHaveBeenCalled()
+    expect(requestSave).toHaveBeenCalledWith(expect.objectContaining({ value: expect.objectContaining({ mailer: expect.objectContaining({ templates: expect.objectContaining({ confirmation: expect.objectContaining({ templateUrl: 'https://cdn.example.test/confirm.html' }) }) }) }) }))
   })
 
-  it('resets a template to the Manager default and keeps preview sandboxed', async () => {
+  it('previews configured URL templates in a sandbox and resets to GoTrue defaults', async () => {
     const user = userEvent.setup()
     render(<MemoryRouter><EmailTemplateEditorPage context={context} templateKey="confirm-signup" /></MemoryRouter>)
-    await user.clear(screen.getByLabelText('Subject'))
-    await user.type(screen.getByLabelText('Subject'), 'Custom subject')
-    await user.click(screen.getByRole('button', { name: 'Reset template' }))
-    expect(screen.getByLabelText('Subject')).toHaveValue('Confirm your signup')
     await user.click(screen.getByRole('button', { name: 'Preview' }))
     expect(screen.getByTitle('Email template preview')).toHaveAttribute('sandbox')
+    expect(screen.getByTitle('Email template preview')).toHaveAttribute('src', 'https://templates.example.test/confirmation.html')
+    await user.click(screen.getByRole('button', { name: 'Edit URL' })); await user.click(screen.getByRole('button', { name: 'Reset template' }))
+    expect(screen.getByLabelText('Template URL')).toHaveValue('')
   })
 
-  it('keeps a notification toggle local until the explicit save action', async () => {
-    const user = userEvent.setup()
+  it('does not save notification configuration before an explicit edit and save', () => {
     const requestSave = vi.fn()
     render(<MemoryRouter><EmailTemplateEditorPage context={{ ...context, requestSave }} templateKey="password-changed" /></MemoryRouter>)
-    expect(requestSave).not.toHaveBeenCalled()
+    expect(screen.getByRole('switch', { name: 'Enable notification' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+    expect(requestSave).not.toHaveBeenCalled()
   })
 })

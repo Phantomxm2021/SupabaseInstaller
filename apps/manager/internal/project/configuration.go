@@ -63,69 +63,19 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 	}
 }
 
-// backfillAuthDefaults upgrades persisted configurations created before these
-// typed Auth fields were introduced. Zero is otherwise invalid for all of the
-// counters, so it is an unambiguous legacy representation.
-func backfillAuthDefaults(auth *contracts.AuthConfig) {
-	if auth.Mailer == (contracts.MailerConfig{}) {
-		auth.Mailer = defaultMailerConfig()
-	}
-	if auth.RateLimits.EmailSent == 0 {
-		auth.RateLimits.EmailSent = 30
-	}
-	if auth.RateLimits.SMSSent == 0 {
-		auth.RateLimits.SMSSent = 30
-	}
-	if auth.RateLimits.TokenRefresh == 0 {
-		auth.RateLimits.TokenRefresh = 150
-	}
-	if auth.RateLimits.TokenVerification == 0 {
-		auth.RateLimits.TokenVerification = 30
-	}
-	if auth.RateLimits.AnonymousUsers == 0 {
-		auth.RateLimits.AnonymousUsers = 30
-	}
-	if auth.RateLimits.SignupsAndSignins == 0 {
-		auth.RateLimits.SignupsAndSignins = 30
-	}
-	legacyMFA := auth.MFA.MaxEnrolledFactors == 0 && auth.MFA.PhoneOTPLength == 0
-	if auth.MFA.MaxEnrolledFactors == 0 {
-		auth.MFA.MaxEnrolledFactors = 10
-	}
-	if auth.MFA.PhoneOTPLength == 0 {
-		auth.MFA.PhoneOTPLength = 6
-	}
-	// The previous runtime behavior was GoTrue's default-enabled TOTP. Both
-	// false is the only legacy zero-value signature; a caller can still turn
-	// either capability off after migration.
-	if legacyMFA && !auth.MFA.TOTPEnrollEnabled && !auth.MFA.TOTPVerifyEnabled {
-		auth.MFA.TOTPEnrollEnabled = true
-		auth.MFA.TOTPVerifyEnabled = true
-	}
-}
-
-func defaultMailerTemplate(subject, body string) contracts.EmailTemplateConfig {
-	return contracts.EmailTemplateConfig{Subject: subject, Body: body}
+func defaultMailerTemplate(subject string) contracts.EmailTemplateConfig {
+	return contracts.EmailTemplateConfig{Subject: subject}
 }
 
 func defaultMailerConfig() contracts.MailerConfig {
 	return contracts.MailerConfig{
 		Templates: contracts.EmailTemplatesConfig{
-			Confirmation:     defaultMailerTemplate("Confirm your signup", `<h2>Confirm your signup</h2><p>Follow this link to confirm your user:</p><p><a href="{{ .ConfirmationURL }}">Confirm your mail</a></p>`),
-			Invite:           defaultMailerTemplate("You have been invited", `<h2>You have been invited</h2><p>Follow this link to accept the invite:</p><p><a href="{{ .ConfirmationURL }}">Accept the invite</a></p>`),
-			MagicLink:        defaultMailerTemplate("Your magic link", `<h2>Magic Link</h2><p>Follow this link to login:</p><p><a href="{{ .ConfirmationURL }}">Log In</a></p>`),
-			EmailChange:      defaultMailerTemplate("Confirm email change", `<h2>Confirm email change</h2><p>Follow this link to confirm the update of your email:</p><p><a href="{{ .ConfirmationURL }}">Change email</a></p>`),
-			Recovery:         defaultMailerTemplate("Reset password", `<h2>Reset Password</h2><p>Follow this link to reset your password:</p><p><a href="{{ .ConfirmationURL }}">Reset Password</a></p>`),
-			Reauthentication: defaultMailerTemplate("Confirm reauthentication", `<h2>Confirm reauthentication</h2><p>Enter this code: {{ .Token }}</p>`),
+			Confirmation: defaultMailerTemplate("Confirm your signup"), Invite: defaultMailerTemplate("You have been invited"), MagicLink: defaultMailerTemplate("Your magic link"),
+			EmailChange: defaultMailerTemplate("Confirm email change"), Recovery: defaultMailerTemplate("Reset password"), Reauthentication: defaultMailerTemplate("Confirm reauthentication"),
 		},
 		Notifications: contracts.EmailNotificationsConfig{
-			PasswordChanged:     contracts.EmailNotificationConfig{Template: defaultMailerTemplate("Your password was changed", `<h2>Your password was changed</h2><p>The password for your account was recently changed.</p>`)},
-			EmailChanged:        contracts.EmailNotificationConfig{Template: defaultMailerTemplate("Your email address was changed", `<h2>Your email address was changed</h2><p>The email address for your account was recently changed.</p>`)},
-			PhoneChanged:        contracts.EmailNotificationConfig{Template: defaultMailerTemplate("Your phone number was changed", `<h2>Your phone number was changed</h2><p>The phone number for your account was recently changed.</p>`)},
-			IdentityLinked:      contracts.EmailNotificationConfig{Template: defaultMailerTemplate("A sign-in method was linked", `<h2>A sign-in method was linked</h2><p>A sign-in method was linked to your account.</p>`)},
-			IdentityUnlinked:    contracts.EmailNotificationConfig{Template: defaultMailerTemplate("A sign-in method was removed", `<h2>A sign-in method was removed</h2><p>A sign-in method was removed from your account.</p>`)},
-			MFAFactorEnrolled:   contracts.EmailNotificationConfig{Template: defaultMailerTemplate("An MFA method was added", `<h2>An MFA method was added</h2><p>An MFA method was added to your account.</p>`)},
-			MFAFactorUnenrolled: contracts.EmailNotificationConfig{Template: defaultMailerTemplate("An MFA method was removed", `<h2>An MFA method was removed</h2><p>An MFA method was removed from your account.</p>`)},
+			PasswordChanged: contracts.EmailNotificationConfig{Template: defaultMailerTemplate("Your password was changed")}, EmailChanged: contracts.EmailNotificationConfig{Template: defaultMailerTemplate("Your email address was changed")}, PhoneChanged: contracts.EmailNotificationConfig{Template: defaultMailerTemplate("Your phone number was changed")},
+			IdentityLinked: contracts.EmailNotificationConfig{Template: defaultMailerTemplate("A sign-in method was linked")}, IdentityUnlinked: contracts.EmailNotificationConfig{Template: defaultMailerTemplate("A sign-in method was removed")}, MFAFactorEnrolled: contracts.EmailNotificationConfig{Template: defaultMailerTemplate("An MFA method was added")}, MFAFactorUnenrolled: contracts.EmailNotificationConfig{Template: defaultMailerTemplate("An MFA method was removed")},
 		},
 	}
 }
@@ -408,11 +358,13 @@ func validateMailerTemplate(template contracts.EmailTemplateConfig, field string
 	if strings.ContainsAny(template.Subject, "\r\n") {
 		validation.add(field+".subject", "must not contain a newline")
 	}
-	if len(template.Body) > 100000 {
-		validation.add(field+".body", "must be at most 100000 characters")
+	if template.TemplateURL != "" {
+		parsed, err := url.ParseRequestURI(template.TemplateURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			validation.add(field+".templateUrl", "must be an absolute http or https URL")
+		}
 	}
 	validateMailerTemplateVariables(template.Subject, field+".subject", validation)
-	validateMailerTemplateVariables(template.Body, field+".body", validation)
 }
 
 func validateMailerTemplateVariables(value, field string, validation *ValidationError) {

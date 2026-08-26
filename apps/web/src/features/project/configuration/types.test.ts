@@ -15,6 +15,7 @@ function omittedConfiguration(): RedactedProjectConfiguration {
       email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false },
       phone: { enabled: false, secretSet: false, secret: { action: '' } },
       anonymousSignIn: false, smtp: { enabled: false, host: '', port: 0, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' }, rateLimits: { emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 }, mfa: { totpEnrollEnabled: true, totpVerifyEnabled: true, phoneEnrollEnabled: false, phoneVerifyEnabled: false, maxEnrolledFactors: 10, phoneOtpLength: 6 },
+      mailer: defaultConfiguration().auth.mailer,
       oauth: { google: { enabled: false, clientId: '', secretSet: false, secret: { action: '' } } },
     },
     storage: { backend: 'local', s3CompatibleApi: false, bucket: '', region: '', endpoint: '', accountId: '', accessKeyId: '', secretAccessKeySet: false, secretAccessKey: { action: '' }, forcePathStyle: false, localPath: '/data' },
@@ -64,7 +65,7 @@ describe('configuration projection normalization', () => {
     const oauth = { enabled: true, clientId: 'client', secretSet: true, secret: { action: 'remove' as const }, fields: {} }
     expect(oauthProviderSchema('google').safeParse(oauth).success).toBe(false)
     const phone = { enabled: true, provider: 'twilio', secretSet: true, secret: { action: 'remove' as const }, fields: { accountSid: 'a', messageServiceSid: 'm' } }
-    const auth = { enabled: true, jwtExpiry: 3600, disableSignup: false, email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false }, phone, anonymousSignIn: false, redirectUrls: [], oauth: {}, smtp: { ...smtp, password: { action: 'retain' as const } } }
+    const auth = { ...defaultConfiguration().auth, email: { ...defaultConfiguration().auth.email, confirmEmail: false }, phone, smtp: { ...smtp, password: { action: 'retain' as const } } }
     expect(authSchema.safeParse(auth).success).toBe(false)
     expect(functionsSchema.safeParse({ defaultJwtVerification: true, directory: './functions', variables: [{ name: 'SUPABASE_URL', valueSet: false, value: { action: '' } }] }).success).toBe(false)
   })

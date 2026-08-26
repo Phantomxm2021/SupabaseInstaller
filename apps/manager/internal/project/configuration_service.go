@@ -35,22 +35,14 @@ func NewConfigurationService(database *store.Store, cipher *managersecrets.Ciphe
 }
 
 func (s *ConfigurationService) Get(ctx context.Context, projectID string) (store.ConfigurationSnapshot, error) {
-	snapshot, err := s.store.GetConfiguration(ctx, projectID)
-	if err == nil {
-		backfillAuthDefaults(&snapshot.Configuration.Auth)
-	}
-	return snapshot, err
+	return s.store.GetConfiguration(ctx, projectID)
 }
 
 // GetDesired returns the latest aggregate, including an unapplied revision.
 // It is the correct merge base for durable operations queued behind runtime
 // reconciliation.
 func (s *ConfigurationService) GetDesired(ctx context.Context, projectID string) (store.ConfigurationSnapshot, error) {
-	snapshot, err := s.store.GetDesiredConfiguration(ctx, projectID)
-	if err == nil {
-		backfillAuthDefaults(&snapshot.Configuration.Auth)
-	}
-	return snapshot, err
+	return s.store.GetDesiredConfiguration(ctx, projectID)
 }
 
 // PreparePatch computes and validates a mutation without writing. Queueing
@@ -62,7 +54,6 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 		return contracts.ProjectConfiguration{}, err
 	}
 	cfg := base.Configuration
-	backfillAuthDefaults(&cfg.Auth)
 	if patch.Configuration != nil {
 		cfg = *patch.Configuration
 	}

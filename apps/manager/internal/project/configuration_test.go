@@ -46,20 +46,20 @@ func TestAuthRateLimitsAndMFAValidation(t *testing.T) {
 	}
 }
 
-func TestAuthMailerTemplatesRejectUnsupportedGoTemplateVariables(t *testing.T) {
+func TestAuthMailerTemplatesRejectInvalidTemplateURLs(t *testing.T) {
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
-	cfg.Auth.Mailer.Templates.Confirmation.Body = `<a href="{{ .UnsafeURL }}">Confirm</a>`
+	cfg.Auth.Mailer.Templates.Confirmation.TemplateURL = `mailto:template@example.com`
 	err := ValidateConfiguration(cfg)
 	var validation *ValidationError
-	if !errors.As(err, &validation) || validation.Fields["auth.mailer.templates.confirmation.body"] == "" {
-		t.Fatalf("ValidateConfiguration() error = %v, want unsupported template variable error", err)
+	if !errors.As(err, &validation) || validation.Fields["auth.mailer.templates.confirmation.templateUrl"] == "" {
+		t.Fatalf("ValidateConfiguration() error = %v, want invalid template URL error", err)
 	}
 }
 
-func TestAuthMailerTemplatesAllowOnlyDocumentedVariables(t *testing.T) {
+func TestAuthMailerTemplatesAllowSubjectVariablesAndHTTPSURLs(t *testing.T) {
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
 	cfg.Auth.Mailer.Templates.Confirmation.Subject = "Confirm {{ .Email }}"
-	cfg.Auth.Mailer.Templates.Confirmation.Body = `<a href="{{ .ConfirmationURL }}">{{ .Token }}</a>{{ .TokenHash }}{{ .SiteURL }}{{ .Email }}{{ .Data }}{{ .RedirectTo }}`
+	cfg.Auth.Mailer.Templates.Confirmation.TemplateURL = "https://templates.example.com/confirmation.html"
 	if err := ValidateConfiguration(cfg); err != nil {
 		t.Fatalf("ValidateConfiguration() error = %v, want nil", err)
 	}
@@ -67,8 +67,8 @@ func TestAuthMailerTemplatesAllowOnlyDocumentedVariables(t *testing.T) {
 
 func TestAuthMailerTemplatesHaveSaneDefaults(t *testing.T) {
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
-	if cfg.Auth.Mailer.Templates.Confirmation.Subject == "" || cfg.Auth.Mailer.Templates.Confirmation.Body == "" {
-		t.Fatalf("confirmation template defaults = %#v, want subject and body", cfg.Auth.Mailer.Templates.Confirmation)
+	if cfg.Auth.Mailer.Templates.Confirmation.Subject == "" || cfg.Auth.Mailer.Templates.Confirmation.TemplateURL != "" {
+		t.Fatalf("confirmation template defaults = %#v, want subject and empty optional URL", cfg.Auth.Mailer.Templates.Confirmation)
 	}
 	if cfg.Auth.Mailer.Notifications.PasswordChanged.Enabled {
 		t.Fatal("password changed notification should default disabled")

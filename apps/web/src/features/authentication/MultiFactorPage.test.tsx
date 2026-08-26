@@ -6,8 +6,9 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AuthConfig, Services } from '../../api/types'
 import type { AuthenticationWorkspaceContext } from './AuthenticationWorkspace'
 import { MultiFactorPage } from './MultiFactorPage'
+import { defaultConfiguration } from '../projects/projectSchema'
 
-const auth = { enabled: true, jwtExpiry: 3600, disableSignup: false, email: { enabled: true, allowSignup: true, confirmEmail: true, secureEmailChange: false, doubleConfirmChanges: false }, phone: { enabled: false, provider: '', secretSet: false, secret: { action: '' as const }, fields: {} }, anonymousSignIn: false, redirectUrls: [], oauth: {}, smtp: { enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' as const }, senderEmail: '', senderName: '' }, rateLimits: { emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 }, mfa: { totpEnrollEnabled: true, totpVerifyEnabled: true, phoneEnrollEnabled: false, phoneVerifyEnabled: false, maxEnrolledFactors: 10, phoneOtpLength: 6 } } as AuthConfig
+const auth = { ...defaultConfiguration().auth, email: { ...defaultConfiguration().auth.email, confirmEmail: true } } as AuthConfig
 const context = { projectId: 'bee', revision: 2, auth, general: { domain: 'bee.example.test', siteUrl: 'https://bee.example.test', supabaseVersion: '2.0.0' }, services: { auth: true } as Services, requestSave: vi.fn() } as AuthenticationWorkspaceContext
 
 describe('MultiFactorPage', () => {

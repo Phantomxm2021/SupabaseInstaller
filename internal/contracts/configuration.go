@@ -68,12 +68,11 @@ type SMTPConfig struct {
 	SenderName  string      `json:"senderName"`
 }
 
-// EmailTemplateConfig is an inline GoTrue mail template. The Manager only
-// accepts GoTrue's documented template data fields; it deliberately does not
-// expose an arbitrary environment-variable editor.
+// EmailTemplateConfig maps exactly to GoTrue's supported mail configuration:
+// a subject and an optional HTTP(S) URL from which GoTrue loads the template.
 type EmailTemplateConfig struct {
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
+	Subject     string `json:"subject"`
+	TemplateURL string `json:"templateUrl"`
 }
 
 type EmailTemplatesConfig struct {
