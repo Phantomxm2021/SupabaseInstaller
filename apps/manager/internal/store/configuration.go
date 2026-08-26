@@ -531,6 +531,12 @@ func (s *Store) RestoreConfigurationStateOwned(ctx context.Context, projectID st
 			return err
 		}
 		if current != failedRevision {
+			if owner != "" && current == lastGood {
+				var phase string
+				if err := tx.QueryRowContext(ctx, `SELECT compensation_phase FROM operations WHERE id=?`, owner).Scan(&phase); err == nil && phase == "STATE_RESTORED" {
+					return nil
+				}
+			}
 			return fmt.Errorf("%w: expected failed revision %d, current %d", ErrStaleConfiguration, failedRevision, current)
 		}
 		if owner != "" {
@@ -601,6 +607,9 @@ func (s *Store) RestoreConfigurationStateOwned(ctx context.Context, projectID st
 		}
 		if owner != "" {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id=? AND owner=? AND fence=?`, projectID, owner, fence); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase='STATE_RESTORED' WHERE id=?`, owner); err != nil {
 				return err
 			}
 		}
@@ -681,9 +690,10 @@ func (s *Store) GetSecretAtRevision(ctx context.Context, projectID string, revis
 	return envelope, err
 }
 
-// CleanupTerminalConfigurationCandidates repairs revisions left by older
-// Manager versions after a terminal failure. Active operation owners and
-// successor revisions are preserved; only unowned candidates are removed.
+// CleanupTerminalConfigurationCandidates repairs only candidates whose
+// operation journal explicitly proves that runtime was unchanged or rollback
+// completed. Legacy terminal rows without that phase remain for operator
+// recovery; status=FAILED alone is never evidence that old runtime is safe.
 func (s *Store) CleanupTerminalConfigurationCandidates(ctx context.Context) error {
 	return s.InTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT id,config_revision,last_good_revision FROM projects`)
@@ -721,6 +731,13 @@ func (s *Store) CleanupTerminalConfigurationCandidates(ctx context.Context) erro
 					return err
 				}
 				if active != 0 {
+					continue
+				}
+				var recoverable int
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operation_configurations oc JOIN operations o ON o.id=oc.operation_id WHERE oc.project_id=? AND oc.revision=? AND o.compensation_phase IN ('PRE_RUNTIME_NO_CHANGE','STATE_RESTORED','ROLLED_BACK')`, projectID, revision).Scan(&recoverable); err != nil {
+					return err
+				}
+				if recoverable == 0 {
 					continue
 				}
 				if revision == current {
@@ -785,6 +802,13 @@ func restoreSecretsRevisionTx(ctx context.Context, tx *sql.Tx, projectID string,
 }
 
 func (s *Store) MarkConfigurationGood(ctx context.Context, projectID string, revision int64) error {
+	return s.MarkConfigurationGoodOwned(ctx, projectID, revision, "", 0, "", time.Now())
+}
+
+// MarkConfigurationGoodOwned atomically publishes a candidate revision and
+// records its durable commit phase. Recovery can therefore distinguish a
+// crash after publication from a runtime candidate that still needs rollback.
+func (s *Store) MarkConfigurationGoodOwned(ctx context.Context, projectID string, revision int64, owner string, fence int64, phase string, now time.Time) error {
 	if revision <= 0 {
 		return ErrStaleConfiguration
 	}
@@ -809,6 +833,23 @@ func (s *Store) MarkConfigurationGood(ctx context.Context, projectID string, rev
 		if revision < lastGood {
 			return fmt.Errorf("%w: last good revision is %d", ErrStaleConfiguration, lastGood)
 		}
+		if owner != "" {
+			var leaseOwner string
+			var leaseFence int64
+			if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&leaseOwner, &leaseFence); err != nil {
+				return err
+			}
+			if leaseOwner != owner || leaseFence != fence {
+				return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
+			}
+			var boundRevision, boundFence int64
+			if err := tx.QueryRowContext(ctx, `SELECT revision,fence FROM operation_configurations WHERE operation_id=? AND project_id=?`, owner, projectID).Scan(&boundRevision, &boundFence); err != nil {
+				return err
+			}
+			if boundRevision != revision || boundFence != fence {
+				return fmt.Errorf("%w: operation fence changed", ErrStaleConfiguration)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE projects SET last_good_revision = ? WHERE id = ?`, revision, projectID); err != nil {
 			return fmt.Errorf("mark configuration good: %w", err)
 		}
@@ -825,6 +866,11 @@ func (s *Store) MarkConfigurationGood(ctx context.Context, projectID string, rev
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
 			return err
+		}
+		if owner != "" && phase != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase=? WHERE id=?`, phase, owner); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

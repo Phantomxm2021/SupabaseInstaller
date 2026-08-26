@@ -88,6 +88,14 @@ func TestReconcileFailureRestoresPreviousRuntimeAndRecreatesIt(t *testing.T) {
 	if len(runner.removed) != 0 {
 		t.Fatalf("removed services = %#v, want none", runner.removed)
 	}
+	if !containsString(runner.recreated, "auth") {
+		t.Fatalf("recreated services = %#v, want prior Auth recreated during rollback", runner.recreated)
+	}
+	projectPath, _ := root.ProjectPath("bee")
+	currentPointer := filepath.Join(projectPath, ".manager-runtime", "current")
+	if target, readErr := os.Readlink(currentPointer); readErr != nil || !strings.HasPrefix(target, "generations/") {
+		t.Fatalf("current runtime pointer = %q, err=%v; want restored generation", target, readErr)
+	}
 	if len(runner.recreated) != 6 {
 		t.Fatalf("recreate calls = %#v, want candidate and rollback service sets", runner.recreated)
 	}

@@ -55,6 +55,29 @@ func TestAllocatorReservesSelectedPortsAtomically(t *testing.T) {
 	}
 }
 
+func TestAllocatorInstallCannotStealPendingConfigurationPort(t *testing.T) {
+	database := openPortStore(t)
+	createPortProject(t, database, "bee")
+	createPortProject(t, database, "nomo")
+	if _, err := database.DB().Exec(`INSERT INTO operations(id, project_id, type, status, progress, created_at) VALUES (?, ?, ?, ?, 0, ?)`, "pending-op", "nomo", "UPDATE_CONFIG", "QUEUED", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DB().Exec(`INSERT INTO configuration_reservations(resource_kind, resource_key, project_id, operation_id, revision, created_at) VALUES (?, ?, ?, ?, ?, ?)`, "port:18001", "18001", "nomo", "pending-op", 2, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	allocator := NewAllocator(database, 18001, 18001, fakeProbe{})
+	if _, err := allocator.ReserveMany(context.Background(), "bee", []Kind{KindAPI}); err != ErrExhausted {
+		t.Fatalf("ReserveMany() error = %v, want exhausted while update reservation is pending", err)
+	}
+	var count int
+	if err := database.DB().QueryRow(`SELECT COUNT(*) FROM port_allocations WHERE port=18001`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("pending port was stolen into canonical allocations: %d rows", count)
+	}
+}
+
 func TestAllocatorCandidateManyDoesNotMutateCanonicalAllocations(t *testing.T) {
 	database := openPortStore(t)
 	createPortProject(t, database, "bee")

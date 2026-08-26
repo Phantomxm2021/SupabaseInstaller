@@ -380,9 +380,23 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 	// while compensation was in flight. Re-enter through the same fenced,
 	// idempotent rollback key before attempting any new rotation work.
 	compensation, _ := o.store.GetOperationCompensation(ctx, queued.ID)
+	if compensation.Phase == "COMMITTED" {
+		if published, readErr := o.store.GetConfiguration(ctx, currentProject.ID); readErr == nil && published.LastGoodRevision >= snapshot.Revision {
+			if err := o.operations.Succeed(ctx, queued.ID); err != nil {
+				return queued, err
+			}
+			return o.operations.Get(ctx, queued.ID)
+		}
+	}
+	if compensation.Phase == "STATE_RESTORED" {
+		return o.fail(ctx, queued, queued.CurrentStep, errors.New("database password rotation compensated"), true)
+	}
 	if queued.CurrentStep == "MARK_CONFIGURATION_GOOD" && compensation.Phase == "ROLLBACK_CONFIRMED" {
 		if err := o.restoreConfigurationState(ctx, currentProject.ID, queued.ID, snapshot); err != nil {
-			return queued, err
+			if published, readErr := o.store.GetConfiguration(ctx, currentProject.ID); readErr == nil && published.LastGoodRevision < snapshot.Revision {
+				return queued, err
+			}
+			return o.fail(ctx, queued, queued.CurrentStep, errors.New("database password rotation compensated"), true)
 		}
 		return o.fail(ctx, queued, queued.CurrentStep, errors.New("database password rotation compensated"), true)
 	}
@@ -567,7 +581,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 					return o.fail(ctx, queued, step, errors.New("database password rotation confirmation failed"), rollback)
 				}
 			}
-			if err := o.store.MarkConfigurationGood(ctx, currentProject.ID, snapshot.Revision); err != nil {
+			if err := o.store.MarkConfigurationGoodOwned(ctx, currentProject.ID, snapshot.Revision, queued.ID, snapshot.Fence, "COMMITTED", o.now()); err != nil {
 				rollback := false
 				if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
 					if err := o.store.SetOperationCompensation(ctx, queued.ID, "ROLLBACK_PENDING", queued.ID+":rollback"); err != nil {
@@ -669,6 +683,18 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 	} else if queued.Status != operation.Running {
 		return queued, errors.New("configuration operation is not runnable")
 	}
+	compensation, _ := o.store.GetOperationCompensation(ctx, queued.ID)
+	if compensation.Phase == "COMMITTED" {
+		if published, readErr := o.store.GetConfiguration(ctx, currentProject.ID); readErr == nil && published.LastGoodRevision >= snapshot.Revision {
+			if err := o.operations.Succeed(ctx, queued.ID); err != nil {
+				return queued, err
+			}
+			return o.operations.Get(ctx, queued.ID)
+		}
+	}
+	if compensation.Phase == "STATE_RESTORED" {
+		return o.fail(ctx, queued, queued.CurrentStep, errors.New("configuration candidate restored"), true)
+	}
 	steps := []string{"VALIDATE_CONFIGURATION", "SAVE_CONFIGURATION", "RENDER_RUNTIME", "RECONCILE_SERVICES", "VERIFY_SERVICES", "MARK_CONFIGURATION_GOOD"}
 	for i, name := range steps[:3] {
 		if err := o.operations.StartStep(ctx, queued.ID, name, (i+1)*10); err != nil {
@@ -745,7 +771,7 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 			return o.fail(ctx, queued, "MARK_CONFIGURATION_GOOD", errors.New("configuration lease lost"), false)
 		}
 	}
-	if err := o.store.MarkConfigurationGood(ctx, currentProject.ID, snapshot.Revision); err != nil {
+	if err := o.store.MarkConfigurationGoodOwned(ctx, currentProject.ID, snapshot.Revision, queued.ID, snapshot.Fence, "COMMITTED", o.now()); err != nil {
 		return o.fail(ctx, queued, "MARK_CONFIGURATION_GOOD", err, false)
 	}
 	if err := o.operations.CompleteStep(ctx, queued.ID, "MARK_CONFIGURATION_GOOD", 95); err != nil {

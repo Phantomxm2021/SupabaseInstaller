@@ -44,6 +44,18 @@ func (s *Store) TryReservePorts(ctx context.Context, projectID string, reservati
 	conflict := errors.New("port reservation conflict")
 	err := s.InTx(ctx, func(tx *sql.Tx) error {
 		for kind, port := range reservations {
+			// A configuration candidate owns a port before it is promoted into
+			// port_allocations. Check that pending global reservation in this
+			// transaction as well, otherwise an install could steal an update's
+			// candidate between CandidateMany and MarkConfigurationGood.
+			var pendingProject string
+			err := tx.QueryRowContext(ctx, `SELECT project_id FROM configuration_reservations WHERE resource_kind=? AND resource_key=? LIMIT 1`, "port:"+strconv.Itoa(port), strconv.Itoa(port)).Scan(&pendingProject)
+			if err == nil {
+				return conflict
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("check pending %s port: %w", kind, err)
+			}
 			result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO port_allocations(port, project_id, kind, created_at) VALUES (?, ?, ?, ?)`, port, projectID, kind, formatTime(now))
 			if err != nil {
 				return fmt.Errorf("reserve %s port: %w", kind, err)

@@ -266,7 +266,7 @@ func TestCleanupTerminalConfigurationCandidatesRecoversLegacyFailedRevision(t *t
 	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DB().Exec(`UPDATE operations SET status='FAILED' WHERE id=?`, op.ID); err != nil {
+	if _, err := s.DB().Exec(`UPDATE operations SET status='FAILED', compensation_phase='STATE_RESTORED' WHERE id=?`, op.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CleanupTerminalConfigurationCandidates(context.Background()); err != nil {
@@ -274,6 +274,38 @@ func TestCleanupTerminalConfigurationCandidatesRecoversLegacyFailedRevision(t *t
 	}
 	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: contracts.Operation{ID: "legacy-next", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now.Add(time.Second)}, ProjectID: project.ID, Owner: "legacy-next", ExpectedRevision: 1, Configuration: configurationFixture(), OperationKind: "UPDATE_CONFIG", Now: now.Add(time.Second)}); err != nil {
 		t.Fatalf("admission after startup cleanup = %v", err)
+	}
+}
+
+func TestCleanupTerminalConfigurationCandidatesLeavesLegacyUnknownPhase(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	candidate := configurationFixture()
+	candidate.General.Domain = "unknown-phase.example.com"
+	op := contracts.Operation{ID: "unknown-phase-op", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE operations SET status='FAILED' WHERE id=?`, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CleanupTerminalConfigurationCandidates(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var revision int64
+	if err := s.DB().QueryRow(`SELECT config_revision FROM projects WHERE id=?`, project.ID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != 2 {
+		t.Fatalf("unknown-phase current revision = %d, want candidate preserved at 2", revision)
+	}
+	var candidates int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM project_configs WHERE project_id=? AND revision=2`, project.ID).Scan(&candidates); err != nil || candidates != 1 {
+		t.Fatalf("unknown-phase candidate rows = %d, %v; want retained", candidates, err)
 	}
 }
 
@@ -293,6 +325,54 @@ func TestOperationCompensationStateIsDurable(t *testing.T) {
 	got, err := s.GetOperationCompensation(context.Background(), op.ID)
 	if err != nil || got.Phase != "ROLLBACK_PENDING" || got.Key != "comp-op:rollback" {
 		t.Fatalf("compensation state=%#v err=%v", got, err)
+	}
+}
+
+func TestMarkConfigurationGoodOwnedPublishesCommitPhaseAtomically(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	candidate := configurationFixture()
+	candidate.General.Domain = "committed.example.com"
+	op := contracts.Operation{ID: "commit-phase-op", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	snapshot, lease, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkConfigurationGoodOwned(context.Background(), project.ID, snapshot.Revision, op.ID, lease.Fence, "COMMITTED", now); err != nil {
+		t.Fatal(err)
+	}
+	var phase string
+	if err := s.DB().QueryRow(`SELECT compensation_phase FROM operations WHERE id=?`, op.ID).Scan(&phase); err != nil {
+		t.Fatal(err)
+	}
+	if phase != "COMMITTED" {
+		t.Fatalf("commit phase = %q, want COMMITTED", phase)
+	}
+}
+
+func TestRestoreConfigurationStateOwnedIsIdempotentAfterStateRestored(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	candidate := configurationFixture()
+	candidate.General.Domain = "restored.example.com"
+	op := contracts.Operation{ID: "restored-op", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	snapshot, lease, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RestoreConfigurationStateOwned(context.Background(), project.ID, snapshot.Revision, op.ID, lease.Fence, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RestoreConfigurationStateOwned(context.Background(), project.ID, snapshot.Revision, op.ID, lease.Fence, now); err != nil {
+		t.Fatalf("second restore = %v, want idempotent success", err)
 	}
 }
 
