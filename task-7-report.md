@@ -124,3 +124,37 @@ passed
 Final contract commit: `60ae3c4 fix: restrict create secrets to create-safe actions`
 
 Legacy-track scan: no exact matches for `NormalizeDraft`, `configurationSupplied`, `firstConfiguration`, `TryReservePort`, or `configuration omitted`; no `domain`, `siteUrl`, or `services` fields remain on `ProjectDraft`/`CreateProjectRequest`. Those names remain only where authoritative aggregate configuration or the read-only `Project` response requires them.
+
+## Round 4 correction
+
+Create requests now carry only `name`, `slug`, `preset`, and the complete authoritative `configuration`; `supabaseVersion` is read exclusively from `configuration.general`. The equality check and duplicate fixtures were removed. Installation now fails closed when `GetDesiredConfiguration` cannot read the aggregate and never synthesizes a sparse `Project` projection. Manager-owned pooler transaction/session ports default to zero and are shown read-only until the atomic allocator assigns them.
+
+Storage and Image Transformation mutations restore the database/REST/gateway closure, while required REST remains disabled in the UI when Storage is enabled. OAuth and Storage secret fields surface nested Zod `.value.message` errors. PATCH no longer converts empty secret actions to `retain`; existing secrets require explicit `retain`, `remove`, or `replace`, with a frontend helper for converting redacted markers to an explicit update command. Manager JWT expiry validation now matches the frontend range.
+
+Round 4 verification:
+
+```text
+go test ./...
+all packages passed
+
+npm test --workspace apps/web -- --run
+Test Files 10 passed (10)
+Tests 43 passed (43)
+
+npm run build --workspace apps/web
+TypeScript check and Vite build passed (existing chunk-size warning only)
+
+git diff --check
+passed
+```
+
+Round 4 commits: `1228b35 fix: make Round4 aggregate and port contracts authoritative`, `8a8f595 fix: require explicit update secret actions`
+
+Legacy scan:
+
+```text
+rg '\\b(NormalizeDraft|configurationSupplied|firstConfiguration|TryReservePort)\\b|configuration omitted' apps/manager internal apps/web/src
+none
+```
+
+The only remaining top-level `supabaseVersion`/`domain`/`siteUrl`/`services` JSON fields are on the read-only `Project` response or inside the authoritative `ProjectConfiguration`; neither create request contains those projections.
