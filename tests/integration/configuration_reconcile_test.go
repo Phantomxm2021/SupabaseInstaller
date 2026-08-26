@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -27,6 +28,7 @@ func TestConfigurationReconcile(t *testing.T) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	csrf, cookie := "", ""
 	if username != "" && password != "" {
+		ensureSetup(t, client, baseURL, username, password)
 		csrf, cookie = loginAcceptance(t, client, baseURL, username, password)
 	} else {
 		cookie = os.Getenv("SUPABASE_MANAGER_E2E_COOKIE")
@@ -41,11 +43,35 @@ func TestConfigurationReconcile(t *testing.T) {
 		}
 		created := createCustomSMTPFunctionsProject(t, client, baseURL, cookie, csrf)
 		projectID = created["projectId"].(string)
+		if runtimeProject, ok := created["_runtimeProject"].(string); ok {
+			os.Setenv("SUPABASE_MANAGER_E2E_RUNTIME_PROJECT", runtimeProject)
+			if marker := os.Getenv("SUPABASE_MANAGER_E2E_RUNTIME_PROJECT_FILE"); marker != "" {
+				if err := os.WriteFile(marker, []byte(runtimeProject), 0o600); err != nil {
+					t.Fatalf("record runtime Compose project: %v", err)
+				}
+			}
+		}
+		defer cleanupRuntimeProject(t, client, baseURL, projectID, cookie, csrf)
 		waitOperation(t, client, baseURL, created["operationId"].(string), cookie, csrf)
+	}
+	project := getJSON(t, client, baseURL+"/api/projects/"+projectID, cookie, csrf)
+	if projectSlug, _ := project["slug"].(string); projectSlug == "" {
+		t.Fatal("project response omitted slug")
+	} else {
+		runtimeProject := "supabase-manager-" + projectSlug
+		os.Setenv("SUPABASE_MANAGER_E2E_RUNTIME_PROJECT", runtimeProject)
+		if marker := os.Getenv("SUPABASE_MANAGER_E2E_RUNTIME_PROJECT_FILE"); marker != "" {
+			if err := os.WriteFile(marker, []byte(runtimeProject), 0o600); err != nil {
+				t.Fatalf("record runtime Compose project: %v", err)
+			}
+		}
 	}
 	config := getJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration", cookie, csrf)
 	revision := int64(config["revision"].(float64))
-	composeProject := os.Getenv("SUPABASE_MANAGER_E2E_COMPOSE_PROJECT")
+	composeProject := os.Getenv("SUPABASE_MANAGER_E2E_RUNTIME_PROJECT")
+	if composeProject == "" {
+		composeProject = os.Getenv("SUPABASE_MANAGER_E2E_COMPOSE_PROJECT")
+	}
 	before := inspectContainerIDs(t, composeProject)
 	google := map[string]any{"enabled": true, "clientId": "acceptance-client", "secretSet": true, "secret": map[string]any{"action": "replace", "value": acceptanceValue()}, "fields": map[string]any{}}
 	op := patchJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration/oauth/google", map[string]any{"expectedRevision": revision, "value": google}, cookie, csrf)
@@ -53,6 +79,7 @@ func TestConfigurationReconcile(t *testing.T) {
 	afterOAuth := inspectContainerIDs(t, composeProject)
 	assertServiceChange(t, before, afterOAuth, "auth", true)
 	assertServiceChange(t, before, afterOAuth, "functions", false)
+	assertOnlyServicesChanged(t, before, afterOAuth, "auth")
 	config = getJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration", cookie, csrf)
 	canonical, ok := config["configuration"].(map[string]any)
 	if !ok {
@@ -68,6 +95,7 @@ func TestConfigurationReconcile(t *testing.T) {
 	afterFunctions := inspectContainerIDs(t, composeProject)
 	assertServiceChange(t, afterOAuth, afterFunctions, "auth", false)
 	assertServiceChange(t, afterOAuth, afterFunctions, "functions", true)
+	assertOnlyServicesChanged(t, afterOAuth, afterFunctions, "functions")
 	supabaseURL := strings.TrimRight(os.Getenv("SUPABASE_MANAGER_E2E_SUPABASE_URL"), "/")
 	if supabaseURL == "" {
 		network, networkOK := canonical["network"].(map[string]any)
@@ -95,10 +123,42 @@ func TestConfigurationReconcile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /auth/v1/settings: %v", err)
 	}
+	var settings map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&settings); err != nil {
+		response.Body.Close()
+		t.Fatalf("decode /auth/v1/settings: %v", err)
+	}
 	response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		t.Fatalf("GET /auth/v1/settings status=%d", response.StatusCode)
 	}
+	external, _ := settings["external"].(map[string]any)
+	googleEnabled, _ := external["google"].(bool)
+	if !googleEnabled {
+		t.Fatalf("GET /auth/v1/settings reports Google disabled: %v", settings["external"])
+	}
+}
+
+func cleanupRuntimeProject(t *testing.T, client *http.Client, baseURL, projectID, cookie, csrf string) {
+	t.Helper()
+	result, err := requestJSONNoFatal(client, http.MethodDelete, baseURL+"/api/projects/"+projectID, map[string]any{"mode": "runtime"}, cookie, csrf)
+	if err != nil {
+		t.Logf("cleanup runtime request failed: %v", err)
+		return
+	}
+	if operationID, ok := result["operationId"].(string); ok {
+		waitOperation(t, client, baseURL, operationID, cookie, csrf)
+	}
+}
+
+func ensureSetup(t *testing.T, client *http.Client, baseURL, username, password string) {
+	t.Helper()
+	status := requestJSON(t, client, http.MethodGet, baseURL+"/api/setup/status", nil, "", "")
+	required, _ := status["required"].(bool)
+	if !required {
+		return
+	}
+	requestJSON(t, client, http.MethodPost, baseURL+"/api/setup", map[string]any{"username": username, "password": password}, "", "")
 }
 
 func createCustomSMTPFunctionsProject(t *testing.T, client *http.Client, baseURL, cookie, csrf string) map[string]any {
@@ -133,7 +193,9 @@ func createCustomSMTPFunctionsProject(t *testing.T, client *http.Client, baseURL
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	return requestJSON(t, client, http.MethodPost, baseURL+"/api/projects", payload, cookie, csrf)
+	result := requestJSON(t, client, http.MethodPost, baseURL+"/api/projects", payload, cookie, csrf)
+	result["_runtimeProject"] = "supabase-manager-" + cfg.General.Domain[:strings.Index(cfg.General.Domain, ".")]
+	return result
 }
 
 func inspectContainerIDs(t *testing.T, composeProject string) map[string]string {
@@ -142,13 +204,16 @@ func inspectContainerIDs(t *testing.T, composeProject string) map[string]string 
 	if composeProject == "" {
 		return ids
 	}
-	for _, service := range []string{"auth", "functions"} {
+	for _, service := range []string{"db", "api-gw", "auth", "rest", "studio", "meta", "functions"} {
 		command := exec.Command("docker", "ps", "-aq", "--filter", "label=com.docker.compose.project="+composeProject, "--filter", "label=com.docker.compose.service="+service)
 		output, err := command.Output()
 		if err != nil {
 			t.Fatalf("inspect %s container: %v", service, err)
 		}
 		ids[service] = strings.TrimSpace(string(output))
+		if ids[service] == "" {
+			t.Fatalf("acceptance container %s has no ID in Compose project %s", service, composeProject)
+		}
 		t.Logf("acceptance container %s id=%s", service, ids[service])
 	}
 	return ids
@@ -156,11 +221,24 @@ func inspectContainerIDs(t *testing.T, composeProject string) map[string]string 
 
 func assertServiceChange(t *testing.T, before, after map[string]string, service string, changed bool) {
 	t.Helper()
-	if len(before) == 0 {
-		return
+	if before[service] == "" || after[service] == "" {
+		t.Fatalf("%s container ID missing (before=%q after=%q)", service, before[service], after[service])
 	}
 	if (before[service] != after[service]) != changed {
 		t.Fatalf("%s container changed=%v, want %v (before=%q after=%q)", service, before[service] != after[service], changed, before[service], after[service])
+	}
+}
+
+func assertOnlyServicesChanged(t *testing.T, before, after map[string]string, changed ...string) {
+	t.Helper()
+	allowed := make(map[string]bool, len(changed))
+	for _, service := range changed {
+		allowed[service] = true
+	}
+	for name, previous := range before {
+		if !allowed[name] && previous != after[name] {
+			t.Fatalf("unexpected %s container change (before=%q after=%q)", name, previous, after[name])
+		}
 	}
 }
 
@@ -200,7 +278,7 @@ func getJSON(t *testing.T, client *http.Client, url, cookie, csrf string) map[st
 func patchJSON(t *testing.T, client *http.Client, url string, payload map[string]any, cookie, csrf string) map[string]any {
 	return requestJSON(t, client, http.MethodPatch, url, payload, cookie, csrf)
 }
-func requestJSON(t *testing.T, client *http.Client, method, url string, payload map[string]any, cookie, csrf string) map[string]any {
+func requestJSON(t *testing.T, client *http.Client, method, rawURL string, payload map[string]any, cookie, csrf string) map[string]any {
 	var body *bytes.Reader
 	if payload == nil {
 		body = bytes.NewReader(nil)
@@ -208,23 +286,70 @@ func requestJSON(t *testing.T, client *http.Client, method, url string, payload 
 		raw, _ := json.Marshal(payload)
 		body = bytes.NewReader(raw)
 	}
-	request, _ := http.NewRequest(method, url, body)
+	request, _ := http.NewRequest(method, rawURL, body)
+	if parsed, parseErr := urlpkg(rawURL); parseErr == nil {
+		request.Header.Set("Origin", parsed)
+	}
 	request.Header.Set("Cookie", cookie)
 	request.Header.Set("X-CSRF-Token", csrf)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
-		t.Fatalf("%s %s: %v", method, url, err)
+		t.Fatalf("%s %s: %v", method, rawURL, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		t.Fatalf("%s %s status=%d", method, url, response.StatusCode)
+		t.Fatalf("%s %s status=%d", method, rawURL, response.StatusCode)
 	}
 	var result map[string]any
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		t.Fatal(err)
 	}
 	return result
+}
+
+func requestJSONNoFatal(client *http.Client, method, rawURL string, payload map[string]any, cookie, csrf string) (map[string]any, error) {
+	var body *bytes.Reader
+	if payload == nil {
+		body = bytes.NewReader(nil)
+	} else {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(raw)
+	}
+	request, err := http.NewRequest(method, rawURL, body)
+	if err != nil {
+		return nil, err
+	}
+	if parsed, parseErr := urlpkg(rawURL); parseErr == nil {
+		request.Header.Set("Origin", parsed)
+	}
+	request.Header.Set("Cookie", cookie)
+	request.Header.Set("X-CSRF-Token", csrf)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	var result map[string]any
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("%s %s status=%d", method, rawURL, response.StatusCode)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func urlpkg(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid URL")
+	}
+	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
 func waitOperation(t *testing.T, client *http.Client, baseURL, operationID, cookie, csrf string) {
