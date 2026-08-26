@@ -108,6 +108,23 @@ it('updates the global desktop trigger name as the Sidebar changes state', async
   expect(screen.getByRole('button', { name: 'Open sidebar' })).toBeVisible()
 })
 
+it.each([
+  ['/projects', 'Projects'],
+  ['/projects/bee/overview', 'Overview'],
+  ['/projects/bee/configuration', 'General'],
+  ['/projects/bee/configuration?section=oauth', 'OAuth Providers'],
+  ['/projects/bee/logs', 'Logs'],
+  ['/projects/bee/backups', 'Backups'],
+] as const)('marks only the canonical active link for %s', (path, activeLabel) => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><AppShell /></MemoryRouter></QueryClientProvider>)
+  const sidebar = document.querySelector('[data-slot="sidebar"][data-state]')
+  const activeLinks = within(sidebar as HTMLElement).getAllByRole('link').filter((link) => link.getAttribute('aria-current') === 'page')
+  expect(activeLinks).toHaveLength(1)
+  expect(activeLinks[0]).toHaveAccessibleName(activeLabel)
+})
+
 it.each(['/projects', '/projects/new', '/settings'])('does not render project navigation at %s', (path) => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))

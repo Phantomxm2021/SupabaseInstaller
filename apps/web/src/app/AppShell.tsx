@@ -69,7 +69,7 @@ export function AppShell() {
             <nav aria-label="Main navigation">
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton isActive={location.pathname === '/projects' || location.pathname.startsWith('/projects/')} tooltip="Projects" render={<NavLink to="/projects" />}>
+                  <SidebarMenuButton isActive={location.pathname === '/projects'} tooltip="Projects" render={<NavLink to="/projects" end />}>
                     <Boxes /> <span>Projects</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
