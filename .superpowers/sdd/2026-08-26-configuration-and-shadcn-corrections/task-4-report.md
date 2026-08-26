@@ -71,9 +71,41 @@ uncached failure/metadata behavior.
 The Fix Round 1 implementation is committed as `fix: harden reconcile
 candidate rollback and idempotency` (`733ffa5`).
 
+## Fix Round 2
+
+### RED
+
+Added regression coverage for the remaining review findings: real Compose
+validation of a revision-0 Functions candidate with no `current` pointer,
+service-specific health polling through the production Inspector, immutable
+previous-generation disable removal, cleanup of newly added services during
+rollback, DirectDB-to-db change planning, validation-failure no-op recovery,
+initial cleanup failure pointer restoration, and the HTTP endpoint through a
+real runtime Backend covering stale/invalid revisions, redacted rollback,
+failure replay, and no repeated Compose calls. The first focused run failed
+for the new DirectDB mapping and newly-added-service cleanup; the validation
+failure test also reproduced an unintended old-service recreation.
+
+### GREEN
+
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test ./apps/provisioner/internal/runtime -run 'TestReconcileRollbackRemovesServicesAddedByFailedCandidate|TestAffectedServicesCoversRenderedTopologyAndRuntimeFields' -count=1` — pass after fixes.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test ./apps/provisioner/internal/runtime -run TestRealComposeParserValidatesRevisionZeroFunctionsCandidateWithoutCurrent -count=1 -v` — pass using `docker compose config --quiet`.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test ./apps/provisioner/internal/compose ./apps/provisioner/internal/projectfs ./apps/provisioner/internal/runtime ./apps/provisioner/internal/server -count=1` — pass.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -race ./apps/provisioner/... -count=1` — pass, no race report.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test ./... -count=1` — pass.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go vet ./...` — pass.
+- `git diff --check` — pass.
+
+### Fix commit
+
+The Fix Round 2 implementation is committed as `fix: harden reconcile topology
+and production chain` (`24205b0`).
+
 ## Residual risks
 
 The bounded health wait treats a non-starting unhealthy/degraded report as an
 immediate failure and polls only transient `starting` states. This matches the
 health inspector's state model while avoiding an unbounded retry on a clearly
-failed service.
+failed service. Runtime and HTTP tests use deterministic executor/container
+sources; deployment still depends on the host Docker daemon and pinned
+Compose files being available.
