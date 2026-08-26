@@ -1,19 +1,17 @@
 import type { UseFormReturn } from 'react-hook-form'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Field, FieldDescription, FieldError, FieldLabel, FieldGroup } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ProjectForm } from './projectSchema'
 
 export function BasicStep({ form }: { form: UseFormReturn<ProjectForm> }) {
-  return (
-    <section className="wizard-section">
-      <div className="section-heading"><span>01</span><div><h2>Project details</h2><p>The three fields required for a Lightweight install.</p></div></div>
-      <div className="form-grid">
-        <div><label>Project name<input autoFocus placeholder="Bee" {...form.register('name')} /></label><ErrorText value={form.formState.errors.name?.message} /></div>
-        <div><label>Project slug<input placeholder="bee" {...form.register('slug')} /></label><ErrorText value={form.formState.errors.slug?.message} /></div>
-        <div><label>Domain<input placeholder="bee.example.com" {...form.register('configuration.general.domain')} /></label><ErrorText value={form.formState.errors.configuration?.general?.domain?.message} /></div>
-        <div><label>Site URL<input placeholder="https://example.com" {...form.register('configuration.general.siteUrl')} /></label><ErrorText value={form.formState.errors.configuration?.general?.siteUrl?.message} /></div>
-        <div><label>Pinned Supabase version<select {...form.register('configuration.general.supabaseVersion')}><option value="self-hosted/v0.8.0">self-hosted/v0.8.0</option></select></label></div>
-      </div>
-    </section>
-  )
+  const error = (name: string) => { let current: any = form.formState.errors; for (const part of name.split('.')) current = current?.[part]; return current?.message as string | undefined }
+  return <Card><CardHeader><CardTitle>Project details</CardTitle><CardDescription>Basic identity and the pinned official Supabase runtime.</CardDescription></CardHeader><CardContent><FieldGroup className="grid gap-5 md:grid-cols-2">
+    <Field><FieldLabel htmlFor="project-name">Project name</FieldLabel><Input id="project-name" autoFocus placeholder="Bee" aria-invalid={!!error('name')} {...form.register('name')} /><FieldError>{error('name')}</FieldError></Field>
+    <Field><FieldLabel htmlFor="project-slug">Project slug</FieldLabel><Input id="project-slug" placeholder="bee" aria-invalid={!!error('slug')} {...form.register('slug')} /><FieldError>{error('slug')}</FieldError></Field>
+    <Field><FieldLabel htmlFor="project-domain">Domain</FieldLabel><FieldDescription>Hostname only, without a scheme.</FieldDescription><Input id="project-domain" placeholder="bee.example.com" aria-invalid={!!error('configuration.general.domain')} {...form.register('configuration.general.domain')} /><FieldError>{error('configuration.general.domain')}</FieldError></Field>
+    <Field><FieldLabel htmlFor="project-site-url">Site URL</FieldLabel><Input id="project-site-url" placeholder="https://example.com" aria-invalid={!!error('configuration.general.siteUrl')} {...form.register('configuration.general.siteUrl')} /><FieldError>{error('configuration.general.siteUrl')}</FieldError></Field>
+    <Field><FieldLabel>Supabase version</FieldLabel><Select value={form.watch('configuration.general.supabaseVersion')} onValueChange={(value) => form.setValue('configuration.general.supabaseVersion', value as any, { shouldDirty: true, shouldValidate: true })}><SelectTrigger aria-label="Pinned Supabase version"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="self-hosted/v0.8.0">self-hosted/v0.8.0</SelectItem></SelectContent></Select></Field>
+  </FieldGroup></CardContent></Card>
 }
-
-function ErrorText({ value }: { value?: string }) { return value ? <span className="field-error">{value}</span> : null }

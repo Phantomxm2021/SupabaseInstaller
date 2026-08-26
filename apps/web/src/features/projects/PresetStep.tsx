@@ -1,14 +1,30 @@
 import type { UseFormReturn } from 'react-hook-form'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Field, FieldDescription, FieldLabel, FieldGroup } from '@/components/ui/field'
+import { Switch } from '@/components/ui/switch'
 import type { ProjectForm, PresetName } from './projectSchema'
 import { applyPreset } from './projectSchema'
 
-const names: Record<keyof ProjectForm['configuration']['services'], string> = { database:'PostgreSQL',gateway:'Envoy Gateway',auth:'Authentication',rest:'PostgREST',studio:'Supabase Studio',postgresMeta:'postgres-meta',realtime:'Realtime',storage:'Storage',imgproxy:'Image Transformation',functions:'Edge Functions',supavisor:'Supavisor',logs:'Logs & Analytics',vector:'Vector',directDb:'Direct PostgreSQL port' }
-const presets: Array<[PresetName,string]> = [['LIGHTWEIGHT','Core database, gateway, Auth, REST and Studio.'],['STANDARD','Adds Realtime, Storage, Functions and Supavisor.'],['FULL','All official optional services, including Logs and image transformation.'],['CUSTOM','Choose every service individually.']]
+const names: Record<keyof ProjectForm['configuration']['services'], string> = { database: 'PostgreSQL', gateway: 'API Gateway', auth: 'Authentication', rest: 'PostgREST', studio: 'Supabase Studio', postgresMeta: 'postgres-meta', realtime: 'Realtime', storage: 'Storage', imgproxy: 'Image Transformation', functions: 'Edge Functions', supavisor: 'Supavisor', logs: 'Logs & Analytics', vector: 'Vector', directDb: 'Direct PostgreSQL port' }
+const presets: Array<[PresetName, string]> = [['LIGHTWEIGHT', 'Core database, gateway, Auth, REST and Studio.'], ['STANDARD', 'Adds Realtime, Storage, Functions and Supavisor.'], ['FULL', 'All official optional services, including Logs and image transformation.'], ['CUSTOM', 'Choose every service individually.']]
+
+/** The only service mutation path used by every wizard step. */
+export function setServiceEnabled(form: UseFormReturn<ProjectForm>, name: keyof ProjectForm['configuration']['services'], enabled: boolean) {
+  const current = form.getValues('configuration.services'); const next = { ...current, [name]: enabled }
+  if (name === 'studio' && enabled) next.postgresMeta = true
+  if (name === 'storage' && !enabled) { next.imgproxy = false; form.setValue('configuration.storage', { ...form.getValues('configuration.storage'), backend: 'local', bucket: '', region: '', endpoint: '', accountId: '', accessKeyId: '', secretAccessKeySet: false, secretAccessKey: { action: 'retain' }, forcePathStyle: false }) }
+  if (name === 'logs') next.vector = enabled
+  if (name === 'vector') next.logs = enabled
+  if (name === 'directDb') { next.directDb = enabled; form.setValue('configuration.database.directPort', enabled, { shouldDirty: true }); form.setValue('configuration.database.directPortNumber', enabled ? 54322 : 0, { shouldDirty: true }); form.setValue('configuration.network.directDatabasePort', enabled ? 54322 : 0, { shouldDirty: true }) }
+  if (name === 'auth') form.setValue('configuration.auth.enabled', enabled, { shouldDirty: true })
+  if (name === 'imgproxy' && enabled) next.storage = true
+  form.setValue('preset', 'CUSTOM', { shouldDirty: true }); form.setValue('configuration.services', next, { shouldDirty: true, shouldValidate: true })
+}
 
 export function PresetStep({ form }: { form: UseFormReturn<ProjectForm> }) {
-  const preset = form.watch('preset')
-  const services = form.watch('configuration.services')
-  const setPreset = (next: PresetName) => { form.setValue('preset', next); form.setValue('configuration.services', applyPreset(next)) }
-  const toggle = (name: keyof ProjectForm['configuration']['services']) => { const next = { ...services, [name]: !services[name] }; if (name==='storage'&&!next.storage) next.imgproxy=false; if (name==='logs') next.vector=next.logs; if (name==='vector') next.logs=next.vector; if (name==='studio') next.postgresMeta=next.studio; form.setValue('preset','CUSTOM'); form.setValue('configuration.services',next) }
-  return <section className="wizard-section"><div className="section-heading"><span>02</span><div><h2>Preset & services</h2><p>Presets are editable; changes are saved as Custom.</p></div></div><div className="preset-grid">{presets.map(([key,description])=><button type="button" aria-label={key[0]+key.slice(1).toLowerCase()} key={key} className={`preset-card ${preset===key?'selected':''}`} onClick={()=>setPreset(key)}><strong>{key[0]+key.slice(1).toLowerCase()}</strong><p>{description}</p></button>)}</div><div className="form-grid services-grid">{(Object.keys(names) as Array<keyof typeof names>).map(name=><label key={name} className="service-toggle"><input type="checkbox" checked={services[name]} disabled={name==='database'||(name==='postgresMeta'&&services.studio)||(name==='vector'&&services.logs)||(name==='imgproxy'&&!services.storage)} onChange={()=>toggle(name)} /> <span>{names[name]}{name==='postgresMeta'&&services.studio?' (required by Studio)':name==='imgproxy'&&!services.storage?' (enable Storage first)':name==='vector'&&services.logs?' (managed with Logs)':''}</span></label>)}</div></section>
+  const preset = form.watch('preset'); const services = form.watch('configuration.services')
+  const setPreset = (next: PresetName) => { form.setValue('preset', next, { shouldDirty: true }); form.setValue('configuration.services', applyPreset(next), { shouldDirty: true, shouldValidate: true }) }
+  return <Card><CardHeader><CardTitle>Preset & services</CardTitle><CardDescription>Every switch is typed and dependency-aware. Editing a preset changes it to Custom.</CardDescription></CardHeader><CardContent><FieldGroup className="grid gap-3 md:grid-cols-2">
+    {presets.map(([key, description]) => <button type="button" aria-label={key[0] + key.slice(1).toLowerCase()} key={key} className={`rounded-lg border p-4 text-left transition ${preset === key ? 'border-primary bg-primary/10' : 'border-border bg-card'}`} onClick={() => setPreset(key)}><strong>{key[0] + key.slice(1).toLowerCase()}</strong><FieldDescription>{description}</FieldDescription></button>)}
+  </FieldGroup><FieldGroup className="mt-6 grid gap-3 md:grid-cols-2">{(Object.keys(names) as Array<keyof typeof names>).map((name) => { const forced = name === 'database' || (name === 'postgresMeta' && services.studio) || (name === 'vector' && services.logs); return <Field orientation="horizontal" key={name} className="items-center justify-between rounded-lg border border-border px-3 py-2"><FieldLabel htmlFor={`service-${name}`}>{names[name]}{forced ? ' (required)' : ''}</FieldLabel><Switch id={`service-${name}`} checked={services[name]} disabled={forced} onCheckedChange={(checked) => setServiceEnabled(form, name, checked)} /></Field> })}</FieldGroup></CardContent></Card>
 }

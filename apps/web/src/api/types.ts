@@ -19,8 +19,9 @@ export interface Services {
 }
 
 export type Preset = 'LIGHTWEIGHT' | 'STANDARD' | 'FULL' | 'CUSTOM'
-export type SecretAction = 'retain' | 'replace' | 'remove'
-export interface SecretInput { action?: SecretAction; value?: string }
+export type SecretAction = '' | 'retain' | 'replace' | 'remove'
+/** A secret mutation is always explicit on create/update requests. */
+export interface SecretInput { action: SecretAction; value?: string }
 export interface GeneralConfig { domain: string; siteUrl: string; supabaseVersion: string }
 export interface EmailAuthConfig { enabled: boolean; allowSignup: boolean; confirmEmail: boolean; secureEmailChange: boolean; doubleConfirmChanges: boolean }
 export interface PhoneAuthConfig { enabled: boolean; provider: string; secretSet: boolean; secret: SecretInput; fields: Record<string, string> }
@@ -34,9 +35,14 @@ export interface FunctionVariable { name: string; valueSet: boolean; value: Secr
 export interface FunctionsConfig { defaultJwtVerification: boolean; directory: string; variables: FunctionVariable[] }
 export interface DatabaseConfig { version: string; directPort: boolean; directPortNumber: number; maxConnections: number; sharedBuffers: string; extensions: string[] }
 export interface PoolerConfig { transactionPort: number; sessionPort: number; poolSize: number; maxClientConnections: number }
-export interface NetworkConfig { gateway: 'envoy' | 'kong'; httpsMode: 'external' | 'caddy' | 'manual'; internalGatewayPort: number; apiPort: number; studioPort: number; directDatabasePort: number; poolerPort: number; certificate?: string }
-export interface ProjectConfiguration { revision: number; general: GeneralConfig; services: Services; auth: AuthConfig; storage: StorageConfig; realtime: RealtimeConfig; functions: FunctionsConfig; database: DatabaseConfig; pooler: PoolerConfig; network: NetworkConfig }
-export interface ProjectDraft { name: string; slug: string; domain: string; siteUrl: string; supabaseVersion: string; preset: Preset; configuration: ProjectConfiguration; services: Services }
+export interface NetworkConfig { gateway: 'envoy' | 'kong'; httpsMode: 'external' | 'caddy' | 'manual'; internalGatewayPort?: number; apiPort: number; studioPort: number; directDatabasePort: number; poolerPort: number; certificate?: string }
+/** Redacted aggregate returned by GET endpoints (never contains secret values). */
+export interface RedactedProjectConfiguration { revision: number; general: GeneralConfig; services: Services; auth: AuthConfig; storage: StorageConfig; realtime: RealtimeConfig; functions: FunctionsConfig; database: DatabaseConfig; pooler: PoolerConfig; network: NetworkConfig }
+/** Complete aggregate accepted by create/update endpoints. */
+export interface CreateProjectConfiguration extends RedactedProjectConfiguration {}
+export type ProjectConfiguration = CreateProjectConfiguration
+export interface CreateProjectRequest { name: string; slug: string; domain: string; siteUrl: string; supabaseVersion: string; preset: Preset; configuration: CreateProjectConfiguration; services: Services }
+export interface ProjectDraft extends CreateProjectRequest {}
 
 export interface Project {
   id: string
@@ -48,7 +54,7 @@ export interface Project {
   health: HealthStatus
   supabaseVersion: string
   preset: Preset
-  configuration?: ProjectConfiguration
+  configurationRevision: number
   services: Services
   createdAt: string
   updatedAt: string

@@ -1,10 +1,14 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation } from '@tanstack/react-query'
 import { ArrowLeft, ArrowRight, Box, Rocket } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useForm } from 'react-hook-form'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { Alert } from '@/components/ui/alert'
+import { Form } from '@/components/ui/form'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { apiFetch } from '../../api/client'
+import type { CreateProjectRequest } from '../../api/types'
 import { OperationPanel } from '../operations/OperationPanel'
 import { AuthStep } from './AuthStep'
 import { BasicStep } from './BasicStep'
@@ -14,14 +18,21 @@ import { ReviewStep } from './ReviewStep'
 import { StorageFunctionsStep } from './StorageFunctionsStep'
 import { defaultConfiguration, projectSchema, slugify, type ProjectForm } from './projectSchema'
 
-const steps=['Basic','Preset & Services','Auth & SMTP','Storage & Functions','Database & Network','Review']
+const steps = ['Basic', 'Preset & Services', 'Auth & SMTP', 'Storage & Functions', 'Database & Network', 'Review']
 export function NewProjectPage() {
-  const [step,setStep]=useState(0); const [operation,setOperation]=useState<{projectId:string;operationId:string}>();
-  const form=useForm<ProjectForm>({resolver:zodResolver(projectSchema) as any,defaultValues:{name:'',slug:'',preset:'LIGHTWEIGHT',configuration:defaultConfiguration('LIGHTWEIGHT')}})
-  const name=form.watch('name'); const values=form.watch()
-  useEffect(()=>{form.setValue('slug',slugify(name),{shouldValidate:form.formState.isSubmitted})},[name,form])
-  const create=useMutation({mutationFn:(v:ProjectForm)=>apiFetch<{projectId:string;operationId:string}>('/api/projects',{method:'POST',body:JSON.stringify({name:v.name,slug:v.slug,domain:v.configuration.general.domain,siteUrl:v.configuration.general.siteUrl,supabaseVersion:v.configuration.general.supabaseVersion,preset:v.preset,configuration:v.configuration,services:v.configuration.services})}),onSuccess:setOperation})
-  if(operation)return <main className="page narrow-page"><div className="page-heading"><div><p className="eyebrow">Installation in progress</p><h1>Installing {values.name}</h1><p className="muted">You can leave this page. Progress is stored on the server.</p></div></div><OperationPanel operationId={operation.operationId} projectId={operation.projectId} projectName={values.name} onSucceeded={()=>undefined}/></main>
-  const next=async()=>{const ok=step===0?await form.trigger(['name','slug','configuration.general.domain','configuration.general.siteUrl'] as any):step===4?await form.trigger():true;if(!ok)return;setStep(v=>Math.min(5,v+1))}
-  return <main className="page narrow-page"><div className="page-heading"><div><p className="eyebrow">New runtime</p><h1>{step===5?'Review installation':'Create a project'}</h1><p className="muted">Configure the complete Supabase runtime before Docker resources are created.</p></div><span className="wizard-step">Step {step+1} of 6 · {steps[step]}</span></div><nav aria-label="Project setup steps" className="wizard-tabs">{steps.map((s,i)=><button type="button" key={s} aria-current={i===step?'step':undefined} disabled={i>step} onClick={()=>setStep(i)}>{i+1}. {s}</button>)}</nav><div className="wizard panel">{step===0&&<BasicStep form={form}/>} {step===1&&<PresetStep form={form}/>} {step===2&&<AuthStep form={form}/>} {step===3&&<StorageFunctionsStep form={form}/>} {step===4&&<DatabaseNetworkStep form={form}/>} {step===5&&<ReviewStep project={values}/>} {form.formState.errors.root&&<div className="alert error wizard-error">{String(form.formState.errors.root.message)}</div>}{create.error&&<div className="alert error wizard-error">{create.error.message}</div>}<div className="wizard-footer"><Link className="button secondary" to="/projects"><ArrowLeft size={15}/>Cancel</Link><div>{step>0&&<button className="button secondary" type="button" onClick={()=>setStep(v=>v-1)}><ArrowLeft size={15}/>Back</button>} {step===0&&<><button className="button secondary" type="button" onClick={()=>setStep(5)}>Review</button><button className="button primary" type="button" onClick={next}>Continue<ArrowRight size={15}/></button></>}{step>0&&step<5&&<button className="button primary" type="button" onClick={next}>Continue<ArrowRight size={15}/></button>}{step===5&&<button className="button primary" type="button" disabled={create.isPending} onClick={()=>create.mutate(form.getValues())}>{create.isPending?<Box size={15}/>:<Rocket size={15}/>} {create.isPending?'Creating operation…':'Install project'}</button>}</div></div></div></main>
+  const [step, setStep] = useState(0); const [operation, setOperation] = useState<{ projectId: string; operationId: string }>(); const navigate = useNavigate()
+  const form = useForm<ProjectForm, any, ProjectForm>({ resolver: zodResolver(projectSchema) as any, defaultValues: { name: '', slug: '', preset: 'LIGHTWEIGHT', configuration: defaultConfiguration('LIGHTWEIGHT') as any } })
+  const name = form.watch('name'); const values = form.watch()
+  useEffect(() => { form.setValue('slug', slugify(name), { shouldValidate: form.formState.isSubmitted, shouldDirty: !!name }) }, [name, form])
+  const create = useMutation({ mutationFn: (value: ProjectForm) => { const body: CreateProjectRequest = { name: value.name, slug: value.slug, domain: value.configuration.general.domain, siteUrl: value.configuration.general.siteUrl, supabaseVersion: value.configuration.general.supabaseVersion, preset: value.preset, configuration: value.configuration, services: value.configuration.services }; return apiFetch<{ projectId: string; operationId: string }>('/api/projects', { method: 'POST', body: JSON.stringify(body) }) }, onSuccess: setOperation })
+  if (operation) return <main className="page narrow-page"><div className="page-heading"><div><p className="eyebrow">Installation in progress</p><h1>Installing {values.name}</h1><p className="muted">You can leave this page. Progress is stored on the server.</p></div></div><OperationPanel operationId={operation.operationId} projectId={operation.projectId} projectName={values.name} onSucceeded={(projectId) => navigate(`/projects/${projectId}/overview`, { replace: true })} /></main>
+  const validateAnd = async (target: number) => {
+    const scope = step === 0 ? ['name', 'slug', 'configuration.general.domain', 'configuration.general.siteUrl'] : undefined
+    if (!await form.trigger(scope as any)) return
+    await form.handleSubmit(() => setStep(target), () => undefined)()
+  }
+  const next = () => validateAnd(Math.min(5, step + 1))
+  const install = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (await form.trigger()) await form.handleSubmit((value) => create.mutate(value), () => undefined)(event) }
+  const tab = (target: number) => { if (target <= step) setStep(target); else validateAnd(target) }
+  return <main className="page narrow-page"><div className="page-heading"><div><p className="eyebrow">New runtime</p><h1>{step === 5 ? 'Review installation' : 'Create a project'}</h1><p className="muted">Configure the complete Supabase runtime before Docker resources are created.</p></div><span className="wizard-step">Step {step + 1} of 6 · {steps[step]}</span></div><Tabs value={`step-${step}`} onValueChange={(value) => tab(Number(value.replace('step-', '')))}><TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-6">{steps.map((label, index) => <TabsTrigger key={label} value={`step-${index}`} disabled={index > step + 1}>{index + 1}. {label}</TabsTrigger>)}</TabsList></Tabs><Form className="wizard mt-3" onSubmit={install} noValidate>{step === 0 && <BasicStep form={form} />}{step === 1 && <PresetStep form={form} />}{step === 2 && <AuthStep form={form} />}{step === 3 && <StorageFunctionsStep form={form} />}{step === 4 && <DatabaseNetworkStep form={form} />}{step === 5 && <ReviewStep project={values} />}{(form.formState.errors.root || create.error) && <Alert className="mt-4 border-destructive text-destructive">{String(form.formState.errors.root?.message || create.error?.message)}</Alert>}<div className="wizard-footer"><Link className="button secondary" to="/projects"><ArrowLeft size={15} />Cancel</Link><div className="flex gap-2">{step > 0 && <button className="button secondary" type="button" onClick={() => setStep((value) => value - 1)}><ArrowLeft size={15} />Back</button>}{step < 5 && <><button className="button secondary" type="button" onClick={() => validateAnd(5)}>Review</button><button className="button primary" type="button" onClick={next}>Continue<ArrowRight size={15} /></button></>}{step === 5 && <button className="button primary" type="submit" disabled={create.isPending}>{create.isPending ? <Box size={15} /> : <Rocket size={15} />}{create.isPending ? 'Creating operation…' : 'Install project'}</button>}</div></div></Form></main>
 }
