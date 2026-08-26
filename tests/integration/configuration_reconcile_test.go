@@ -21,11 +21,20 @@ func TestConfigurationReconcile(t *testing.T) {
 		t.Fatal("SUPABASE_MANAGER_E2E_URL is required")
 	}
 	username, password, projectID := os.Getenv("SUPABASE_MANAGER_E2E_USERNAME"), os.Getenv("SUPABASE_MANAGER_E2E_PASSWORD"), os.Getenv("SUPABASE_MANAGER_E2E_PROJECT_ID")
-	if username == "" || password == "" || projectID == "" {
-		t.Fatal("SUPABASE_MANAGER_E2E_USERNAME, SUPABASE_MANAGER_E2E_PASSWORD, and SUPABASE_MANAGER_E2E_PROJECT_ID are required")
+	if projectID == "" {
+		t.Fatal("SUPABASE_MANAGER_E2E_PROJECT_ID is required")
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
-	csrf, cookie := loginAcceptance(t, client, baseURL, username, password)
+	csrf, cookie := "", ""
+	if username != "" && password != "" {
+		csrf, cookie = loginAcceptance(t, client, baseURL, username, password)
+	} else {
+		cookie = os.Getenv("SUPABASE_MANAGER_E2E_COOKIE")
+		csrf = os.Getenv("SUPABASE_MANAGER_E2E_CSRF")
+		if cookie == "" || csrf == "" {
+			t.Fatal("set credentials or SUPABASE_MANAGER_E2E_COOKIE and SUPABASE_MANAGER_E2E_CSRF")
+		}
+	}
 	config := getJSON(t, client, baseURL+"/api/projects/"+projectID+"/configuration", cookie, csrf)
 	revision := int64(config["revision"].(float64))
 	google := map[string]any{"enabled": true, "clientId": "acceptance-client", "secretSet": true, "secret": map[string]any{"action": "replace", "value": acceptanceValue()}, "fields": map[string]any{}}
