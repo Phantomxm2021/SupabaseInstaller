@@ -28,7 +28,7 @@ func TestClientReturnsProvisionerErrorCode(t *testing.T) {
 func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
 	const sentinel = "new-password-sentinel"
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body, _ := json.Marshal(contracts.RotateDatabasePasswordResponse{RolledBack: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: sentinel}})
+		body, _ := json.Marshal(contracts.RotateDatabasePasswordResponse{RolledBack: true, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: sentinel}})
 		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
@@ -38,7 +38,7 @@ func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
 		t.Fatalf("RotateDatabasePassword() error = %v, want redacted typed failure", err)
 	}
 	var clientErr *ClientError
-	if !errors.As(err, &clientErr) || !clientErr.RollbackSucceeded() {
+	if !errors.As(err, &clientErr) || !clientErr.RollbackSucceeded() || !clientErr.RuntimeOutcomeKnown() || !clientErr.RuntimeChanged() {
 		t.Fatalf("RotateDatabasePassword() error = %#v, want rollback state", err)
 	}
 }
