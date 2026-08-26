@@ -85,3 +85,18 @@ it('asks before discarding dirty Sheet changes', async () => {
   expect(screen.queryByRole('dialog', { name: 'Google' })).not.toBeInTheDocument()
   router.dispose()
 })
+
+it('separates built-in and OAuth provider browsing with the Supabase Cloud tab layout', async () => {
+  const { router } = renderSignInProviders()
+  const user = userEvent.setup()
+
+  expect(await screen.findByRole('tab', { name: 'Supabase Auth' })).toBeVisible()
+  expect(screen.getByRole('tab', { name: 'Third-Party Auth' })).toBeVisible()
+  expect(screen.getByRole('button', { name: /Email.*Enabled/i })).toBeVisible()
+  expect(screen.getByRole('button', { name: /Google.*Disabled/i })).toBeVisible()
+
+  await user.click(screen.getByRole('tab', { name: 'Third-Party Auth' }))
+  expect(screen.getByText(/No separate third-party provider configuration/i)).toBeVisible()
+  expect(screen.queryByRole('button', { name: /Google.*Disabled/i })).not.toBeInTheDocument()
+  router.dispose()
+})

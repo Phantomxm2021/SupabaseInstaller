@@ -26,11 +26,11 @@ export function RateLimitsPage({ context: provided }: { context?: Authentication
   const form = useForm<AuthConfig>({ resolver: zodResolver(authSchema) as Resolver<AuthConfig>, defaultValues: initial })
   useResetOnServerRevision(form, initial, context.revision)
   const limits = form.watch('rateLimits')
-  return <main className="page space-y-8">
+  return <main className="page auth-page space-y-12">
     <header className="page-heading"><div><h1>Rate Limits</h1><p className="muted">Safeguard against bursts of incoming traffic to prevent abuse and maximize stability.</p></div></header>
     <form onSubmit={form.handleSubmit((value) => context.requestSave({ section: 'auth', value, dirty: form.formState.dirtyFields, setError: (name, message) => form.setError(name as never, { type: 'server', message }) }))}>
-      <section className="overflow-hidden rounded-xl border border-border bg-card" aria-label="Authentication rate limits">
-        {rows.map((row, index) => <div key={row.field} className={index ? 'grid gap-5 border-t border-border p-5 lg:grid-cols-[minmax(18rem,1.2fr)_minmax(20rem,0.8fr)]' : 'grid gap-5 p-5 lg:grid-cols-[minmax(18rem,1.2fr)_minmax(20rem,0.8fr)]'}>
+      <section className="auth-settings-card auth-rate-limit-card" aria-label="Authentication rate limits">
+        {rows.map((row, index) => <div key={row.field} className={index ? 'auth-rate-limit-row border-t border-border' : 'auth-rate-limit-row'}>
           <div><h2 className="font-medium">{row.title}</h2><p className="mt-1 text-sm text-muted-foreground">{row.description}</p></div>
           <div><div className="relative"><label className="sr-only" htmlFor={`rate-${row.field}`}>{row.title}</label><Input id={`rate-${row.field}`} type="number" min={1} max={1_000_000} className="pr-28" {...form.register(`rateLimits.${row.field}`, { valueAsNumber: true })} /><span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-sm text-muted-foreground">{row.unit}</span></div>{row.note && <p className="mt-2 text-right text-sm text-muted-foreground">{row.note.replace('12× this value', String((limits[row.field] || 0) * 12))}</p>}</div>
         </div>)}

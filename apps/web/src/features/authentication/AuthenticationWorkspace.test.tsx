@@ -43,7 +43,10 @@ it('keeps project navigation and highlights the active Authentication item', asy
 
   expect(await screen.findByRole('link', { name: 'Overview' })).toBeVisible()
   expect(await screen.findByRole('link', { name: 'Emails' })).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByRole('heading', { name: 'Authentication', level: 1 })).toBeVisible()
   expect(screen.getByText('NOTIFICATIONS')).toBeVisible()
+  expect(screen.getAllByText('BETA')).toHaveLength(3)
+  expect(screen.getByRole('link', { name: /Policies/i })).toHaveAttribute('data-external', 'true')
   router.dispose()
 })
 

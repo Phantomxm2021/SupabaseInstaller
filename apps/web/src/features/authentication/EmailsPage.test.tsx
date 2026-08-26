@@ -34,7 +34,7 @@ describe('EmailsPage', () => {
     const requestSave = vi.fn()
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><EmailsPage context={{ ...context, requestSave, auth: { ...context.auth, smtp: { ...smtp, enabled: true } } }} /></MemoryRouter></QueryClientProvider>)
     await user.click(screen.getByRole('tab', { name: 'SMTP Settings' }))
-    expect(screen.getByRole('heading', { name: 'SMTP settings' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Enable custom SMTP' })).toBeInTheDocument()
     await user.type(screen.getByLabelText('Sender email address'), 'no-reply@bee.example.test')
     await user.type(screen.getByLabelText('Sender name'), 'Bee')
     await user.type(screen.getByLabelText('Host'), 'smtp.bee.example.test')
