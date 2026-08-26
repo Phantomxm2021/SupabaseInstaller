@@ -41,6 +41,21 @@ func NewDockerSourceWithClient(client *http.Client) *DockerSource {
 }
 
 func (source *DockerSource) Containers(ctx context.Context, composeProject string) ([]Container, error) {
+	return source.containers(ctx, composeProject, nil)
+}
+
+// ContainersForServices limits Docker inspection to services participating in
+// the requested health probe. This keeps rollback probes bounded to auth (or
+// another affected service) instead of inspecting the whole project.
+func (source *DockerSource) ContainersForServices(ctx context.Context, composeProject string, enabled []string) ([]Container, error) {
+	allowed := make(map[string]struct{}, len(enabled))
+	for _, service := range enabled {
+		allowed[service] = struct{}{}
+	}
+	return source.containers(ctx, composeProject, allowed)
+}
+
+func (source *DockerSource) containers(ctx context.Context, composeProject string, allowed map[string]struct{}) ([]Container, error) {
 	filters, _ := json.Marshal(map[string][]string{"label": {"com.docker.compose.project=" + composeProject}})
 	query := url.Values{"all": {"1"}, "filters": {string(filters)}}
 	var summaries []struct {
@@ -52,6 +67,11 @@ func (source *DockerSource) Containers(ctx context.Context, composeProject strin
 	}
 	containers := make([]Container, 0, len(summaries))
 	for _, summary := range summaries {
+		if allowed != nil {
+			if _, ok := allowed[summary.Labels["com.docker.compose.service"]]; !ok {
+				continue
+			}
+		}
 		var inspected struct {
 			State struct {
 				Status string `json:"Status"`

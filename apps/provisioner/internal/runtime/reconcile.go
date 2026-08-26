@@ -94,11 +94,20 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		disabled := difference(previousServices, newServices)
 		added := difference(newServices, previousServices)
 		rollback := func(cause error) error {
+			rollbackCtx, cancelRollback := context.WithTimeout(context.WithoutCancel(ctx), rollbackBudget)
+			defer cancelRollback()
+			action := func(fn func(context.Context) error) error {
+				actionCtx, cancelAction := context.WithTimeout(rollbackCtx, rollbackActionBudget)
+				defer cancelAction()
+				return fn(actionCtx)
+			}
 			var cleanupErr error
 			if published && len(added) > 0 {
 				// The current candidate is still selected while containers are
 				// removed; this leaves volumes intact before restoring the pointer.
-				cleanupErr = backend.runner.RemoveStopped(ctx, currentProject, added...)
+				cleanupErr = action(func(actionCtx context.Context) error {
+					return backend.runner.RemoveStopped(actionCtx, currentProject, added...)
+				})
 			}
 			rollbackErr := restore()
 			if rollbackErr != nil {
@@ -111,12 +120,16 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			rollbackServices = intersect(unique(rollbackServices), previousServices)
 			var recoveryErr error
 			if len(previousServices) > 0 && len(rollbackServices) > 0 {
-				if err := backend.runner.Recreate(ctx, previousProject, rollbackServices...); err != nil {
+				if err := action(func(actionCtx context.Context) error {
+					return backend.runner.Recreate(actionCtx, previousProject, rollbackServices...)
+				}); err != nil {
 					recoveryErr = err
 				}
 			}
 			if recoveryErr == nil && len(rollbackServices) > 0 {
-				if err := backend.waitHealthy(ctx, request.Slug, rollbackServices); err != nil {
+				if err := action(func(actionCtx context.Context) error {
+					return backend.waitHealthy(actionCtx, request.Slug, rollbackServices)
+				}); err != nil {
 					recoveryErr = err
 				}
 			}

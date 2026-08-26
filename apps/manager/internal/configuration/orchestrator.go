@@ -182,16 +182,6 @@ func (o *Orchestrator) release(projectID string) {
 	}
 }
 
-func (o *Orchestrator) acquireLease(ctx context.Context, projectID, owner string) (bool, error) {
-	fence, acquired, err := o.store.AcquireConfigurationLeaseWithFence(ctx, projectID, owner, o.now(), 45*time.Minute)
-	if acquired {
-		o.leaseMu.Lock()
-		o.leases[projectID] = store.ConfigurationLease{Owner: owner, Fence: fence}
-		o.leaseMu.Unlock()
-	}
-	return acquired, err
-}
-
 func (o *Orchestrator) releaseLease(ctx context.Context, projectID string) error {
 	o.leaseMu.Lock()
 	lease, ok := o.leases[projectID]

@@ -102,7 +102,7 @@ func TestReconcileRunnerUsesFixedComposeArgumentVectors(t *testing.T) {
 	if err := runner.Recreate(context.Background(), project, "auth"); err != nil {
 		t.Fatal(err)
 	}
-	want = []string{"compose", "--file", "/projects/bee/docker-compose.yml", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "up", "-d", "--force-recreate", "--remove-orphans", "auth"}
+	want = []string{"compose", "--file", "/projects/bee/docker-compose.yml", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "up", "-d", "--force-recreate", "--remove-orphans", "--no-deps", "auth"}
 	if !reflect.DeepEqual(executor.args, want) {
 		t.Fatalf("Recreate args = %#v, want %#v", executor.args, want)
 	}

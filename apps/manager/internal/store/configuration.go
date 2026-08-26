@@ -234,30 +234,6 @@ func configurationResources(cfg contracts.ProjectConfiguration) map[string]strin
 	return resources
 }
 
-func (s *Store) AcquireConfigurationLeaseWithFence(ctx context.Context, projectID, owner string, now time.Time, ttl time.Duration) (int64, bool, error) {
-	if err := validateConfigurationOwner(owner, 1); err != nil {
-		return 0, false, err
-	}
-	expires := now.Add(ttl)
-	result, err := s.db.ExecContext(ctx, `
-INSERT INTO project_configuration_leases(project_id, owner, fence, acquired_at, expires_at)
-VALUES (?, ?, 1, ?, ?)
-ON CONFLICT(project_id) DO UPDATE SET owner=excluded.owner, fence=project_configuration_leases.fence+1, acquired_at=excluded.acquired_at, expires_at=excluded.expires_at
-WHERE project_configuration_leases.expires_at <= excluded.acquired_at`, projectID, owner, formatTime(now), formatTime(expires))
-	if err != nil {
-		return 0, false, fmt.Errorf("acquire configuration lease: %w", err)
-	}
-	count, err := result.RowsAffected()
-	if err != nil || count != 1 {
-		return 0, false, err
-	}
-	var fence int64
-	if err := s.db.QueryRowContext(ctx, `SELECT fence FROM project_configuration_leases WHERE project_id = ? AND owner = ?`, projectID, owner).Scan(&fence); err != nil {
-		return 0, false, err
-	}
-	return fence, true, nil
-}
-
 func (s *Store) RenewConfigurationLease(ctx context.Context, projectID, owner string, fence int64, now time.Time, ttl time.Duration) (bool, error) {
 	if err := validateConfigurationOwner(owner, fence); err != nil {
 		return false, err
@@ -521,28 +497,6 @@ func (s *Store) RestoreConfigurationStateOwned(ctx context.Context, projectID st
 		}
 		return nil
 	})
-}
-
-func (s *Store) BindOperationConfiguration(ctx context.Context, operationID, projectID string, snapshot ConfigurationSnapshot, now time.Time) error {
-	return s.BindOperationConfigurationKindWithFence(ctx, operationID, projectID, snapshot, "UPDATE_CONFIG", snapshot.Fence, now)
-}
-
-func (s *Store) BindOperationConfigurationKind(ctx context.Context, operationID, projectID string, snapshot ConfigurationSnapshot, kind string, now time.Time) error {
-	return s.BindOperationConfigurationKindWithFence(ctx, operationID, projectID, snapshot, kind, snapshot.Fence, now)
-}
-
-func (s *Store) BindOperationConfigurationKindWithFence(ctx context.Context, operationID, projectID string, snapshot ConfigurationSnapshot, kind string, fence int64, now time.Time) error {
-	payload, err := json.Marshal(snapshot.Configuration)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO operation_configurations(operation_id, project_id, revision, config_json, operation_kind, fence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, operationID, projectID, snapshot.Revision, string(payload), kind, fence, formatTime(now))
-	return err
-}
-
-func (s *Store) SetOperationKind(ctx context.Context, operationID, kind string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE operation_configurations SET operation_kind = ? WHERE operation_id = ?`, kind, operationID)
-	return err
 }
 
 func (s *Store) GetOperationKind(ctx context.Context, operationID string) (string, error) {

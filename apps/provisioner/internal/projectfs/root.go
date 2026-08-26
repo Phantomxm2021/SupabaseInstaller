@@ -492,22 +492,6 @@ func cleanupAbandonedLegacyQuarantines(projectPath string) error {
 	return nil
 }
 
-// WriteRuntimeFiles is retained for old callers; new code should stage all
-// three runtime files and commit them as one set.
-func (r *Root) WriteRuntimeFiles(slug string, compose, environment []byte) error {
-	restore, commit, err := r.StageRuntimeFiles(slug, RuntimeFiles{Compose: compose, Env: environment})
-	if err != nil {
-		return err
-	}
-	if err := commit(); err != nil {
-		if restoreErr := restore(); restoreErr != nil {
-			return errors.Join(err, restoreErr)
-		}
-		return err
-	}
-	return nil
-}
-
 func copyEmbeddedTemplate(destination string) error {
 	templateFS := templates.Files()
 	const sourceRoot = "self-hosted-v0.8.0"

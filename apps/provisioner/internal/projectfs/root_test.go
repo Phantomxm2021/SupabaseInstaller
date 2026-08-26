@@ -706,39 +706,6 @@ func TestStageRuntimeFilesCurrentSyncFailureRestoresPreviousCurrent(t *testing.T
 	}
 }
 
-func TestWriteRuntimeFilesRestoresWhenCommitFails(t *testing.T) {
-	root, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, commit, err := root.StageRuntimeFiles("write-failure", RuntimeFiles{Compose: []byte("old"), Env: []byte("old"), FunctionsEnv: []byte("old")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := commit(); err != nil {
-		t.Fatal(err)
-	}
-	failed := false
-	root.hooks.syncDirectory = func(directory string) error {
-		if filepath.Base(directory) == "generations" && !failed {
-			failed = true
-			return errors.New("injected write commit failure")
-		}
-		return syncDirectory(directory)
-	}
-	if err := root.WriteRuntimeFiles("write-failure", []byte("new"), []byte("new")); err == nil || !strings.Contains(err.Error(), "injected write commit failure") {
-		t.Fatalf("WriteRuntimeFiles error = %v, want commit failure", err)
-	}
-	path, _ := root.RuntimeComposePath("write-failure")
-	if got := string(mustRead(t, path)); got != "old" {
-		t.Fatalf("current after failed write = %q, want old", got)
-	}
-	entries, _ := os.ReadDir(filepath.Join(filepath.Dir(filepath.Dir(path)), "generations"))
-	if len(entries) != 1 {
-		t.Fatalf("generations after failed write = %d, want 1", len(entries))
-	}
-}
-
 func TestNewRecoversAbandonedLegacyQuarantineWithoutCurrent(t *testing.T) {
 	base := t.TempDir()
 	project := filepath.Join(base, "legacy")

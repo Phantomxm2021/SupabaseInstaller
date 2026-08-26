@@ -18,6 +18,10 @@ type Source interface {
 	Containers(ctx context.Context, composeProject string) ([]Container, error)
 }
 
+type serviceSource interface {
+	ContainersForServices(context.Context, string, []string) ([]Container, error)
+}
+
 type ProjectRef struct {
 	Slug    string
 	Enabled []string
@@ -39,7 +43,13 @@ func NewInspector(source Source) *Inspector {
 }
 
 func (i *Inspector) Project(ctx context.Context, project ProjectRef) (Report, error) {
-	containers, err := i.source.Containers(ctx, "supabase-manager-"+project.Slug)
+	var containers []Container
+	var err error
+	if filtered, ok := i.source.(serviceSource); ok {
+		containers, err = filtered.ContainersForServices(ctx, "supabase-manager-"+project.Slug, project.Enabled)
+	} else {
+		containers, err = i.source.Containers(ctx, "supabase-manager-"+project.Slug)
+	}
 	if err != nil {
 		return Report{}, fmt.Errorf("list project containers: %w", err)
 	}

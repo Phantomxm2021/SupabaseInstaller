@@ -107,7 +107,7 @@ func (r *Runner) Recreate(ctx context.Context, project ProjectRef, services ...s
 	if len(services) == 0 {
 		return nil
 	}
-	args := append([]string{"up", "-d", "--force-recreate", "--remove-orphans"}, services...)
+	args := append([]string{"up", "-d", "--force-recreate", "--remove-orphans", "--no-deps"}, services...)
 	return r.run(ctx, project, args...)
 }
 

@@ -33,56 +33,6 @@ func TestStoreCreatesAndReadsProject(t *testing.T) {
 	}
 }
 
-func TestConfigurationLeaseSerializesAndRecoversAfterExpiry(t *testing.T) {
-	s := openTestStore(t)
-	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	fence, acquired, err := s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "first", now, time.Minute)
-	if err != nil || !acquired || fence != 1 {
-		t.Fatalf("first lease = %d, %v, %v", fence, acquired, err)
-	}
-	_, acquired, err = s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "second", now.Add(time.Second), time.Minute)
-	if err != nil || acquired {
-		t.Fatalf("second lease while held = %v, %v", acquired, err)
-	}
-	fence, acquired, err = s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "second", now.Add(2*time.Minute), time.Minute)
-	if err != nil || !acquired {
-		t.Fatalf("expired lease recovery = %v, %v", acquired, err)
-	}
-	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, "second", fence); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestConfigurationLeaseReleaseIsOwnerAndFenceBound(t *testing.T) {
-	s := openTestStore(t)
-	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	fence, acquired, err := s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "first", now, time.Minute)
-	if err != nil || !acquired {
-		t.Fatalf("acquire = %d, %v, %v", fence, acquired, err)
-	}
-	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, "stale-owner", fence); err != nil {
-		t.Fatal(err)
-	}
-	if _, acquired, err := s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "second", now.Add(2*time.Minute), time.Minute); err != nil || !acquired {
-		t.Fatalf("expired takeover = %v, %v", acquired, err)
-	}
-	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, "first", fence); err != nil {
-		t.Fatal(err)
-	}
-	var count int
-	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM project_configuration_leases WHERE project_id = ?`, project.ID).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("stale owner release removed successor: count=%d err=%v", count, err)
-	}
-}
-
 func TestAdmitConfigurationIgnoresPortsOwnedByDisabledServices(t *testing.T) {
 	s := openTestStore(t)
 	first := projectFixture()
