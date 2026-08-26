@@ -1,0 +1,58 @@
+# Supabase Manager Installer
+
+Supabase Manager is a two-container control plane for isolated, pinned
+Self-hosted Supabase projects. Manager is the only public HTTP endpoint;
+Provisioner is private and is the only process with Docker Socket access.
+
+## Requirements
+
+Use Docker Engine 27+ and Docker Compose v2. Allocate at least 8 GB to Docker
+Desktop for a Lightweight project (12 GB is recommended for concurrent work).
+On Docker Desktop, `PROJECT_ROOT` must be an absolute shared host path.
+
+## Start
+
+```sh
+cp deploy/.env.example deploy/.env
+mkdir -p /Users/Shared/supabase-manager/projects
+openssl rand -base64 32    # MASTER_ENCRYPTION_KEY
+openssl rand -hex 32        # PROVISIONER_TOKEN
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build --wait
+```
+
+Open `PUBLIC_ORIGIN`. First-run setup creates the administrator and shows
+recovery codes once. `MASTER_ENCRYPTION_KEY` and `PROVISIONER_TOKEN` are
+required; each must represent at least 32 bytes of cryptographic material.
+
+## Security boundary
+
+The browser receives redacted configuration and opaque session cookies. Secret
+plaintext is decrypted only for a typed private Provisioner request and is not
+stored in SQLite, operation events, logs, browser storage, or backups. Raw
+`.env` and Compose editing are intentionally unavailable.
+
+## Project operations
+
+Create a project from the Custom wizard or Lightweight preset, then use the
+project Configuration workspace for safe changes. Every change is an audited
+operation with revision checks, health verification, and rollback where
+possible. See [project configuration](docs/operations/project-configuration.md)
+for section semantics, restart impact, and recovery behavior.
+
+## Inspect and stop
+
+```sh
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env ps
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs --tail=200 manager provisioner
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env down
+```
+
+`down` does not delete Manager data or project data. Delete runtime/data from
+the UI after confirming the exact project name; do not use `down -v` unless
+removing the control-plane database is intentional.
+
+## Reverse proxy
+
+Publish only Manager through the reverse proxy. Set `PUBLIC_ORIGIN` to the
+external HTTPS origin and `SECURE_COOKIES=true`; preserve Host and X-Forwarded-
+Proto, and do not proxy the private Provisioner network.
