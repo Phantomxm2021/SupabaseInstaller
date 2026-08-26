@@ -352,7 +352,7 @@ func (s *Store) GetDesiredConfiguration(ctx context.Context, projectID string) (
 	return snapshot, nil
 }
 
-// ResetLegacyAuthConfigurations replaces the obsolete Auth aggregate for
+// ResetLegacyAuthConfigurations replaces only the obsolete Mailer section for
 // projects that predate the typed mailer model. It is an intentional data
 // migration, not a read-time compatibility path.
 func (s *Store) ResetLegacyAuthConfigurations(ctx context.Context, defaults contracts.AuthConfig) (int, error) {
@@ -393,10 +393,7 @@ func (s *Store) ResetLegacyAuthConfigurations(ctx context.Context, defaults cont
 		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 			return updated, fmt.Errorf("decode legacy configuration %s: %w", item.id, err)
 		}
-		if cfg.Auth.Mailer == (contracts.MailerConfig{}) {
-			cfg.Auth = defaults
-			cfg.Auth.Enabled = cfg.Services.Auth
-		} else if !hasMailerTemplateBodies(cfg.Auth.Mailer) {
+		if cfg.Auth.Mailer == (contracts.MailerConfig{}) || !hasMailerTemplateBodies(cfg.Auth.Mailer) {
 			// The retired URL-only format cannot power the source editor
 			// or the project-local template service. Keep every other Auth setting.
 			cfg.Auth.Mailer = defaults.Mailer
@@ -409,13 +406,8 @@ func (s *Store) ResetLegacyAuthConfigurations(ctx context.Context, defaults cont
 			return updated, err
 		}
 		err = s.InTx(ctx, func(tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, `UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=?`, string(payload), item.id, item.revision); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id=? AND (kind='smtp.password' OR kind='phone.secret' OR kind LIKE 'oauth.%.secret')`, item.id); err != nil {
-				return err
-			}
-			return nil
+			_, err := tx.ExecContext(ctx, `UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=?`, string(payload), item.id, item.revision)
+			return err
 		})
 		if err != nil {
 			return updated, err
