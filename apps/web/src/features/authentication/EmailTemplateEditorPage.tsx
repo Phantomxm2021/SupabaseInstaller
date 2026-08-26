@@ -19,8 +19,8 @@ function templateInfo(key: string): Info | undefined { const t = emailTemplates.
 export function EmailTemplateEditorPage({ context: provided, templateKey: keyProp }: { context?: AuthenticationWorkspaceContext; templateKey?: TemplateKey }) {
   const workspace = useAuthenticationWorkspace(); const context = provided ?? workspace; const { templateKey: routeKey } = useParams(); const info = templateInfo(keyProp ?? routeKey ?? '')
   if (!info) return <main className="page"><h1>Template not found</h1><Link to={`/projects/${context.projectId}/authentication/emails`}>Back to Emails</Link></main>
-  const defaults = defaultMailerConfiguration(); const initial = info.template ? context.auth.mailer.templates[info.template] : context.auth.mailer.notifications[info.notification!].template; const fallback = info.template ? defaults.templates[info.template] : defaults.notifications[info.notification!].template
-  return <TemplateEditor context={context} info={info} initial={initial} fallback={fallback} />
+  const defaults = defaultMailerConfiguration(); const mailer = (context.auth as { mailer?: MailerConfig }).mailer ?? defaults; const emailContext = mailer === context.auth.mailer ? context : { ...context, auth: { ...context.auth, mailer } }; const initial = info.template ? mailer.templates[info.template] : mailer.notifications[info.notification!].template; const fallback = info.template ? defaults.templates[info.template] : defaults.notifications[info.notification!].template
+  return <TemplateEditor context={emailContext} info={info} initial={initial} fallback={fallback} />
 }
 
 function TemplateEditor({ context, info, initial, fallback }: { context: AuthenticationWorkspaceContext; info: Info; initial: EmailTemplateConfig; fallback: EmailTemplateConfig }) {
