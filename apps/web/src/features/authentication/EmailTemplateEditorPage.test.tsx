@@ -26,7 +26,7 @@ describe('EmailTemplateEditorPage', () => {
     await user.click(screen.getByRole('button', { name: 'Preview' }))
     expect(screen.getByTitle('Email template preview')).toHaveAttribute('sandbox')
     expect(screen.getByTitle('Email template preview')).toHaveAttribute('src', 'https://templates.example.test/confirmation.html')
-    await user.click(screen.getByRole('button', { name: 'Edit URL' })); await user.click(screen.getByRole('button', { name: 'Reset template' }))
+    await user.click(screen.getByRole('button', { name: 'Source' })); await user.click(screen.getByRole('button', { name: 'Reset template' }))
     expect(screen.getByLabelText('Template URL')).toHaveValue('')
   })
 
