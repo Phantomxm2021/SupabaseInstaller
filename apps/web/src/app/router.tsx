@@ -11,6 +11,7 @@ import { ConfigurationPage } from '../features/project/ConfigurationPage'
 import { ComingSoonPage, ProjectLayout } from '../features/project/ProjectLayout'
 import { AppShell } from './AppShell'
 import { ManagerSettingsPage } from '../features/settings/ManagerSettingsPage'
+import { AuthenticationWorkspace, EmailsRoute, SignInProvidersRoute, URLConfigurationRoute } from '../features/authentication/AuthenticationWorkspace'
 
 function EntryGate() {
   const setup = useQuery({ queryKey: ['setup-status'], queryFn: () => apiFetch<{ required: boolean }>('/api/setup/status') })
@@ -44,6 +45,16 @@ export function createAppRouter(_queryClient: QueryClient) {
             { index: true, element: <Navigate to="overview" replace /> },
             { path: 'overview', element: <OverviewPage /> },
             { path: 'configuration', element: <ConfigurationPage /> },
+            {
+              path: 'authentication',
+              element: <AuthenticationWorkspace />,
+              children: [
+                { index: true, element: <Navigate to="sign-in-providers" replace /> },
+                { path: 'sign-in-providers', element: <SignInProvidersRoute /> },
+                { path: 'emails', element: <EmailsRoute /> },
+                { path: 'url-configuration', element: <URLConfigurationRoute /> },
+              ],
+            },
             { path: 'logs', element: <ComingSoonPage /> },
             { path: 'backups', element: <ComingSoonPage /> },
             { path: '*', element: <NotFoundPage /> },
