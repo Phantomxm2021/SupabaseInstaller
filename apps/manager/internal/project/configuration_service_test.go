@@ -13,6 +13,20 @@ import (
 	"supabase-manager/internal/contracts"
 )
 
+func TestNormalizeServiceDependenciesRestoresAndClosesClosure(t *testing.T) {
+	services := contracts.Services{Database: true, Gateway: false, Auth: true, REST: false, Studio: true, PostgresMeta: false, Storage: true, Imgproxy: true, Functions: true, Logs: true, Vector: true, Realtime: true, Supavisor: true, DirectDB: true}
+	normalizeServiceDependencies(&services)
+	if !services.Gateway || !services.REST || !services.Database || !services.PostgresMeta {
+		t.Fatalf("enabled public services did not restore closure: %#v", services)
+	}
+	services.Gateway = false
+	services.Auth, services.REST, services.Studio, services.PostgresMeta, services.Realtime, services.Storage, services.Imgproxy, services.Functions, services.Supavisor, services.Logs, services.Vector, services.DirectDB = false, false, false, false, false, false, false, false, false, false, false, false
+	normalizeServiceDependencies(&services)
+	for name, enabled := range map[string]bool{"auth": services.Auth, "rest": services.REST, "studio": services.Studio, "postgresMeta": services.PostgresMeta, "realtime": services.Realtime, "storage": services.Storage, "imgproxy": services.Imgproxy, "functions": services.Functions, "supavisor": services.Supavisor, "logs": services.Logs, "vector": services.Vector, "directDb": services.DirectDB} {
+		if enabled { t.Fatalf("gateway disable left dependent %s enabled: %#v", name, services) }
+	}
+}
+
 func TestConfigurationServiceSecretPatches(t *testing.T) {
 	cases := []struct {
 		action string

@@ -76,7 +76,9 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 		cfg.General = *patch.General
 	}
 	if patch.Services != nil {
-		cfg.Services = *patch.Services
+		services := *patch.Services
+		normalizeServiceDependencies(&services)
+		cfg.Services = services
 		// Service switches are authoritative. Keep legacy subsection booleans
 		// coherent without requiring the Services request to carry redacted
 		// Auth/Database secret leaves.
@@ -116,6 +118,48 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 		return contracts.ProjectConfiguration{}, err
 	}
 	return cfg, nil
+}
+
+// normalizeServiceDependencies applies the same closure used by the web
+// editor at the durable boundary. A dependent service can never be enabled
+// without its parents; disabling a parent closes all of its dependents.
+func normalizeServiceDependencies(services *contracts.Services) {
+	if services.Imgproxy {
+		services.Storage = true
+	}
+	if services.Storage {
+		services.Database, services.REST, services.Gateway = true, true, true
+	}
+	if services.Studio {
+		services.PostgresMeta, services.Gateway = true, true
+	}
+	if services.Realtime || services.Functions || services.Auth || services.REST {
+		services.Gateway = true
+	}
+	if services.Supavisor || services.DirectDB || services.Logs || services.Vector {
+		services.Database = true
+	}
+	// Logs and Vector are a single feature: turning off the parent closes the
+	// collector, while enabling either side restores the pair.
+	if services.Logs || services.Vector {
+		services.Logs, services.Vector = true, true
+	} else {
+		services.Logs, services.Vector = false, false
+	}
+	if !services.PostgresMeta {
+		services.Studio = false
+	}
+	if !services.Storage {
+		services.Imgproxy = false
+	}
+	if !services.REST {
+		services.Storage, services.Imgproxy = false, false
+	}
+	if !services.Gateway {
+		services.Auth, services.REST, services.Studio, services.PostgresMeta = false, false, false, false
+		services.Realtime, services.Storage, services.Imgproxy, services.Functions = false, false, false, false
+		services.Supavisor, services.Logs, services.Vector, services.DirectDB = false, false, false, false
+	}
 }
 
 func (s *ConfigurationService) PrepareSecretMutations(ctx context.Context, projectID string, cfg *contracts.ProjectConfiguration) ([]store.SecretMutation, error) {

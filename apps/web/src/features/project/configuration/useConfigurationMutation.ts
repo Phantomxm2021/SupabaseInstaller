@@ -38,8 +38,21 @@ export function useConfigurationMutation(projectId: string, revision: number, on
       onQueued(result)
       void queryClient.invalidateQueries({ queryKey: ['project', projectId] })
     },
-    onError: (error) => onError?.(error instanceof Error ? error : new Error('Configuration update failed')),
+    onError: (error, pending) => {
+      if (error && typeof error === 'object' && 'fields' in error) {
+        const fields = (error as { fields?: Record<string, string> }).fields
+        if (fields && pending.setError) for (const [path, message] of Object.entries(fields)) pending.setError(stripFieldPath(pending, path), message)
+      }
+      onError?.(error instanceof Error ? error : new Error('Configuration update failed'))
+    },
   })
+}
+
+function stripFieldPath(pending: PendingConfigurationSave, path: string) {
+  const prefixes = pending.section === 'oauth' && pending.provider
+    ? [`auth.oauth.${pending.provider}.`, `oauth.${pending.provider}.`]
+    : pending.section === 'smtp' ? ['auth.smtp.', 'smtp.'] : [`${pending.section}.`]
+  return prefixes.find((prefix) => path.startsWith(prefix)) ? path.slice(prefixes.find((prefix) => path.startsWith(prefix))!.length) : path
 }
 
 export type { UpdateSecretInput }
