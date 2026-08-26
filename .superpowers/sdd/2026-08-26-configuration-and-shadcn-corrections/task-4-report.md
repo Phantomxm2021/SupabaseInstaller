@@ -44,10 +44,36 @@ The implementation is committed as `feat: reconcile project configuration with r
 Legacy post-commit rollback hardening is in `fix: preserve legacy runtime rollback`
 (`3347616`).
 
+## Fix Round 1
+
+### RED
+
+Added regression tests proving candidate validation must use staged paths,
+disabled removal must use the previous model, post-delete fsync failure must
+restore all three legacy files, starting health must be polled, topology fields
+must map to affected services, typed failures must replay without Docker, and
+metadata publication failure must restore runtime. Added HTTP and production
+Runner chain coverage for redacted rollback responses, candidate validation,
+and db-first startup. These tests failed against the prior implementation's
+current-path validation, one-shot health check, incomplete change map, and
+uncached failure/metadata behavior.
+
+### GREEN
+
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test ./apps/provisioner/internal/compose ./apps/provisioner/internal/projectfs ./apps/provisioner/internal/runtime ./apps/provisioner/internal/server -count=1` — pass.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -race ./apps/provisioner/...` — pass, no race report.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test ./...` — pass.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go vet ./...` — pass.
+- `git diff --check` — pass.
+
+### Fix commit
+
+The Fix Round 1 implementation is committed as `fix: harden reconcile
+candidate rollback and idempotency` (`733ffa5`).
+
 ## Residual risks
 
-The existing metadata update API writes metadata after the reconcile callback;
-an unusual filesystem failure during that final metadata write cannot be
-atomically coupled to the already-successful Compose transition without a
-larger metadata transaction API. Normal runtime and health failures restore
-the generation and preserve the metadata revision.
+The bounded health wait treats a non-starting unhealthy/degraded report as an
+immediate failure and polls only transient `starting` states. This matches the
+health inspector's state model while avoiding an unbounded retry on a clearly
+failed service.
