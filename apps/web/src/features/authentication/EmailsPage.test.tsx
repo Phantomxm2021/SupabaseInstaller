@@ -12,7 +12,7 @@ const context: AuthenticationWorkspaceContext = {
   projectId: 'bee', revision: 1,
   general: { domain: 'bee.example.test', siteUrl: 'https://bee.example.test', supabaseVersion: '2.0.0' },
   services: { auth: true } as Services,
-  auth: { enabled: true, jwtExpiry: 3600, disableSignup: false, email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false }, phone: { enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} }, anonymousSignIn: false, redirectUrls: [], oauth: {}, smtp },
+  auth: { enabled: true, jwtExpiry: 3600, disableSignup: false, email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false }, phone: { enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} }, anonymousSignIn: false, redirectUrls: [], oauth: {}, smtp, rateLimits: { emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 }, mfa: { totpEnrollEnabled: true, totpVerifyEnabled: true, phoneEnrollEnabled: false, phoneVerifyEnabled: false, maxEnrolledFactors: 10, phoneOtpLength: 6 } },
   requestSave: vi.fn(),
 }
 

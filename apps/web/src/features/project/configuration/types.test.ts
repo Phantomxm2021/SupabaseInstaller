@@ -3,6 +3,7 @@ import type { RedactedProjectConfiguration, Services } from '../../../api/types'
 import { normalizeRedactedConfiguration, sectionImpact, affectedServices } from './types'
 import { normalizeConfigurationValue } from './useConfigurationMutation'
 import { storageSchema, smtpSchema, oauthProviderSchema, authSchema, functionsSchema } from './schema'
+import { defaultConfiguration } from '../../projects/projectSchema'
 
 function omittedConfiguration(): RedactedProjectConfiguration {
   return {
@@ -13,7 +14,7 @@ function omittedConfiguration(): RedactedProjectConfiguration {
       enabled: true, jwtExpiry: 3600, disableSignup: false,
       email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false },
       phone: { enabled: false, secretSet: false, secret: { action: '' } },
-      anonymousSignIn: false, smtp: { enabled: false, host: '', port: 0, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' },
+      anonymousSignIn: false, smtp: { enabled: false, host: '', port: 0, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' }, rateLimits: { emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 }, mfa: { totpEnrollEnabled: true, totpVerifyEnabled: true, phoneEnrollEnabled: false, phoneVerifyEnabled: false, maxEnrolledFactors: 10, phoneOtpLength: 6 },
       oauth: { google: { enabled: false, clientId: '', secretSet: false, secret: { action: '' } } },
     },
     storage: { backend: 'local', s3CompatibleApi: false, bucket: '', region: '', endpoint: '', accountId: '', accessKeyId: '', secretAccessKeySet: false, secretAccessKey: { action: '' }, forcePathStyle: false, localPath: '/data' },
@@ -26,6 +27,13 @@ function omittedConfiguration(): RedactedProjectConfiguration {
 }
 
 describe('configuration projection normalization', () => {
+  it('keeps GoTrue rate-limit and MFA settings in defaults and Auth schema parsing', () => {
+    const auth = defaultConfiguration().auth
+    expect(auth.rateLimits).toEqual({ emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 })
+    expect(auth.mfa).toEqual({ totpEnrollEnabled: true, totpVerifyEnabled: true, phoneEnrollEnabled: false, phoneVerifyEnabled: false, maxEnrolledFactors: 10, phoneOtpLength: 6 })
+    expect(authSchema.safeParse(auth).success).toBe(true)
+  })
+
   it('fills omitted phone provider and OAuth fields with schema-valid values', () => {
     const config = normalizeRedactedConfiguration(omittedConfiguration())
     expect(config.auth.phone.provider).toBe('')

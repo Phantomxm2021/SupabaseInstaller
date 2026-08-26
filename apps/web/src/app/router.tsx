@@ -11,7 +11,7 @@ import { ConfigurationPage } from '../features/project/ConfigurationPage'
 import { ComingSoonPage, ProjectLayout } from '../features/project/ProjectLayout'
 import { AppShell } from './AppShell'
 import { ManagerSettingsPage } from '../features/settings/ManagerSettingsPage'
-import { AuthenticationWorkspace, EmailsRoute, SignInProvidersRoute, URLConfigurationRoute } from '../features/authentication/AuthenticationWorkspace'
+import { AuthenticationWorkspace, EmailsRoute, MultiFactorRoute, RateLimitsRoute, SignInProvidersRoute, URLConfigurationRoute } from '../features/authentication/AuthenticationWorkspace'
 import { AuthenticationUnavailablePage } from '../features/authentication/AuthenticationUnavailablePage'
 import { unsupportedAuthenticationRoutes } from '../features/authentication/navigation'
 
@@ -54,6 +54,8 @@ export function createAppRouter(_queryClient: QueryClient) {
                 { index: true, element: <Navigate to="sign-in-providers" replace /> },
                 { path: 'sign-in-providers', element: <SignInProvidersRoute /> },
                 { path: 'emails', element: <EmailsRoute /> },
+                { path: 'rate-limits', element: <RateLimitsRoute /> },
+                { path: 'multi-factor', element: <MultiFactorRoute /> },
                 { path: 'url-configuration', element: <URLConfigurationRoute /> },
                 ...unsupportedAuthenticationRoutes.map(([path, label]) => ({ path, element: <AuthenticationUnavailablePage title={label} /> })),
               ],

@@ -12,6 +12,8 @@ import { useConfigurationMutation } from '../project/configuration/useConfigurat
 import { AuthenticationNavigation } from './navigation'
 import { SignInProvidersPage } from './SignInProvidersPage'
 import { EmailsPage } from './EmailsPage'
+import { MultiFactorPage } from './MultiFactorPage'
+import { RateLimitsPage } from './RateLimitsPage'
 
 type Snapshot = { projectId: string; revision: number; configuration: RedactedProjectConfiguration }
 type SaveRequest = Omit<PendingConfigurationSave, 'labels' | 'services' | 'impact'> & { dirty: unknown; onQueued?: () => void }
@@ -45,6 +47,14 @@ export function SignInProvidersRoute() {
 
 export function EmailsRoute() {
   return <EmailsPage />
+}
+
+export function RateLimitsRoute() {
+  return <RateLimitsPage />
+}
+
+export function MultiFactorRoute() {
+  return <MultiFactorPage />
 }
 
 export function URLConfigurationRoute() {

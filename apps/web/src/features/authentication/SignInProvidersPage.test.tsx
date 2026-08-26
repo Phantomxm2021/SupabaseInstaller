@@ -16,6 +16,8 @@ function configuration(revision: number, googleEnabled = false) { return {
       phone: { enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} },
       anonymousSignIn: false, redirectUrls: [], oauth: googleEnabled ? { google: { enabled: true, clientId: 'google-client', secretSet: true, secret: { action: '' }, fields: {} } } : {},
       smtp: { enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' },
+      rateLimits: { emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 },
+      mfa: { totpEnrollEnabled: true, totpVerifyEnabled: true, phoneEnrollEnabled: false, phoneVerifyEnabled: false, maxEnrolledFactors: 10, phoneOtpLength: 6 },
     },
     storage: { backend: 'local', s3CompatibleApi: false, bucket: '', region: '', endpoint: '', accountId: '', accessKeyId: '', secretAccessKeySet: false, secretAccessKey: { action: '' }, forcePathStyle: false, localPath: '' },
     realtime: { maxConnections: 100, databasePoolSize: 5, logLevel: 'info' }, functions: { defaultJwtVerification: true, directory: './functions', variables: [] },
