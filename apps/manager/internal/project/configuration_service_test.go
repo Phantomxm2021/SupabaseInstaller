@@ -60,6 +60,37 @@ func TestConfigurationServiceRejectsInvalidServiceClosure(t *testing.T) {
 	}
 }
 
+func TestConfigurationServicePersistsMailerTemplatePatch(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cipher, err := managersecrets.NewCipher(bytes.Repeat([]byte{4}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "project-mailer", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	auth := cfg.Auth
+	auth.Mailer.Templates.Recovery.Body = `<p>Reset: {{ .ConfirmationURL }}</p>`
+	service := NewConfigurationService(database, cipher, time.Now)
+	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Auth: &auth}); err != nil {
+		t.Fatalf("admit mailer patch: %v", err)
+	}
+	got, err := service.GetDesired(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Configuration.Auth.Mailer.Templates.Recovery.Body != auth.Mailer.Templates.Recovery.Body {
+		t.Fatalf("persisted recovery body = %q, want %q", got.Configuration.Auth.Mailer.Templates.Recovery.Body, auth.Mailer.Templates.Recovery.Body)
+	}
+}
+
 func TestConfigurationServiceSecretPatches(t *testing.T) {
 	cases := []struct {
 		action string

@@ -46,6 +46,35 @@ func TestAuthRateLimitsAndMFAValidation(t *testing.T) {
 	}
 }
 
+func TestAuthMailerTemplatesRejectUnsupportedGoTemplateVariables(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.Mailer.Templates.Confirmation.Body = `<a href="{{ .UnsafeURL }}">Confirm</a>`
+	err := ValidateConfiguration(cfg)
+	var validation *ValidationError
+	if !errors.As(err, &validation) || validation.Fields["auth.mailer.templates.confirmation.body"] == "" {
+		t.Fatalf("ValidateConfiguration() error = %v, want unsupported template variable error", err)
+	}
+}
+
+func TestAuthMailerTemplatesAllowOnlyDocumentedVariables(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.Mailer.Templates.Confirmation.Subject = "Confirm {{ .Email }}"
+	cfg.Auth.Mailer.Templates.Confirmation.Body = `<a href="{{ .ConfirmationURL }}">{{ .Token }}</a>{{ .TokenHash }}{{ .SiteURL }}{{ .Email }}{{ .Data }}{{ .RedirectTo }}`
+	if err := ValidateConfiguration(cfg); err != nil {
+		t.Fatalf("ValidateConfiguration() error = %v, want nil", err)
+	}
+}
+
+func TestAuthMailerTemplatesHaveSaneDefaults(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	if cfg.Auth.Mailer.Templates.Confirmation.Subject == "" || cfg.Auth.Mailer.Templates.Confirmation.Body == "" {
+		t.Fatalf("confirmation template defaults = %#v, want subject and body", cfg.Auth.Mailer.Templates.Confirmation)
+	}
+	if cfg.Auth.Mailer.Notifications.PasswordChanged.Enabled {
+		t.Fatal("password changed notification should default disabled")
+	}
+}
+
 func TestOAuthProviderRegistryIsStable(t *testing.T) {
 	if len(contracts.OAuthProviderNames) != 20 || contracts.OAuthProviderNames[0] != "apple" || contracts.OAuthProviderNames[len(contracts.OAuthProviderNames)-1] != "zoom" {
 		t.Fatalf("unexpected OAuth registry: %#v", contracts.OAuthProviderNames)

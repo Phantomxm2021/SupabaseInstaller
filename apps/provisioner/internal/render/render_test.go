@@ -173,6 +173,41 @@ func TestRenderCustomAuthAndSMTP(t *testing.T) {
 	}
 }
 
+func TestRenderMailerTemplatesAndNotifications(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Auth.Mailer.Templates.Confirmation = contracts.EmailTemplateConfig{
+		Subject: "Welcome {{ .Email }}",
+		Body:    `<a href="{{ .ConfirmationURL }}">Confirm</a>`,
+	}
+	cfg.Auth.Mailer.Notifications.PasswordChanged = contracts.EmailNotificationConfig{
+		Enabled: true,
+		Template: contracts.EmailTemplateConfig{
+			Subject: "Password changed",
+			Body:    `<p>{{ .Email }}</p>`,
+		},
+	}
+	out, err := Project(Input{Slug: "mailer", APIPort: 18001, Configuration: cfg, TemplateCompose: []byte(testCompose)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"MAILER_SUBJECT_CONFIRMATION=Welcome {{ .Email }}",
+		`MAILER_TEMPLATE_CONFIRMATION="<a href=\"{{ .ConfirmationURL }}\">Confirm</a>"`,
+		"MAILER_NOTIFICATIONS_PASSWORD_CHANGED_ENABLED=true",
+		"MAILER_SUBJECT_PASSWORD_CHANGED_NOTIFICATION=Password changed",
+		"MAILER_TEMPLATE_PASSWORD_CHANGED_NOTIFICATION=<p>{{ .Email }}</p>",
+		"GOTRUE_MAILER_SUBJECTS_CONFIRMATION: ${MAILER_SUBJECT_CONFIRMATION}",
+		"GOTRUE_MAILER_TEMPLATES_CONFIRMATION: ${MAILER_TEMPLATE_CONFIRMATION}",
+		"GOTRUE_MAILER_NOTIFICATIONS_PASSWORD_CHANGED_ENABLED: ${MAILER_NOTIFICATIONS_PASSWORD_CHANGED_ENABLED}",
+		"GOTRUE_MAILER_SUBJECTS_PASSWORD_CHANGED_NOTIFICATION: ${MAILER_SUBJECT_PASSWORD_CHANGED_NOTIFICATION}",
+		"GOTRUE_MAILER_TEMPLATES_PASSWORD_CHANGED_NOTIFICATION: ${MAILER_TEMPLATE_PASSWORD_CHANGED_NOTIFICATION}",
+	} {
+		if !strings.Contains(out.Env, line) && !strings.Contains(out.Compose, line) {
+			t.Errorf("missing %q", line)
+		}
+	}
+}
+
 func TestRenderAuthRateLimitsAndMFA(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Auth.RateLimits = contracts.RateLimitConfig{EmailSent: 45, SMSSent: 25, TokenRefresh: 150, TokenVerification: 20, AnonymousUsers: 10, SignupsAndSignins: 15}

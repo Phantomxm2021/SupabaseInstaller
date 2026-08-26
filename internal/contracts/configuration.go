@@ -68,6 +68,43 @@ type SMTPConfig struct {
 	SenderName  string      `json:"senderName"`
 }
 
+// EmailTemplateConfig is an inline GoTrue mail template. The Manager only
+// accepts GoTrue's documented template data fields; it deliberately does not
+// expose an arbitrary environment-variable editor.
+type EmailTemplateConfig struct {
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
+}
+
+type EmailTemplatesConfig struct {
+	Confirmation     EmailTemplateConfig `json:"confirmation"`
+	Invite           EmailTemplateConfig `json:"invite"`
+	MagicLink        EmailTemplateConfig `json:"magicLink"`
+	EmailChange      EmailTemplateConfig `json:"emailChange"`
+	Recovery         EmailTemplateConfig `json:"recovery"`
+	Reauthentication EmailTemplateConfig `json:"reauthentication"`
+}
+
+type EmailNotificationConfig struct {
+	Enabled  bool                `json:"enabled"`
+	Template EmailTemplateConfig `json:"template"`
+}
+
+type EmailNotificationsConfig struct {
+	PasswordChanged     EmailNotificationConfig `json:"passwordChanged"`
+	EmailChanged        EmailNotificationConfig `json:"emailChanged"`
+	PhoneChanged        EmailNotificationConfig `json:"phoneChanged"`
+	IdentityLinked      EmailNotificationConfig `json:"identityLinked"`
+	IdentityUnlinked    EmailNotificationConfig `json:"identityUnlinked"`
+	MFAFactorEnrolled   EmailNotificationConfig `json:"mfaFactorEnrolled"`
+	MFAFactorUnenrolled EmailNotificationConfig `json:"mfaFactorUnenrolled"`
+}
+
+type MailerConfig struct {
+	Templates     EmailTemplatesConfig     `json:"templates"`
+	Notifications EmailNotificationsConfig `json:"notifications"`
+}
+
 // RateLimitConfig configures the pinned GoTrue endpoint limits. Values are
 // counts per GoTrue's built-in interval; the manager deliberately does not
 // expose arbitrary environment variables.
@@ -108,6 +145,7 @@ type AuthConfig struct {
 	RedirectURLs    []string                       `json:"redirectUrls,omitempty"`
 	OAuth           map[string]OAuthProviderConfig `json:"oauth,omitempty"`
 	SMTP            SMTPConfig                     `json:"smtp"`
+	Mailer          MailerConfig                   `json:"mailer"`
 	RateLimits      RateLimitConfig                `json:"rateLimits"`
 	MFA             MFAConfig                      `json:"mfa"`
 }

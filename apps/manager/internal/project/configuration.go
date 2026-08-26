@@ -50,6 +50,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 			Enabled:    true,
 			Email:      contracts.EmailAuthConfig{Enabled: true, AllowSignup: true},
 			SMTP:       contracts.SMTPConfig{Port: 587},
+			Mailer:     defaultMailerConfig(),
 			RateLimits: contracts.RateLimitConfig{EmailSent: 30, SMSSent: 30, TokenRefresh: 150, TokenVerification: 30, AnonymousUsers: 30, SignupsAndSignins: 30},
 			MFA:        contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6},
 		},
@@ -66,6 +67,9 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 // typed Auth fields were introduced. Zero is otherwise invalid for all of the
 // counters, so it is an unambiguous legacy representation.
 func backfillAuthDefaults(auth *contracts.AuthConfig) {
+	if auth.Mailer == (contracts.MailerConfig{}) {
+		auth.Mailer = defaultMailerConfig()
+	}
 	if auth.RateLimits.EmailSent == 0 {
 		auth.RateLimits.EmailSent = 30
 	}
@@ -97,6 +101,32 @@ func backfillAuthDefaults(auth *contracts.AuthConfig) {
 	if legacyMFA && !auth.MFA.TOTPEnrollEnabled && !auth.MFA.TOTPVerifyEnabled {
 		auth.MFA.TOTPEnrollEnabled = true
 		auth.MFA.TOTPVerifyEnabled = true
+	}
+}
+
+func defaultMailerTemplate(subject, body string) contracts.EmailTemplateConfig {
+	return contracts.EmailTemplateConfig{Subject: subject, Body: body}
+}
+
+func defaultMailerConfig() contracts.MailerConfig {
+	return contracts.MailerConfig{
+		Templates: contracts.EmailTemplatesConfig{
+			Confirmation:     defaultMailerTemplate("Confirm your signup", `<h2>Confirm your signup</h2><p>Follow this link to confirm your user:</p><p><a href="{{ .ConfirmationURL }}">Confirm your mail</a></p>`),
+			Invite:           defaultMailerTemplate("You have been invited", `<h2>You have been invited</h2><p>Follow this link to accept the invite:</p><p><a href="{{ .ConfirmationURL }}">Accept the invite</a></p>`),
+			MagicLink:        defaultMailerTemplate("Your magic link", `<h2>Magic Link</h2><p>Follow this link to login:</p><p><a href="{{ .ConfirmationURL }}">Log In</a></p>`),
+			EmailChange:      defaultMailerTemplate("Confirm email change", `<h2>Confirm email change</h2><p>Follow this link to confirm the update of your email:</p><p><a href="{{ .ConfirmationURL }}">Change email</a></p>`),
+			Recovery:         defaultMailerTemplate("Reset password", `<h2>Reset Password</h2><p>Follow this link to reset your password:</p><p><a href="{{ .ConfirmationURL }}">Reset Password</a></p>`),
+			Reauthentication: defaultMailerTemplate("Confirm reauthentication", `<h2>Confirm reauthentication</h2><p>Enter this code: {{ .Token }}</p>`),
+		},
+		Notifications: contracts.EmailNotificationsConfig{
+			PasswordChanged:     contracts.EmailNotificationConfig{Template: defaultMailerTemplate("Your password was changed", `<h2>Your password was changed</h2><p>The password for your account was recently changed.</p>`)},
+			EmailChanged:        contracts.EmailNotificationConfig{Template: defaultMailerTemplate("Your email address was changed", `<h2>Your email address was changed</h2><p>The email address for your account was recently changed.</p>`)},
+			PhoneChanged:        contracts.EmailNotificationConfig{Template: defaultMailerTemplate("Your phone number was changed", `<h2>Your phone number was changed</h2><p>The phone number for your account was recently changed.</p>`)},
+			IdentityLinked:      contracts.EmailNotificationConfig{Template: defaultMailerTemplate("A sign-in method was linked", `<h2>A sign-in method was linked</h2><p>A sign-in method was linked to your account.</p>`)},
+			IdentityUnlinked:    contracts.EmailNotificationConfig{Template: defaultMailerTemplate("A sign-in method was removed", `<h2>A sign-in method was removed</h2><p>A sign-in method was removed from your account.</p>`)},
+			MFAFactorEnrolled:   contracts.EmailNotificationConfig{Template: defaultMailerTemplate("An MFA method was added", `<h2>An MFA method was added</h2><p>An MFA method was added to your account.</p>`)},
+			MFAFactorUnenrolled: contracts.EmailNotificationConfig{Template: defaultMailerTemplate("An MFA method was removed", `<h2>An MFA method was removed</h2><p>An MFA method was removed from your account.</p>`)},
+		},
 	}
 }
 
@@ -241,6 +271,7 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 	}
 	validateRateLimits(auth.RateLimits, validation)
 	validateMFA(auth.MFA, validation)
+	validateMailer(auth.Mailer, validation)
 	validateSecretInput(auth.SMTP.Password, "auth.smtp.password", validation)
 	validatePhone(auth.Phone, validation)
 	if auth.SMTP.Enabled {
@@ -339,6 +370,63 @@ func validateMFA(mfa contracts.MFAConfig, validation *ValidationError) {
 	}
 	if mfa.PhoneOTPLength < 4 || mfa.PhoneOTPLength > 10 {
 		validation.add("auth.mfa.phoneOtpLength", "must be between 4 and 10 digits")
+	}
+}
+
+var allowedMailerTemplateVariables = map[string]struct{}{
+	".ConfirmationURL": {}, ".Token": {}, ".TokenHash": {}, ".SiteURL": {},
+	".Email": {}, ".Data": {}, ".RedirectTo": {},
+}
+
+var mailerTemplateActionPattern = regexp.MustCompile(`{{\s*([^{}]+?)\s*}}`)
+
+func validateMailer(mailer contracts.MailerConfig, validation *ValidationError) {
+	templates := []struct {
+		path     string
+		template contracts.EmailTemplateConfig
+	}{
+		{"auth.mailer.templates.confirmation", mailer.Templates.Confirmation}, {"auth.mailer.templates.invite", mailer.Templates.Invite},
+		{"auth.mailer.templates.magicLink", mailer.Templates.MagicLink}, {"auth.mailer.templates.emailChange", mailer.Templates.EmailChange},
+		{"auth.mailer.templates.recovery", mailer.Templates.Recovery}, {"auth.mailer.templates.reauthentication", mailer.Templates.Reauthentication},
+		{"auth.mailer.notifications.passwordChanged", mailer.Notifications.PasswordChanged.Template},
+		{"auth.mailer.notifications.emailChanged", mailer.Notifications.EmailChanged.Template},
+		{"auth.mailer.notifications.phoneChanged", mailer.Notifications.PhoneChanged.Template},
+		{"auth.mailer.notifications.identityLinked", mailer.Notifications.IdentityLinked.Template},
+		{"auth.mailer.notifications.identityUnlinked", mailer.Notifications.IdentityUnlinked.Template},
+		{"auth.mailer.notifications.mfaFactorEnrolled", mailer.Notifications.MFAFactorEnrolled.Template},
+		{"auth.mailer.notifications.mfaFactorUnenrolled", mailer.Notifications.MFAFactorUnenrolled.Template},
+	}
+	for _, item := range templates {
+		validateMailerTemplate(item.template, item.path, validation)
+	}
+}
+
+func validateMailerTemplate(template contracts.EmailTemplateConfig, field string, validation *ValidationError) {
+	if len(template.Subject) > 255 {
+		validation.add(field+".subject", "must be at most 255 characters")
+	}
+	if strings.ContainsAny(template.Subject, "\r\n") {
+		validation.add(field+".subject", "must not contain a newline")
+	}
+	if len(template.Body) > 100000 {
+		validation.add(field+".body", "must be at most 100000 characters")
+	}
+	validateMailerTemplateVariables(template.Subject, field+".subject", validation)
+	validateMailerTemplateVariables(template.Body, field+".body", validation)
+}
+
+func validateMailerTemplateVariables(value, field string, validation *ValidationError) {
+	matches := mailerTemplateActionPattern.FindAllStringSubmatch(value, -1)
+	if strings.Count(value, "{{") != len(matches) || strings.Count(value, "}}") != len(matches) {
+		validation.add(field, "contains an invalid Go template action")
+		return
+	}
+	for _, match := range matches {
+		action := strings.TrimSpace(match[1])
+		if _, allowed := allowedMailerTemplateVariables[action]; !allowed {
+			validation.add(field, "may only use documented mailer template variables")
+			return
+		}
 	}
 }
 
