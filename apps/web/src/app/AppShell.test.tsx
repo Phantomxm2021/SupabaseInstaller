@@ -28,15 +28,37 @@ it('shows Projects in global navigation without a duplicate New Project action',
   const projects = screen.getByRole('link', { name: /projects/i })
   expect(projects).toBeInTheDocument()
   expect(projects).toHaveAttribute('aria-current', 'page')
+  expect(projects).toHaveAttribute('data-active', '')
   expect(screen.queryByRole('link', { name: /new project/i })).not.toBeInTheDocument()
   await userEvent.setup().click(screen.getByRole('button', { name: /account/i }))
   expect(await screen.findByRole('menuitem', { name: /manager settings/i })).toHaveAttribute('href', '/settings')
 })
 
 it('provides a focusable sidebar trigger for narrow screens', () => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><AppShell /></MemoryRouter></QueryClientProvider>)
   expect(screen.getByRole('button', { name: /open sidebar/i })).toBeInTheDocument()
+})
+
+it('opens the mobile Sheet and exposes the named navigation landmark', async () => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><AppShell /></MemoryRouter></QueryClientProvider>)
+  expect(screen.queryByRole('navigation', { name: /main navigation/i })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /open sidebar/i }))
+  expect(await screen.findByRole('navigation', { name: /main navigation/i })).toBeVisible()
+  expect(screen.getByRole('link', { name: /projects/i })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
+})
+
+it('keeps Sidebar and SidebarInset as direct provider children', () => {
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><AppShell /></MemoryRouter></QueryClientProvider>)
+  const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]')
+  expect(wrapper?.children).toHaveLength(2)
+  expect(wrapper?.children[0]).toHaveAttribute('data-slot', 'sidebar')
+  expect(wrapper?.children[1]).toHaveAttribute('data-slot', 'sidebar-inset')
 })
 
 it('refreshes CSRF and uses the refreshed token when signing out', async () => {

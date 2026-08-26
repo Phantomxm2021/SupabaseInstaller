@@ -56,7 +56,7 @@ export function DeleteProjectDialog({
         )}
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onClose}>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" disabled={!confirmed || busy} onClick={() => onDelete(mode, confirmation)}>Delete permanently</AlertDialogAction>
+          <AlertDialogAction variant="destructive" disabled={!confirmed || busy} onClick={() => { onClose(); onDelete(mode, confirmation) }}>Delete permanently</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

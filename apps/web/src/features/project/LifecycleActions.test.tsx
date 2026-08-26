@@ -1,11 +1,13 @@
 import { refreshProjectQueriesAfterDelete } from './LifecycleActions'
 import { LifecycleActions } from './LifecycleActions'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+const timeline = vi.hoisted(() => [] as string[])
+vi.mock('sonner', () => ({ toast: { success: vi.fn(() => timeline.push('toast:success')), error: vi.fn(() => timeline.push('toast:error')) } }))
 
 it('refreshes deletion queries in safe order before navigation', async () => {
   const calls: string[] = []
@@ -30,15 +32,37 @@ it('deletes through the API, refreshes caches, toasts, and replaces route', asyn
   const user = userEvent.setup()
   const calls: string[] = []
   const queryClient = new QueryClient()
-  vi.spyOn(queryClient, 'cancelQueries').mockImplementation(async (filters) => { calls.push(`cancel:${(filters?.queryKey ?? []).join('/')}`) })
-  vi.spyOn(queryClient, 'removeQueries').mockImplementation((filters) => { calls.push(`remove:${(filters?.queryKey ?? []).join('/')}`) })
-  vi.spyOn(queryClient, 'invalidateQueries').mockImplementation(async (filters) => { calls.push(`invalidate:${(filters?.queryKey ?? []).join('/')}`); return undefined })
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
+  vi.spyOn(queryClient, 'cancelQueries').mockImplementation(async (filters) => { calls.push(`cancel:${(filters?.queryKey ?? []).join('/')}`); timeline.push(`cancel:${(filters?.queryKey ?? []).join('/')}`) })
+  vi.spyOn(queryClient, 'removeQueries').mockImplementation((filters) => { calls.push(`remove:${(filters?.queryKey ?? []).join('/')}`); timeline.push(`remove:${(filters?.queryKey ?? []).join('/')}`) })
+  vi.spyOn(queryClient, 'invalidateQueries').mockImplementation(async (filters) => { calls.push(`invalidate:${(filters?.queryKey ?? []).join('/')}`); timeline.push(`invalidate:${(filters?.queryKey ?? []).join('/')}`); return undefined })
+  const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => { calls.push('api'); requests.push({ input, init }); return new Response(null, { status: 204 }) }))
   const project = { id: 'bee', name: 'Bee', status: 'RUNNING', health: 'HEALTHY', services: {} } as never
-  function Location() { const location = useLocation(); return <output data-testid="location">{location.pathname}</output> }
-  render(<QueryClientProvider client={queryClient}><MemoryRouter><LifecycleActions project={project} /><Location /></MemoryRouter></QueryClientProvider>)
+  function Location() { const location = useLocation(); const navigate = useNavigate(); useEffect(() => { timeline.push(`navigate:${location.pathname}`) }, [location.pathname]); return <><output data-testid="location">{location.pathname}</output><button onClick={() => navigate(-1)}>Back</button></> }
+  render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={['/projects/old', '/projects/bee']} initialIndex={1}><LifecycleActions project={project} /><Location /></MemoryRouter></QueryClientProvider>)
+  timeline.length = 0
   await user.click(screen.getByRole('button', { name: /delete/i }))
   await user.click(screen.getByRole('button', { name: /delete permanently/i }))
   expect(await screen.findByTestId('location')).toHaveTextContent('/projects')
-  expect(calls).toEqual(['cancel:project/bee', 'cancel:project-configuration/bee', 'remove:project/bee', 'remove:project-configuration/bee', 'invalidate:projects'])
+  expect(requests[0].input).toBe('/api/projects/bee')
+  expect(requests[0].init?.method).toBe('DELETE')
+  expect(JSON.parse(String(requests[0].init?.body))).toEqual({ mode: 'runtime', confirmation: '' })
+  expect(calls).toEqual(['api', 'cancel:project/bee', 'cancel:project-configuration/bee', 'remove:project/bee', 'remove:project-configuration/bee', 'invalidate:projects'])
+  expect(timeline).toEqual(['cancel:project/bee', 'cancel:project-configuration/bee', 'remove:project/bee', 'remove:project-configuration/bee', 'invalidate:projects', 'toast:success', 'navigate:/projects'])
+  await user.click(screen.getByRole('button', { name: 'Back' }))
+  expect(screen.getByTestId('location')).toHaveTextContent('/projects/old')
+})
+
+it('shows an error toast and stays on the project when deletion fails', async () => {
+  timeline.length = 0
+  const queryClient = new QueryClient()
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: 'delete failed' } }), { status: 500, headers: { 'Content-Type': 'application/json' } })))
+  const project = { id: 'bee', name: 'Bee', status: 'RUNNING', health: 'HEALTHY', services: {} } as never
+  function CurrentLocation() { return <output data-testid="location">{useLocation().pathname}</output> }
+  render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={['/projects/bee']}><LifecycleActions project={project} /><CurrentLocation /></MemoryRouter></QueryClientProvider>)
+  await userEvent.setup().click(screen.getByRole('button', { name: /delete/i }))
+  await userEvent.setup().click(screen.getByRole('button', { name: /delete permanently/i }))
+  await waitFor(() => expect(screen.getByText('delete failed')).toBeInTheDocument())
+  expect(timeline).toEqual(['toast:error'])
+  expect(screen.getByTestId('location')).toHaveTextContent('/projects/bee')
 })

@@ -46,3 +46,11 @@ Addressed all review Important/Minor findings:
 - Added the delete-mode fieldset legend.
 
 Fix-round verification: focused suite 8 tests passed; full suite 9 files / 14 tests passed; production build and `git diff --check` passed.
+
+## Fix round 2
+
+- Removed the legacy `.app-shell` wrapper so `SidebarProvider` owns direct `Sidebar` and `SidebarInset` flex children.
+- Added mobile Sheet coverage (including opening the Sheet and reaching the named Projects navigation), active `data-active` state from the current pathname, and dynamic Open/Close trigger labels.
+- Strengthened real deletion integration coverage to assert DELETE URL/body, success/error Sonner events, complete cache/toast/navigation timeline, replace-history behavior, and no navigation on failure.
+
+Fix-round-2 verification: full suite 9 files / 17 tests passed; production build and `git diff --check` passed.

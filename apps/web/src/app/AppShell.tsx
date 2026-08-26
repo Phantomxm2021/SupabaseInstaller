@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Boxes, Database, HardDrive, LogOut, ServerCog, UserCircle } from 'lucide-react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { apiFetch, setCSRFToken } from '../api/client'
 import {
   Sidebar,
@@ -13,6 +13,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from '../components/ui/sidebar'
 import {
   DropdownMenu,
@@ -23,6 +24,7 @@ import {
 
 export function AppShell() {
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
   const logout = useMutation({
     mutationFn: () => apiFetch('/api/session', { method: 'DELETE' }),
@@ -34,8 +36,7 @@ export function AppShell() {
   })
   return (
     <SidebarProvider defaultOpen>
-      <div className="app-shell">
-        <Sidebar collapsible="icon">
+      <Sidebar collapsible="icon">
           <SidebarHeader>
             <div className="brand-row sidebar-brand"><span className="brand-mark"><Database size={20} /></span><span>Supabase Manager</span></div>
           </SidebarHeader>
@@ -43,7 +44,7 @@ export function AppShell() {
             <nav aria-label="Main navigation">
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton tooltip="Projects" render={<NavLink to="/projects" />}>
+                  <SidebarMenuButton isActive={location.pathname === '/projects' || location.pathname.startsWith('/projects/')} tooltip="Projects" render={<NavLink to="/projects" />}>
                     <Boxes /> <span>Projects</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -64,15 +65,20 @@ export function AppShell() {
               </DropdownMenuContent>
             </DropdownMenu>
           </SidebarFooter>
-        </Sidebar>
+      </Sidebar>
       <SidebarInset>
         <header className="topbar">
-          <SidebarTrigger aria-label="Open sidebar" />
+          <ResponsiveSidebarTrigger />
           <div><HardDrive size={16} /> Local Docker host</div><span className="badge neutral">Installer Core</span>
         </header>
         <div className="content-shell"><Outlet /></div>
       </SidebarInset>
-      </div>
     </SidebarProvider>
   )
+}
+
+function ResponsiveSidebarTrigger() {
+  const { isMobile, openMobile, state } = useSidebar()
+  const isOpen = isMobile ? openMobile : state === 'expanded'
+  return <SidebarTrigger aria-label={isOpen ? 'Close sidebar' : 'Open sidebar'} />
 }
