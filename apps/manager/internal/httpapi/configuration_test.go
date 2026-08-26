@@ -112,6 +112,40 @@ func TestDecodeRawRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestConfigurationPatchRejectsUnknownAndTrailingJSON(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: configuration.NewOrchestrator(nil, nil)})
+	for name, body := range map[string]string{
+		"unknown field":  `{"expectedRevision":1,"value":{},"ignored":true}`,
+		"trailing value": `{"expectedRevision":1,"value":{}} {"ignored":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPatch, "/api/projects/bee/configuration/general", strings.NewReader(body))
+			mux.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s; want 400", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestConfigurationPatchNotFoundUsesProjectNotFound(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	mux := http.NewServeMux()
+	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: configuration.NewOrchestrator(database, operation.NewService(database, func() string { return "op" }, time.Now))})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/projects/missing/configuration/general", strings.NewReader(`{"expectedRevision":1,"value":{"domain":"missing.example.com","siteUrl":"https://missing.example.com","supabaseVersion":"self-hosted/v0.8.0"}}`))
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), "PROJECT_NOT_FOUND") {
+		t.Fatalf("status/body = %d/%s; want 404 PROJECT_NOT_FOUND", response.Code, response.Body.String())
+	}
+}
+
 func TestMergeSMTPPatchRetainsUntouchedConfiguredOAuthSecret(t *testing.T) {
 	base := contracts.AuthConfig{
 		SMTP: contracts.SMTPConfig{PasswordSet: true, Password: contracts.SecretInput{Action: "replace", Value: "smtp-new"}},

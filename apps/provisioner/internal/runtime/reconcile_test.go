@@ -103,6 +103,30 @@ func TestReconcileFailureRestoresPreviousRuntimeAndRecreatesIt(t *testing.T) {
 	}
 }
 
+func TestReconcileRenderFailureReportsRuntimeUnchangedForManagerRecovery(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := NewBackend(root, &fakeReconcileRunner{}, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	changed := baseConfig()
+	changed.Database.Extensions = []string{"unsupported-extension"}
+	result, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil {
+		t.Fatal("render-invalid reconcile unexpectedly succeeded")
+	}
+	var failure *contracts.ReconcileFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("error = %v, want typed reconcile failure", err)
+	}
+	if failure.RuntimeChanged || result.RuntimeChanged {
+		t.Fatalf("render failure reported runtime changed: failure=%v result=%#v", failure.RuntimeChanged, result)
+	}
+}
+
 func TestReconcileValidatesStagedCandidateOnStableProjectDir(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {

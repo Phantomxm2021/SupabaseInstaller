@@ -13,7 +13,12 @@ var ErrInvalidReconcileRevision = errors.New("invalid reconcile revision")
 type ReconcileFailure struct {
 	Cause             error
 	RollbackSucceeded bool
-	Response          ReconcileProjectResponse
+	// RuntimeChanged distinguishes failures before publication (render/stage/
+	// validation) from failures after Docker/runtime side effects. Managers can
+	// safely restore an admitted desired revision only for the former or after
+	// a confirmed rollback.
+	RuntimeChanged bool
+	Response       ReconcileProjectResponse
 }
 
 func (e *ReconcileFailure) Error() string { return "runtime reconciliation failed" }
@@ -41,6 +46,7 @@ type ReconcileProjectResponse struct {
 	EnabledServices   []string  `json:"enabledServices"`
 	RecreatedServices []string  `json:"recreatedServices"`
 	RolledBack        bool      `json:"rolledBack"`
+	RuntimeChanged    bool      `json:"runtimeChanged,omitempty"`
 	Error             *APIError `json:"error,omitempty"`
 }
 
@@ -67,11 +73,12 @@ type RotateDatabasePasswordRequest struct {
 }
 
 type RotateDatabasePasswordResponse struct {
-	OperationID string    `json:"operationId"`
-	ProjectID   string    `json:"projectId"`
-	Revision    int64     `json:"revision"`
-	RolledBack  bool      `json:"rolledBack"`
-	Error       *APIError `json:"error,omitempty"`
+	OperationID    string    `json:"operationId"`
+	ProjectID      string    `json:"projectId"`
+	Revision       int64     `json:"revision"`
+	RolledBack     bool      `json:"rolledBack"`
+	RuntimeChanged bool      `json:"runtimeChanged,omitempty"`
+	Error          *APIError `json:"error,omitempty"`
 }
 
 // ConfirmDatabasePasswordRotation closes the durable rotation journal only

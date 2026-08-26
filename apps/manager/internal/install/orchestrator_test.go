@@ -3,6 +3,7 @@ package install
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -42,6 +43,37 @@ func TestInstallPersistsEncryptedUniqueSecretsBeforePrepare(t *testing.T) {
 	stored, err := orchestrator.store.GetSecret(context.Background(), project.ID, "database-password")
 	if err != nil || bytes.Contains(stored.Ciphertext, []byte(provisioner.reconcile.Secrets.DatabasePassword)) {
 		t.Fatalf("stored database secret is not encrypted: %v", err)
+	}
+}
+
+func TestInstallHydratesConfiguredSMTPSecretIntoRevisionOneReconcile(t *testing.T) {
+	orchestrator, provisioner, project := newTestOrchestrator(t)
+	snapshot, err := orchestrator.store.GetDesiredConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := snapshot.Configuration
+	cfg.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", Port: 587, PasswordSet: true}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orchestrator.store.DB().Exec(`UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=1`, string(raw), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := orchestrator.cipher.Encrypt(project.ID, "smtp.password", []byte("configured-smtp-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orchestrator.store.PutSecret(context.Background(), project.ID, "smtp.password", envelope); err != nil {
+		t.Fatal(err)
+	}
+	result, err := orchestrator.Install(context.Background(), project)
+	if err != nil || result.Status != operation.Succeeded {
+		t.Fatalf("Install() = %#v, %v", result, err)
+	}
+	if got := provisioner.reconcile.RuntimeSecrets["smtp.password"]; got != "configured-smtp-secret" {
+		t.Fatalf("revision-1 reconcile SMTP secret = %q, want configured value", got)
 	}
 }
 

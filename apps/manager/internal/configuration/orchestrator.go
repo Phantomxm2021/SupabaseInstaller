@@ -365,8 +365,13 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			rotationRequest.Fence = snapshot.Fence
 			result, reconcileErr := rotator.RotateDatabasePassword(workCtx, rotationRequest)
 			if reconcileErr != nil {
+				if !runtimeOutcomeKnown(reconcileErr) {
+					// A lost HTTP response is not a runtime failure. Keep the durable
+					// operation active so Resume can replay its idempotency key.
+					return queued, reconcileErr
+				}
 				rolledBack := reconcileRollback(reconcileErr)
-				if rolledBack {
+				if shouldRestoreConfiguration(reconcileErr) {
 					if restoreErr := o.store.RestoreConfigurationState(ctx, currentProject.ID, snapshot.Revision); restoreErr != nil {
 						rolledBack = false
 					}
@@ -380,7 +385,20 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 		if step == "MARK_CONFIGURATION_GOOD" {
 			envelope, err := o.cipher.Encrypt(currentProject.ID, "database-password", []byte(newPassword))
 			if err != nil {
-				return o.fail(ctx, queued, step, errors.New("database password rotation failed"), true)
+				rollback := false
+				if compensator, ok := o.provisioner.(PasswordRotationRollbackProvisioner); ok {
+					rollbackRequest := rotationRequest
+					rollbackRequest.OperationKind = "ROLLBACK_DATABASE_PASSWORD"
+					rollbackRequest.IdempotencyKey = queued.ID + ":rollback-encrypt"
+					rollbackRequest.OldPassword, rollbackRequest.NewPassword = rollbackRequest.NewPassword, rollbackRequest.OldPassword
+					rollback = compensator.RollbackDatabasePassword(ctx, rollbackRequest) == nil
+				}
+				if rollback {
+					if restoreErr := o.store.RestoreConfigurationState(ctx, currentProject.ID, snapshot.Revision); restoreErr != nil {
+						rollback = false
+					}
+				}
+				return o.fail(ctx, queued, step, errors.New("database password rotation failed"), rollback)
 			}
 			if err := o.store.PublishConfigurationSecret(ctx, currentProject.ID, snapshot.Revision, "database-password", envelope, o.now()); err != nil {
 				rollback := false
@@ -453,6 +471,34 @@ func reconcileRollback(err error) bool {
 	return errors.As(err, &reporter) && reporter.RollbackSucceeded()
 }
 
+// shouldRestoreConfiguration closes the Manager-side admission transaction
+// for failures before runtime publication, or after a confirmed rollback.
+// Unknown transport outcomes are left active for recovery rather than guessed.
+func shouldRestoreConfiguration(err error) bool {
+	var failure *contracts.ReconcileFailure
+	if errors.As(err, &failure) {
+		return !failure.RuntimeChanged || failure.RollbackSucceeded
+	}
+	var outcome interface {
+		RuntimeOutcomeKnown() bool
+		RuntimeChanged() bool
+		RollbackSucceeded() bool
+	}
+	if errors.As(err, &outcome) {
+		return outcome.RuntimeOutcomeKnown() && (!outcome.RuntimeChanged() || outcome.RollbackSucceeded())
+	}
+	return false
+}
+
+func runtimeOutcomeKnown(err error) bool {
+	var failure *contracts.ReconcileFailure
+	if errors.As(err, &failure) {
+		return true
+	}
+	var outcome interface{ RuntimeOutcomeKnown() bool }
+	return errors.As(err, &outcome) && outcome.RuntimeOutcomeKnown()
+}
+
 // Run executes the six durable update steps. Runtime failures are intentionally
 // reported with a generic message; the Provisioner response is typed and
 // redacted, and operation events must never contain rendered environment data.
@@ -520,8 +566,13 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 	}
 	result, reconcileErr := o.provisioner.Reconcile(workCtx, request)
 	if reconcileErr != nil {
+		if !runtimeOutcomeKnown(reconcileErr) {
+			// Preserve RUNNING for scheduler/startup recovery when the private
+			// request may have completed but its response was lost.
+			return queued, reconcileErr
+		}
 		rolledBack := reconcileRollback(reconcileErr)
-		if rolledBack {
+		if shouldRestoreConfiguration(reconcileErr) {
 			if restoreErr := o.store.RestoreConfigurationState(ctx, currentProject.ID, snapshot.Revision); restoreErr != nil {
 				rolledBack = false
 			}

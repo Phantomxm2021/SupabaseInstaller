@@ -79,14 +79,21 @@ func (s *Store) AdmitConfiguration(ctx context.Context, input ConfigurationAdmis
 		// or enabled port between validation and snapshot creation.
 		var conflictID string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id <> ? AND (domain = ? OR EXISTS (
-			SELECT 1 FROM port_allocations pa WHERE pa.project_id <> ? AND ((? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?) OR (? > 0 AND pa.port = ?))
+			SELECT 1 FROM port_allocations pa WHERE pa.project_id <> ? AND (
+				(? > 0 AND pa.kind = 'API' AND pa.port = ?) OR
+				(? > 0 AND ? AND pa.kind = 'STUDIO' AND pa.port = ?) OR
+				(? > 0 AND ? AND pa.kind = 'DATABASE' AND pa.port = ?) OR
+				(? > 0 AND ? AND pa.kind = 'POOLER' AND pa.port = ?) OR
+				(? > 0 AND ? AND pa.kind = 'POOLER_TRANSACTION' AND pa.port = ?) OR
+				(? > 0 AND ? AND pa.kind = 'POOLER_SESSION' AND pa.port = ?)
+			)
 		)) LIMIT 1`, input.ProjectID, input.Configuration.General.Domain, input.ProjectID,
 			input.Configuration.Network.APIPort, input.Configuration.Network.APIPort,
-			input.Configuration.Network.StudioPort, input.Configuration.Network.StudioPort,
-			input.Configuration.Network.DirectDatabasePort, input.Configuration.Network.DirectDatabasePort,
-			input.Configuration.Network.PoolerPort, input.Configuration.Network.PoolerPort,
-			input.Configuration.Pooler.TransactionPort, input.Configuration.Pooler.TransactionPort,
-			input.Configuration.Pooler.SessionPort, input.Configuration.Pooler.SessionPort).Scan(&conflictID); err == nil {
+			input.Configuration.Network.StudioPort, input.Configuration.Services.Studio, input.Configuration.Network.StudioPort,
+			input.Configuration.Network.DirectDatabasePort, input.Configuration.Services.DirectDB, input.Configuration.Network.DirectDatabasePort,
+			input.Configuration.Network.PoolerPort, input.Configuration.Services.Supavisor, input.Configuration.Network.PoolerPort,
+			input.Configuration.Pooler.TransactionPort, input.Configuration.Services.Supavisor, input.Configuration.Pooler.TransactionPort,
+			input.Configuration.Pooler.SessionPort, input.Configuration.Services.Supavisor, input.Configuration.Pooler.SessionPort).Scan(&conflictID); err == nil {
 			return fmt.Errorf("%w: %s", ErrConfigurationConflict, conflictID)
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("check configuration conflicts: %w", err)

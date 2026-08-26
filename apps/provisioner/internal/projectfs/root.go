@@ -68,6 +68,11 @@ func (r *Root) DeleteProjectData(slug string) error {
 	if err != nil {
 		return err
 	}
+	unlock, err := r.lockMetadataFile(slug)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if projectPath == r.base {
 		return fmt.Errorf("refusing to remove project root")
 	}
@@ -958,6 +963,34 @@ func (r *Root) UpdateMetadata(slug string, mutate func(*Metadata) error) (Metada
 	return metadata, nil
 }
 
+// WithProjectMetadataLock runs a mutating workflow while holding both the
+// process and cross-process project fence. Callers use this for compensation
+// paths whose Docker/runtime side effects must not interleave with a newer
+// reconcile or a project deletion.
+func (r *Root) WithProjectMetadataLock(slug string, mutate func(*Metadata) error) (Metadata, error) {
+	r.metadataMu.Lock()
+	defer r.metadataMu.Unlock()
+	unlock, err := r.lockMetadataFile(slug)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer unlock()
+	metadata, err := r.readMetadata(slug)
+	if err != nil {
+		return Metadata{}, err
+	}
+	if metadata.Idempotency == nil {
+		metadata.Idempotency = make(map[string]json.RawMessage)
+	}
+	if err := mutate(&metadata); err != nil {
+		return Metadata{}, err
+	}
+	if err := r.writeMetadata(slug, metadata); err != nil {
+		return Metadata{}, err
+	}
+	return metadata, nil
+}
+
 // UpdateMetadataWithRollback keeps a runtime rollback closure live until the
 // metadata publication succeeds. Mutation errors are persisted deliberately so
 // typed idempotent failure outcomes can be replayed without Docker work.
@@ -995,15 +1028,19 @@ func (r *Root) UpdateMetadataWithRollback(slug string, mutate func(*Metadata) er
 }
 
 func (r *Root) lockMetadataFile(slug string) (func(), error) {
-	projectPath, err := r.ProjectPath(slug)
-	if err != nil {
+	if _, err := r.ProjectPath(slug); err != nil {
 		return nil, err
 	}
-	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
-	if err := os.MkdirAll(runtimeRoot, 0o700); err != nil {
+	// Keep the inter-process lock outside the lazily hydrated project tree. A
+	// lock file under <project> would create that directory before staging can
+	// copy the authoritative embedded template, making a fresh install look
+	// like an existing project.
+	lockRoot := filepath.Join(r.base, ".manager-locks")
+	if err := os.MkdirAll(lockRoot, 0o700); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(filepath.Join(runtimeRoot, "fence.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	lockPath := filepath.Join(lockRoot, slug+".lock")
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}

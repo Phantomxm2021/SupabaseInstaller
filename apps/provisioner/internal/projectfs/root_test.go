@@ -132,6 +132,25 @@ func TestStageRuntimeFilesCopiesInputAndCleansAbortCandidates(t *testing.T) {
 	}
 }
 
+func TestMetadataLockDoesNotSuppressFreshEmbeddedTemplateHydration(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first metadata read takes the cross-process lock before any runtime
+	// generation exists. That lock must not make the project look hydrated.
+	if _, err := root.Metadata("fresh"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Metadata() error = %v, want ErrNotFound", err)
+	}
+	if _, _, err := root.StageRuntimeFiles("fresh", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")}); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := root.ProjectPath("fresh")
+	if _, err := os.Stat(filepath.Join(project, "volumes", "db", "_supabase.sql")); err != nil {
+		t.Fatalf("embedded template was not hydrated after metadata lock: %v", err)
+	}
+}
+
 func TestStageRuntimeFilesRestoreSwitchesToPriorGeneration(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {

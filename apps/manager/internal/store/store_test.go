@@ -113,6 +113,48 @@ func TestConfigurationLeaseReleaseIsOwnerAndFenceBound(t *testing.T) {
 	}
 }
 
+func TestAdmitConfigurationIgnoresPortsOwnedByDisabledServices(t *testing.T) {
+	s := openTestStore(t)
+	first := projectFixture()
+	if err := s.CreateProject(context.Background(), first, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	second := projectFixture()
+	second.ID, second.Slug, second.Name, second.Domain = "project-2", "bee-two", "Bee Two", "two.example.com"
+	second.Services = contracts.Services{Database: true}
+	secondCfg := configurationFixture()
+	secondCfg.General.Domain = second.Domain
+	secondCfg.Services = second.Services
+	if err := s.CreateProject(context.Background(), second, secondCfg); err != nil {
+		t.Fatal(err)
+	}
+	// Project one owns the pooler ports, while project two carries the same
+	// values in its disabled-owner aggregate. They must not participate in
+	// admission conflict checks until Supavisor is enabled.
+	if _, err := s.DB().Exec(`INSERT INTO port_allocations(port,project_id,kind,created_at) VALUES(6543,?,?,?), (6544,?,?,?)`, first.ID, "POOLER_TRANSACTION", formatTime(time.Now()), first.ID, "POOLER_SESSION", formatTime(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	candidate := secondCfg
+	candidate.Pooler.TransactionPort, candidate.Pooler.SessionPort = 6543, 6544
+	candidate.Network.PoolerPort = 6543
+	now := time.Now().UTC()
+	queued := contracts.Operation{ID: "op-disabled-owner", ProjectID: second.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: queued, ProjectID: second.ID, Owner: queued.ID, ExpectedRevision: 1, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now}); err != nil {
+		t.Fatalf("disabled-owner pooler ports blocked admission: %v", err)
+	}
+	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), second.ID, queued.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	// Enabling the owner makes the same collision real and admission must then
+	// reject it before creating an operation or advancing the revision.
+	candidate.Services.Supavisor = true
+	enabled := queued
+	enabled.ID = "op-enabled-owner"
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: enabled, ProjectID: second.ID, Owner: enabled.ID, ExpectedRevision: 2, Configuration: candidate, OperationKind: "UPDATE_CONFIG", Now: now.Add(time.Second)}); !errors.Is(err, ErrConfigurationConflict) {
+		t.Fatalf("enabled-owner pooler conflict = %v, want ErrConfigurationConflict", err)
+	}
+}
+
 func TestSnapshotMarkerDistinguishesEmptyRevision(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()

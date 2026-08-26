@@ -23,14 +23,18 @@ type Client struct {
 // Only the typed code and user-safe message are retained; response bodies are
 // never embedded in the error so rendered secrets cannot escape this boundary.
 type ClientError struct {
-	Code             string
-	Message          string
-	Status           int
-	RollbackComplete bool
+	Code                string
+	Message             string
+	Status              int
+	RollbackComplete    bool
+	RuntimeStateKnown   bool
+	RuntimeStateChanged bool
 }
 
-func (e *ClientError) Error() string           { return fmt.Sprintf("provisioner %s: %s", e.Code, e.Message) }
-func (e *ClientError) RollbackSucceeded() bool { return e.RollbackComplete }
+func (e *ClientError) Error() string             { return fmt.Sprintf("provisioner %s: %s", e.Code, e.Message) }
+func (e *ClientError) RollbackSucceeded() bool   { return e.RollbackComplete }
+func (e *ClientError) RuntimeOutcomeKnown() bool { return e.RuntimeStateKnown }
+func (e *ClientError) RuntimeChanged() bool      { return e.RuntimeStateChanged }
 
 func (e *ClientError) Unwrap() error {
 	switch e.Code {
@@ -107,6 +111,8 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 		var envelope contracts.ErrorEnvelope
 		_ = json.Unmarshal(payload, &envelope)
 		rollbackComplete := false
+		runtimeStateKnown := false
+		runtimeStateChanged := false
 		var rotation contracts.RotateDatabasePasswordResponse
 		if json.Unmarshal(payload, &rotation) == nil {
 			rollbackComplete = rotation.RolledBack
@@ -119,6 +125,8 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 				if json.Unmarshal(payload, &reconcile) == nil && reconcile.Error != nil {
 					envelope.Error = *reconcile.Error
 					rollbackComplete = reconcile.RolledBack
+					runtimeStateKnown = true
+					runtimeStateChanged = reconcile.RuntimeChanged
 				}
 			}
 		}
@@ -129,7 +137,7 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 			code, local = "PROVISIONER_ERROR", "Provisioner request failed"
 		}
 		message = local
-		return &ClientError{Code: code, Message: message, Status: response.StatusCode, RollbackComplete: rollbackComplete}
+		return &ClientError{Code: code, Message: message, Status: response.StatusCode, RollbackComplete: rollbackComplete, RuntimeStateKnown: runtimeStateKnown, RuntimeStateChanged: runtimeStateChanged}
 	}
 	if output != nil && response.StatusCode != http.StatusNoContent {
 		decoder := json.NewDecoder(response.Body)

@@ -32,3 +32,15 @@ func TestSameServicesAcceptsConcreteGatewayProjection(t *testing.T) {
 		t.Fatal("gateway implementation should normalize to api-gw")
 	}
 }
+
+func TestPreRuntimeFailureRestoresAdmittedConfigurationState(t *testing.T) {
+	if !shouldRestoreConfiguration(&contracts.ReconcileFailure{RuntimeChanged: false}) {
+		t.Fatal("render/stage failure must restore the admitted snapshot")
+	}
+	if shouldRestoreConfiguration(&contracts.ReconcileFailure{RuntimeChanged: true, RollbackSucceeded: false}) {
+		t.Fatal("unrecovered runtime failure must not pretend Manager state was restored")
+	}
+	if !shouldRestoreConfiguration(&contracts.ReconcileFailure{RuntimeChanged: true, RollbackSucceeded: true}) {
+		t.Fatal("confirmed runtime rollback must restore the admitted snapshot")
+	}
+}

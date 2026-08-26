@@ -31,7 +31,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				return err
 			}
 			if result.Error != nil {
-				return &contracts.ReconcileFailure{Response: result, RollbackSucceeded: result.RolledBack}
+				return &contracts.ReconcileFailure{Response: result, RollbackSucceeded: result.RolledBack, RuntimeChanged: result.RuntimeChanged}
 			}
 			return nil
 		}
@@ -53,12 +53,15 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				return err
 			}
 		}
+		published := false
 		fail := func(err error) error {
 			var outcome *contracts.ReconcileFailure
 			if !errors.As(err, &outcome) {
 				outcome = &contracts.ReconcileFailure{Cause: err}
 			}
+			outcome.RuntimeChanged = published
 			outcome.Response = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: metadata.Revision, RolledBack: outcome.RollbackSucceeded, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Project runtime reconciliation failed"}}
+			outcome.Response.RuntimeChanged = published
 			result = outcome.Response
 			encoded, _ := json.Marshal(result)
 			metadata.Idempotency[request.IdempotencyKey] = encoded
@@ -90,7 +93,6 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		newServices := append([]string(nil), rendered.EnabledComposeServices...)
 		disabled := difference(previousServices, newServices)
 		added := difference(newServices, previousServices)
-		published := false
 		rollback := func(cause error) error {
 			var cleanupErr error
 			if published && len(added) > 0 {

@@ -46,13 +46,20 @@ func (backend *Backend) ConfirmDatabasePasswordRotation(ctx context.Context, req
 // RollbackDatabasePassword compensates a successful runtime rotation when the
 // Manager cannot publish its encrypted secret envelope.
 func (backend *Backend) RollbackDatabasePassword(ctx context.Context, request contracts.RotateDatabasePasswordRequest) error {
+	if request.Slug == "" {
+		return contracts.ErrInvalidReconcileRevision
+	}
+	_, err := backend.projectFS.WithProjectMetadataLock(request.Slug, func(metadata *projectfs.Metadata) error {
+		return backend.rollbackDatabasePasswordLocked(ctx, request, metadata)
+	})
+	return err
+}
+
+func (backend *Backend) rollbackDatabasePasswordLocked(ctx context.Context, request contracts.RotateDatabasePasswordRequest, metadata *projectfs.Metadata) error {
 	if request.OperationKind != "ROLLBACK_DATABASE_PASSWORD" || request.OldPassword == "" || request.NewPassword == "" {
 		return contracts.ErrInvalidReconcileRevision
 	}
-	metadata, err := backend.projectFS.Metadata(request.Slug)
-	if err != nil {
-		return err
-	}
+	var err error
 	if stored, ok := metadata.Idempotency[request.IdempotencyKey]; ok {
 		var prior contracts.RotateDatabasePasswordResponse
 		if json.Unmarshal(stored, &prior) == nil && prior.RolledBack {
@@ -136,18 +143,13 @@ func (backend *Backend) RollbackDatabasePassword(ctx context.Context, request co
 	// PostgreSQL and the running consumers. This is an idempotent durable commit.
 	result := contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: true}
 	encoded, _ := json.Marshal(result)
-	if _, err := backend.projectFS.UpdateMetadata(request.Slug, func(next *projectfs.Metadata) error {
-		if next.ProjectID != request.ProjectID || next.Revision != request.NextRevision {
-			return contracts.ErrStaleConfigRevision
-		}
-		next.Revision = request.ExpectedRevision
-		next.Configuration.Revision = request.ExpectedRevision
-		next.Rotation = nil
-		next.Idempotency[request.IdempotencyKey] = encoded
-		return nil
-	}); err != nil {
-		return err
+	if metadata.ProjectID != request.ProjectID || metadata.Revision != request.NextRevision {
+		return contracts.ErrStaleConfigRevision
 	}
+	metadata.Revision = request.ExpectedRevision
+	metadata.Configuration.Revision = request.ExpectedRevision
+	metadata.Rotation = nil
+	metadata.Idempotency[request.IdempotencyKey] = encoded
 	return nil
 }
 
@@ -161,7 +163,7 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		defer func() {
 			var failure *contracts.ReconcileFailure
 			if errors.As(callbackErr, &failure) {
-				result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
+				result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
 				if raw, marshalErr := json.Marshal(result); marshalErr == nil {
 					metadata.Idempotency[request.IdempotencyKey] = raw
 				}
@@ -202,7 +204,22 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 			return oldRefErr
 		}
 		oldRef := compose.ProjectRef{Slug: request.Slug, Dir: oldRuntimeRef.ProjectDir, ComposeFile: oldRuntimeRef.ComposeFile, EnvFile: oldRuntimeRef.EnvFile}
-		metadata.Rotation = &projectfs.RotationJournal{OperationID: request.OperationID, Phase: "prepared", OldGeneration: filepath.Base(filepath.Dir(oldRef.ComposeFile)), ExpectedRevision: request.ExpectedRevision, NextRevision: request.NextRevision}
+		// A retry after a lost response must preserve the journal's original
+		// generation. The current pointer may already be the new generation.
+		if journal := metadata.Rotation; journal != nil && journal.OperationID == request.OperationID && journal.OldGeneration != "" {
+			if journalRef, journalErr := backend.projectFS.RuntimeGeneration(request.Slug, journal.OldGeneration); journalErr == nil {
+				oldRef = compose.ProjectRef{Slug: request.Slug, Dir: journalRef.ProjectDir, ComposeFile: journalRef.ComposeFile, EnvFile: journalRef.EnvFile}
+			}
+		}
+		oldGeneration := filepath.Base(filepath.Dir(oldRef.ComposeFile))
+		if metadata.Rotation == nil || metadata.Rotation.OperationID != request.OperationID {
+			metadata.Rotation = &projectfs.RotationJournal{OperationID: request.OperationID, Phase: "prepared", OldGeneration: oldGeneration, ExpectedRevision: request.ExpectedRevision, NextRevision: request.NextRevision}
+		} else {
+			// Keep OldGeneration and any durable phase from the first attempt;
+			// never overwrite the recovery anchor with the current pointer.
+			metadata.Rotation.ExpectedRevision = request.ExpectedRevision
+			metadata.Rotation.NextRevision = request.NextRevision
+		}
 		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
 			return err
 		}
@@ -242,13 +259,13 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		services := without(enabledServices(metadata.Configuration), "db")
 		if err := rotator.RotateDatabasePassword(ctx, ref, request.OldPassword, request.NewPassword); err != nil {
 			_ = restoreRuntime()
-			return &contracts.ReconcileFailure{Cause: errors.New("database password update failed"), RollbackSucceeded: false}
+			return &contracts.ReconcileFailure{Cause: errors.New("database password update failed"), RollbackSucceeded: false, RuntimeChanged: true}
 		}
 		metadata.Rotation.Phase = "db-rotated"
 		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
 			rollbackErr := rotator.RotateDatabasePassword(ctx, oldRef, request.NewPassword, request.OldPassword)
 			restoreErr := restoreRuntime()
-			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil && restoreErr == nil}
+			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil && restoreErr == nil, RuntimeChanged: true}
 		}
 		rollback := func() error {
 			if err := restoreRuntime(); err != nil {
@@ -266,22 +283,22 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		if err := backend.runner.Recreate(ctx, ref, services...); err != nil {
 			rollbackErr := rollback()
 			restoreErr := restoreRuntime()
-			return &contracts.ReconcileFailure{Cause: errors.New("dependent service restart failed"), RollbackSucceeded: rollbackErr == nil && restoreErr == nil}
+			return &contracts.ReconcileFailure{Cause: errors.New("dependent service restart failed"), RollbackSucceeded: rollbackErr == nil && restoreErr == nil, RuntimeChanged: true}
 		}
 		if err := backend.waitHealthy(ctx, request.Slug, enabledServices(metadata.Configuration)); err != nil {
 			if rollbackErr := rollback(); rollbackErr != nil {
 				_ = restoreRuntime()
-				return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: false}
+				return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: false, RuntimeChanged: true}
 			}
 			if restoreErr := restoreRuntime(); restoreErr != nil {
-				return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: false}
+				return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: false, RuntimeChanged: true}
 			}
-			return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: true}
+			return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: true, RuntimeChanged: true}
 		}
 		metadata.Rotation.Phase = "services-verified"
 		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
 			rollbackErr := rollback()
-			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil}
+			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil, RuntimeChanged: true}
 		}
 		metadata.Rotation.Phase = "provisioner-committed"
 		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
@@ -304,7 +321,7 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		return compensation()
 	})
 	if err == nil && result.Error != nil {
-		return result, &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: result.RolledBack}
+		return result, &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: result.RolledBack, RuntimeChanged: result.RuntimeChanged}
 	}
 	if errors.Is(err, contracts.ErrStaleConfigRevision) || errors.Is(err, contracts.ErrInvalidReconcileRevision) {
 		return contracts.RotateDatabasePasswordResponse{}, err
@@ -312,13 +329,13 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 	if err != nil {
 		var failure *contracts.ReconcileFailure
 		if errors.As(err, &failure) {
-			result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
+			result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
 			return result, failure
 		}
 		var publication *projectfs.MetadataPublicationError
 		if errors.As(err, &publication) {
-			result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: publication.RollbackSucceeded, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
-			return result, &contracts.ReconcileFailure{Cause: errors.New("rotation metadata publication failed"), RollbackSucceeded: publication.RollbackSucceeded}
+			result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: publication.RollbackSucceeded, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
+			return result, &contracts.ReconcileFailure{Cause: errors.New("rotation metadata publication failed"), RollbackSucceeded: publication.RollbackSucceeded, RuntimeChanged: true}
 		}
 		result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
 		return result, &contracts.ReconcileFailure{Cause: errors.New("rotation metadata publication failed"), RollbackSucceeded: false}
