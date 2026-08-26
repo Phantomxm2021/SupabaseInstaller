@@ -38,6 +38,12 @@ func (s *ConfigurationService) Get(ctx context.Context, projectID string) (store
 	return s.store.GetConfiguration(ctx, projectID)
 }
 
+// ResetLegacyAuthConfigurations permanently replaces persisted Auth sections
+// created before the current mailer configuration existed.
+func (s *ConfigurationService) ResetLegacyAuthConfigurations(ctx context.Context) (int, error) {
+	return s.store.ResetLegacyAuthConfigurations(ctx, DefaultConfiguration(contracts.PresetLightweight).Auth)
+}
+
 // GetDesired returns the latest aggregate, including an unapplied revision.
 // It is the correct merge base for durable operations queued behind runtime
 // reconciliation.

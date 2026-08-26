@@ -3,6 +3,7 @@ package project
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -57,6 +58,41 @@ func TestConfigurationServiceRejectsInvalidServiceClosure(t *testing.T) {
 	var validation *ValidationError
 	if !errors.As(err, &validation) || validation.Fields["services.gateway"] == "" {
 		t.Fatalf("expected field validation for invalid closure, got %v", err)
+	}
+}
+
+func TestConfigurationServiceResetsLegacyAuthConfiguration(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "legacy.example.com", SiteURL: "https://legacy.example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "project-legacy-auth", Slug: "legacy", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	legacy := cfg
+	legacy.Auth.Mailer = contracts.MailerConfig{}
+	payload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DB().Exec(`UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=1`, string(payload), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	service := NewConfigurationService(database, nil, time.Now)
+	count, err := service.ResetLegacyAuthConfigurations(context.Background())
+	if err != nil || count != 1 {
+		t.Fatalf("ResetLegacyAuthConfigurations() = %d, %v; want 1, nil", count, err)
+	}
+	got, err := database.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Configuration.Auth.Mailer.Templates.Confirmation.Subject != "Confirm your signup" || got.Configuration.Auth.Mailer.Notifications.PasswordChanged.Enabled {
+		t.Fatalf("legacy Auth was not replaced with current defaults: %#v", got.Configuration.Auth.Mailer)
 	}
 }
 

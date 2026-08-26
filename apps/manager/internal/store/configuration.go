@@ -352,6 +352,74 @@ func (s *Store) GetDesiredConfiguration(ctx context.Context, projectID string) (
 	return snapshot, nil
 }
 
+// ResetLegacyAuthConfigurations replaces the obsolete Auth aggregate for
+// projects that predate the typed mailer model. It is an intentional data
+// migration, not a read-time compatibility path.
+func (s *Store) ResetLegacyAuthConfigurations(ctx context.Context, defaults contracts.AuthConfig) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, config_revision, last_good_revision FROM projects`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	type projectRevision struct {
+		id                 string
+		revision, lastGood int64
+	}
+	var projects []projectRevision
+	for rows.Next() {
+		var item projectRevision
+		if err := rows.Scan(&item.id, &item.revision, &item.lastGood); err != nil {
+			return 0, err
+		}
+		projects = append(projects, item)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	updated := 0
+	for _, item := range projects {
+		if item.revision != item.lastGood {
+			continue
+		}
+		var raw string
+		err := s.db.QueryRowContext(ctx, `SELECT config_json FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, item.id, item.revision).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return updated, err
+		}
+		var cfg contracts.ProjectConfiguration
+		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+			return updated, fmt.Errorf("decode legacy configuration %s: %w", item.id, err)
+		}
+		if cfg.Auth.Mailer != (contracts.MailerConfig{}) {
+			continue
+		}
+		cfg.Auth = defaults
+		cfg.Auth.Enabled = cfg.Services.Auth
+		cfg.Revision = item.revision
+		payload, err := json.Marshal(redactConfiguration(cfg))
+		if err != nil {
+			return updated, err
+		}
+		err = s.InTx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, `UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=?`, string(payload), item.id, item.revision); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id=? AND (kind='smtp.password' OR kind='phone.secret' OR kind LIKE 'oauth.%.secret')`, item.id); err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			return updated, err
+		}
+		updated++
+	}
+	return updated, nil
+}
+
 // PersistAllocatedConfiguration records server-owned ports without creating a
 // user configuration revision. Allocation happens during installation before
 // the first desired revision is rendered, so the immutable create revision
