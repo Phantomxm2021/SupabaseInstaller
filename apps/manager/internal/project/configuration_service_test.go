@@ -346,3 +346,28 @@ func TestServiceCreationIgnoresMaliciousSecretMarkers(t *testing.T) {
 		t.Fatalf("malicious marker creation persisted %d secrets", count)
 	}
 }
+
+func TestPreparePatchBackfillsNewAuthDefaultsForLegacyConfiguration(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	// Simulate a configuration persisted before RateLimits and MFA existed.
+	cfg.Auth.RateLimits = contracts.RateLimitConfig{}
+	cfg.Auth.MFA = contracts.MFAConfig{}
+	project := contracts.Project{ID: "project-legacy-auth", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	service := NewConfigurationService(database, nil, time.Now)
+	got, err := service.PreparePatch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &cfg.General})
+	if err != nil {
+		t.Fatalf("PreparePatch() error = %v", err)
+	}
+	if got.Auth.RateLimits.EmailSent != 30 || got.Auth.MFA.MaxEnrolledFactors != 10 || got.Auth.MFA.PhoneOTPLength != 6 || !got.Auth.MFA.TOTPEnrollEnabled || !got.Auth.MFA.TOTPVerifyEnabled {
+		t.Fatalf("legacy Auth defaults were not backfilled: %#v %#v", got.Auth.RateLimits, got.Auth.MFA)
+	}
+}

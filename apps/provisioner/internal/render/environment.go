@@ -60,6 +60,18 @@ func renderEnvironment(input Input) (string, string, error) {
 		"SMTP_PORT": strconv.Itoa(cfg.Auth.SMTP.Port), "SMTP_USER": cfg.Auth.SMTP.Username,
 		"SMTP_PASS": "", "SMTP_SENDER_NAME": cfg.Auth.SMTP.SenderName,
 		"SECURE_EMAIL_CHANGE_ENABLED": boolString(cfg.Auth.Email.SecureEmailChange),
+		"RATE_LIMIT_EMAIL_SENT":       strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.EmailSent, 30)),
+		"RATE_LIMIT_SMS_SENT":         strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.SMSSent, 30)),
+		"RATE_LIMIT_TOKEN_REFRESH":    strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.TokenRefresh, 150)),
+		"RATE_LIMIT_VERIFY":           strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.TokenVerification, 30)),
+		"RATE_LIMIT_ANONYMOUS_USERS":  strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.AnonymousUsers, 30)),
+		"RATE_LIMIT_OTP":              strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.SignupsAndSignins, 30)),
+		"MFA_TOTP_ENROLL_ENABLED":     boolString(cfg.Auth.MFA.TOTPEnrollEnabled),
+		"MFA_TOTP_VERIFY_ENABLED":     boolString(cfg.Auth.MFA.TOTPVerifyEnabled),
+		"MFA_PHONE_ENROLL_ENABLED":    boolString(cfg.Auth.MFA.PhoneEnrollEnabled),
+		"MFA_PHONE_VERIFY_ENABLED":    boolString(cfg.Auth.MFA.PhoneVerifyEnabled),
+		"MFA_MAX_ENROLLED_FACTORS":    strconv.Itoa(rateLimitOrDefault(cfg.Auth.MFA.MaxEnrolledFactors, 10)),
+		"MFA_PHONE_OTP_LENGTH":        strconv.Itoa(rateLimitOrDefault(cfg.Auth.MFA.PhoneOTPLength, 6)),
 		"STORAGE_BACKEND":             storageBackend(cfg.Storage.Backend), "GLOBAL_S3_BUCKET": cfg.Storage.Bucket,
 		"GLOBAL_S3_ENDPOINT": cfg.Storage.Endpoint, "GLOBAL_S3_FORCE_PATH_STYLE": boolString(cfg.Storage.ForcePathStyle),
 		"GLOBAL_S3_PROTOCOL": storageProtocol(cfg.Storage.Endpoint),
@@ -157,6 +169,13 @@ func renderEnvironment(input Input) (string, string, error) {
 		return "", "", err
 	}
 	return env, renderDotEnv("", functionValues), nil
+}
+
+func rateLimitOrDefault(value, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	return value
 }
 
 func validateDotEnvValues(values map[string]string) error {
@@ -332,6 +351,16 @@ func injectAuthEnvironment(raw any, input Input) error {
 	set := func(key, value string) { env[key] = "${" + value + "}" }
 	set("GOTRUE_DISABLE_SIGNUP", "DISABLE_SIGNUP")
 	set("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED", "SECURE_EMAIL_CHANGE_ENABLED")
+	for gotrueKey, envKey := range map[string]string{
+		"GOTRUE_RATE_LIMIT_EMAIL_SENT": "RATE_LIMIT_EMAIL_SENT", "GOTRUE_RATE_LIMIT_SMS_SENT": "RATE_LIMIT_SMS_SENT",
+		"GOTRUE_RATE_LIMIT_TOKEN_REFRESH": "RATE_LIMIT_TOKEN_REFRESH", "GOTRUE_RATE_LIMIT_VERIFY": "RATE_LIMIT_VERIFY",
+		"GOTRUE_RATE_LIMIT_ANONYMOUS_USERS": "RATE_LIMIT_ANONYMOUS_USERS", "GOTRUE_RATE_LIMIT_OTP": "RATE_LIMIT_OTP",
+		"GOTRUE_MFA_TOTP_ENROLL_ENABLED": "MFA_TOTP_ENROLL_ENABLED", "GOTRUE_MFA_TOTP_VERIFY_ENABLED": "MFA_TOTP_VERIFY_ENABLED",
+		"GOTRUE_MFA_PHONE_ENROLL_ENABLED": "MFA_PHONE_ENROLL_ENABLED", "GOTRUE_MFA_PHONE_VERIFY_ENABLED": "MFA_PHONE_VERIFY_ENABLED",
+		"GOTRUE_MFA_MAX_ENROLLED_FACTORS": "MFA_MAX_ENROLLED_FACTORS", "GOTRUE_MFA_PHONE_OTP_LENGTH": "MFA_PHONE_OTP_LENGTH",
+	} {
+		set(gotrueKey, envKey)
+	}
 	if input.Configuration.Auth.Phone.Enabled {
 		set("GOTRUE_SMS_PROVIDER", "SMS_PROVIDER")
 		for _, envKey := range phoneFieldKeys[input.Configuration.Auth.Phone.Provider] {

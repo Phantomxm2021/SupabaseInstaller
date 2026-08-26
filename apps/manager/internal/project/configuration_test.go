@@ -20,6 +20,30 @@ func TestDefaultConfiguration(t *testing.T) {
 	if !got.Auth.Email.Enabled || got.Auth.Phone.Enabled || got.Auth.AnonymousSignIn {
 		t.Fatalf("unexpected Auth defaults: %#v", got.Auth)
 	}
+	if got.Auth.RateLimits != (contracts.RateLimitConfig{EmailSent: 30, SMSSent: 30, TokenRefresh: 150, TokenVerification: 30, AnonymousUsers: 30, SignupsAndSignins: 30}) {
+		t.Fatalf("unexpected Auth rate limit defaults: %#v", got.Auth.RateLimits)
+	}
+	if got.Auth.MFA != (contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6}) {
+		t.Fatalf("unexpected Auth MFA defaults: %#v", got.Auth.MFA)
+	}
+}
+
+func TestAuthRateLimitsAndMFAValidation(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.RateLimits.EmailSent = -1
+	cfg.Auth.RateLimits.TokenRefresh = 0
+	cfg.Auth.MFA.MaxEnrolledFactors = 0
+	cfg.Auth.MFA.PhoneOTPLength = 3
+	err := ValidateConfiguration(cfg)
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("ValidateConfiguration() error = %v, want ValidationError", err)
+	}
+	for _, field := range []string{"auth.rateLimits.emailSent", "auth.rateLimits.tokenRefresh", "auth.mfa.maxEnrolledFactors", "auth.mfa.phoneOtpLength"} {
+		if validation.Fields[field] == "" {
+			t.Errorf("missing validation error for %s: %#v", field, validation.Fields)
+		}
+	}
 }
 
 func TestOAuthProviderRegistryIsStable(t *testing.T) {

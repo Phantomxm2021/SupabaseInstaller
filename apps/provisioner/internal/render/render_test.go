@@ -173,6 +173,32 @@ func TestRenderCustomAuthAndSMTP(t *testing.T) {
 	}
 }
 
+func TestRenderAuthRateLimitsAndMFA(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Auth.RateLimits = contracts.RateLimitConfig{EmailSent: 45, SMSSent: 25, TokenRefresh: 150, TokenVerification: 20, AnonymousUsers: 10, SignupsAndSignins: 15}
+	cfg.Auth.MFA = contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, PhoneEnrollEnabled: true, PhoneVerifyEnabled: true, MaxEnrolledFactors: 4, PhoneOTPLength: 8}
+	out, err := Project(Input{Slug: "auth-limits", APIPort: 18001, Configuration: cfg, TemplateCompose: []byte(testCompose)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"RATE_LIMIT_EMAIL_SENT=45", "RATE_LIMIT_SMS_SENT=25", "RATE_LIMIT_TOKEN_REFRESH=150", "RATE_LIMIT_VERIFY=20", "RATE_LIMIT_ANONYMOUS_USERS=10", "RATE_LIMIT_OTP=15",
+		"MFA_TOTP_ENROLL_ENABLED=true", "MFA_TOTP_VERIFY_ENABLED=true", "MFA_PHONE_ENROLL_ENABLED=true", "MFA_PHONE_VERIFY_ENABLED=true", "MFA_MAX_ENROLLED_FACTORS=4", "MFA_PHONE_OTP_LENGTH=8",
+	} {
+		if !strings.Contains(out.Env, line) {
+			t.Errorf("missing %q from env", line)
+		}
+	}
+	for _, line := range []string{
+		"GOTRUE_RATE_LIMIT_EMAIL_SENT: ${RATE_LIMIT_EMAIL_SENT}", "GOTRUE_RATE_LIMIT_SMS_SENT: ${RATE_LIMIT_SMS_SENT}", "GOTRUE_RATE_LIMIT_TOKEN_REFRESH: ${RATE_LIMIT_TOKEN_REFRESH}", "GOTRUE_RATE_LIMIT_VERIFY: ${RATE_LIMIT_VERIFY}", "GOTRUE_RATE_LIMIT_ANONYMOUS_USERS: ${RATE_LIMIT_ANONYMOUS_USERS}", "GOTRUE_RATE_LIMIT_OTP: ${RATE_LIMIT_OTP}",
+		"GOTRUE_MFA_TOTP_ENROLL_ENABLED: ${MFA_TOTP_ENROLL_ENABLED}", "GOTRUE_MFA_TOTP_VERIFY_ENABLED: ${MFA_TOTP_VERIFY_ENABLED}", "GOTRUE_MFA_PHONE_ENROLL_ENABLED: ${MFA_PHONE_ENROLL_ENABLED}", "GOTRUE_MFA_PHONE_VERIFY_ENABLED: ${MFA_PHONE_VERIFY_ENABLED}", "GOTRUE_MFA_MAX_ENROLLED_FACTORS: ${MFA_MAX_ENROLLED_FACTORS}", "GOTRUE_MFA_PHONE_OTP_LENGTH: ${MFA_PHONE_OTP_LENGTH}",
+	} {
+		if !strings.Contains(out.Compose, line) {
+			t.Errorf("missing %q from compose", line)
+		}
+	}
+}
+
 func TestRenderFunctionsSecretsStayInFunctionsEnv(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Services.Functions = true

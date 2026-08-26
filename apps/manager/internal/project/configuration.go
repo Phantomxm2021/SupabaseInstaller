@@ -47,9 +47,11 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		General:  contracts.GeneralConfig{SupabaseVersion: "self-hosted/v0.8.0"},
 		Services: ApplyPreset(preset),
 		Auth: contracts.AuthConfig{
-			Enabled: true,
-			Email:   contracts.EmailAuthConfig{Enabled: true, AllowSignup: true},
-			SMTP:    contracts.SMTPConfig{Port: 587},
+			Enabled:    true,
+			Email:      contracts.EmailAuthConfig{Enabled: true, AllowSignup: true},
+			SMTP:       contracts.SMTPConfig{Port: 587},
+			RateLimits: contracts.RateLimitConfig{EmailSent: 30, SMSSent: 30, TokenRefresh: 150, TokenVerification: 30, AnonymousUsers: 30, SignupsAndSignins: 30},
+			MFA:        contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6},
 		},
 		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
@@ -57,6 +59,44 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		Database:  contracts.DatabaseConfig{Version: "15", MaxConnections: 100},
 		Pooler:    contracts.PoolerConfig{PoolSize: 20, MaxClientConnections: 100},
 		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},
+	}
+}
+
+// backfillAuthDefaults upgrades persisted configurations created before these
+// typed Auth fields were introduced. Zero is otherwise invalid for all of the
+// counters, so it is an unambiguous legacy representation.
+func backfillAuthDefaults(auth *contracts.AuthConfig) {
+	if auth.RateLimits.EmailSent == 0 {
+		auth.RateLimits.EmailSent = 30
+	}
+	if auth.RateLimits.SMSSent == 0 {
+		auth.RateLimits.SMSSent = 30
+	}
+	if auth.RateLimits.TokenRefresh == 0 {
+		auth.RateLimits.TokenRefresh = 150
+	}
+	if auth.RateLimits.TokenVerification == 0 {
+		auth.RateLimits.TokenVerification = 30
+	}
+	if auth.RateLimits.AnonymousUsers == 0 {
+		auth.RateLimits.AnonymousUsers = 30
+	}
+	if auth.RateLimits.SignupsAndSignins == 0 {
+		auth.RateLimits.SignupsAndSignins = 30
+	}
+	legacyMFA := auth.MFA.MaxEnrolledFactors == 0 && auth.MFA.PhoneOTPLength == 0
+	if auth.MFA.MaxEnrolledFactors == 0 {
+		auth.MFA.MaxEnrolledFactors = 10
+	}
+	if auth.MFA.PhoneOTPLength == 0 {
+		auth.MFA.PhoneOTPLength = 6
+	}
+	// The previous runtime behavior was GoTrue's default-enabled TOTP. Both
+	// false is the only legacy zero-value signature; a caller can still turn
+	// either capability off after migration.
+	if legacyMFA && !auth.MFA.TOTPEnrollEnabled && !auth.MFA.TOTPVerifyEnabled {
+		auth.MFA.TOTPEnrollEnabled = true
+		auth.MFA.TOTPVerifyEnabled = true
 	}
 }
 
@@ -199,6 +239,8 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 		validation.add("auth.email.secureEmailChange", "must match doubleConfirmChanges for the pinned runtime capability")
 		validation.add("auth.email.doubleConfirmChanges", "must match secureEmailChange for the pinned runtime capability")
 	}
+	validateRateLimits(auth.RateLimits, validation)
+	validateMFA(auth.MFA, validation)
 	validateSecretInput(auth.SMTP.Password, "auth.smtp.password", validation)
 	validatePhone(auth.Phone, validation)
 	if auth.SMTP.Enabled {
@@ -277,6 +319,26 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 				validation.add(field+".fields."+key, "must be an absolute http or https URL")
 			}
 		}
+	}
+}
+
+func validateRateLimits(limits contracts.RateLimitConfig, validation *ValidationError) {
+	for field, value := range map[string]int{
+		"emailSent": limits.EmailSent, "smsSent": limits.SMSSent, "tokenRefresh": limits.TokenRefresh,
+		"tokenVerification": limits.TokenVerification, "anonymousUsers": limits.AnonymousUsers, "signupsAndSignins": limits.SignupsAndSignins,
+	} {
+		if value < 1 || value > 1000000 {
+			validation.add("auth.rateLimits."+field, "must be between 1 and 1000000")
+		}
+	}
+}
+
+func validateMFA(mfa contracts.MFAConfig, validation *ValidationError) {
+	if mfa.MaxEnrolledFactors < 1 || mfa.MaxEnrolledFactors > 100 {
+		validation.add("auth.mfa.maxEnrolledFactors", "must be between 1 and 100")
+	}
+	if mfa.PhoneOTPLength < 4 || mfa.PhoneOTPLength > 10 {
+		validation.add("auth.mfa.phoneOtpLength", "must be between 4 and 10 digits")
 	}
 }
 

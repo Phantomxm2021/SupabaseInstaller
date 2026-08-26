@@ -68,6 +68,28 @@ type SMTPConfig struct {
 	SenderName  string      `json:"senderName"`
 }
 
+// RateLimitConfig configures the pinned GoTrue endpoint limits. Values are
+// counts per GoTrue's built-in interval; the manager deliberately does not
+// expose arbitrary environment variables.
+type RateLimitConfig struct {
+	EmailSent         int `json:"emailSent"`
+	SMSSent           int `json:"smsSent"`
+	TokenRefresh      int `json:"tokenRefresh"`
+	TokenVerification int `json:"tokenVerification"`
+	AnonymousUsers    int `json:"anonymousUsers"`
+	SignupsAndSignins int `json:"signupsAndSignins"`
+}
+
+// MFAConfig is the supported MFA subset of the pinned GoTrue runtime.
+type MFAConfig struct {
+	TOTPEnrollEnabled  bool `json:"totpEnrollEnabled"`
+	TOTPVerifyEnabled  bool `json:"totpVerifyEnabled"`
+	PhoneEnrollEnabled bool `json:"phoneEnrollEnabled"`
+	PhoneVerifyEnabled bool `json:"phoneVerifyEnabled"`
+	MaxEnrolledFactors int  `json:"maxEnrolledFactors"`
+	PhoneOTPLength     int  `json:"phoneOtpLength"`
+}
+
 type OAuthProviderConfig struct {
 	Enabled   bool              `json:"enabled"`
 	ClientID  string            `json:"clientId"`
@@ -86,6 +108,8 @@ type AuthConfig struct {
 	RedirectURLs    []string                       `json:"redirectUrls,omitempty"`
 	OAuth           map[string]OAuthProviderConfig `json:"oauth,omitempty"`
 	SMTP            SMTPConfig                     `json:"smtp"`
+	RateLimits      RateLimitConfig                `json:"rateLimits"`
+	MFA             MFAConfig                      `json:"mfa"`
 }
 
 type StorageBackend string
