@@ -50,31 +50,103 @@ func TestStageRuntimeFilesCommitsAndRestoresAsASet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(mustRead(t, filepath.Join(project, "docker-compose.yml"))) != "old-compose" {
+	runtimePath, err := root.RuntimePath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(runtimePath); !os.IsNotExist(err) {
 		t.Fatal("stage published before commit")
 	}
 	if err := commit(); err != nil {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{"docker-compose.yml": "new-compose", ".env": "new-env", ".env.functions": "FUNCTION_SECRET=secret"} {
-		if got := string(mustRead(t, filepath.Join(project, name))); got != want {
+		if got := string(mustRead(t, filepath.Join(runtimePath, name))); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
-		if info, err := os.Stat(filepath.Join(project, name)); err != nil || info.Mode().Perm() != 0o600 {
+		if info, err := os.Stat(filepath.Join(runtimePath, name)); err != nil || info.Mode().Perm() != 0o600 {
 			t.Errorf("%s mode = %v, want 0600", name, info.Mode().Perm())
 		}
 	}
 	if err := restore(); err != nil {
 		t.Fatal(err)
 	}
-	if string(mustRead(t, filepath.Join(project, "docker-compose.yml"))) != "old-compose" || string(mustRead(t, filepath.Join(project, ".env"))) != "old-env" {
+	if string(mustRead(t, filepath.Join(project, "docker-compose.yml"))) != "old-compose" {
 		t.Fatal("restore did not reinstall prior set")
 	}
-	if _, err := os.Stat(filepath.Join(project, ".env.functions")); !os.IsNotExist(err) {
-		t.Fatal("restore retained a file absent from prior set")
+	if _, err := os.Lstat(runtimePath); !os.IsNotExist(err) {
+		t.Fatal("restore retained the candidate pointer")
 	}
-	if got := string(mustRead(t, filepath.Join(project, ".manager-last-good", "docker-compose.yml"))); got != "old-compose" {
-		t.Fatalf("last-good = %q", got)
+}
+
+func TestStageRuntimeFilesCopiesInputAndCleansAbortCandidates(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := RuntimeFiles{Compose: []byte("compose-before"), Env: []byte("env-before"), FunctionsEnv: []byte("fn-before")}
+	restore, commit, err := root.StageRuntimeFiles("bee", files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files.Compose[0] = 'X'
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	runtimePath, _ := root.RuntimePath("bee")
+	if got := string(mustRead(t, filepath.Join(runtimePath, "docker-compose.yml"))); got != "compose-before" {
+		t.Fatalf("staged input was not copied: %q", got)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoot := filepath.Dir(runtimePath)
+	matches, _ := filepath.Glob(filepath.Join(runtimeRoot, ".candidate-*"))
+	if len(matches) != 0 {
+		t.Fatalf("abandoned candidates remain: %v", matches)
+	}
+
+	abortRestore, _, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("abort"), Env: []byte("abort"), FunctionsEnv: []byte("abort")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := abortRestore(); err != nil {
+		t.Fatal(err)
+	}
+	matches, _ = filepath.Glob(filepath.Join(runtimeRoot, ".candidate-*"))
+	if len(matches) != 0 {
+		t.Fatalf("aborted candidates remain: %v", matches)
+	}
+}
+
+func TestStageRuntimeFilesRestoreSwitchesToPriorGeneration(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commit, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("one"), Env: []byte("one"), FunctionsEnv: []byte("one")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	restore, commit, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("two"), Env: []byte("two"), FunctionsEnv: []byte("two")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	runtimePath, _ := root.RuntimePath("bee")
+	if got := string(mustRead(t, filepath.Join(runtimePath, "docker-compose.yml"))); got != "two" {
+		t.Fatal("second generation was not selected")
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, filepath.Join(runtimePath, "docker-compose.yml"))); got != "one" {
+		t.Fatalf("restore selected %q, want prior generation", got)
 	}
 }
 

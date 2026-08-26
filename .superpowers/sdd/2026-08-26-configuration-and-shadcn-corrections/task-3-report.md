@@ -35,4 +35,18 @@ Runtime staging now uses `projectfs.StageRuntimeFiles`, which deep-copies and fs
 
 ## Concerns
 
-- Multi-file publication is implemented with staged, fsynced files plus rollback on write failure; filesystem-level crash consistency across three independent renames remains dependent on the host filesystem.
+- Compose callers must use `Root.RuntimePath(slug)` so they resolve the atomically selected generation; the compatibility `WriteRuntimeFiles` mirror remains for legacy callers until reconciliation migrates them.
+
+## Fix Round 1
+
+Addressed the review findings by merging the pinned PostgreSQL/gateway/logs/Caddy/S3 overlays, adding explicit dependency closure validation, normalizing Storage backends and R2 endpoints, wiring Functions through `.env.functions`, clearing template placeholder secrets, enforcing typed RuntimeSecrets markers, adding Realtime/DB/Supavisor tuning, correcting OAuth/Phone registries, hardening dotenv encoding and image-tag validation, and replacing sequential runtime publication with generation directories plus an atomic `current` symlink. The prior committed generation remains available for restore; aborted candidates are removed.
+
+The earlier representative command appeared to hang because its environment-gated helper was invoked without a reliable exported output directory and the shell lacked `timeout`; the bounded rerun with explicit `env RENDER_OUTPUT=...` completed in 0.01s. The final representative helper is deterministic (`t.TempDir`) and no longer skips.
+
+Named GREEN verification:
+
+- `go test -v -timeout 30s ./apps/provisioner/internal/render -run TestWriteRepresentativeRenderFiles -count=1` — PASS.
+- `go test -timeout 2m ./apps/provisioner/internal/render ./apps/provisioner/internal/projectfs` — PASS.
+- `go test -timeout 5m ./apps/provisioner/... ./internal/...` — PASS.
+- `go test -timeout 2m ./apps/provisioner/internal/render -run TestRepresentativeComposeConfig -count=1 -v` — PASS; the test executed real `docker compose ... config --quiet` for lightweight, standard, and full generated directories.
+- Focused tests cover golden fixture comparisons, all 20 OAuth providers and special fields, Storage modes/R2/S3 protocol, PostgreSQL 15/17 and gateway choices, Realtime/DB/Pooler tuning, missing RuntimeSecrets, strict dotenv injection, image validation, generation restore/abort cleanup, and post-stage input mutation.

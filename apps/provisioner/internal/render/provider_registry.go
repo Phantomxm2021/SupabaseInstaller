@@ -13,11 +13,11 @@ type providerDefinition struct {
 }
 
 var providerDefinitions = map[string]providerDefinition{
-	"apple": {Name: "APPLE"}, "azure": {Name: "AZURE", Special: map[string]string{"tenantURL": "AZURE_TENANT_URL"}},
+	"apple": {Name: "APPLE"}, "azure": {Name: "AZURE", Special: map[string]string{"tenantUrl": "AZURE_URL"}},
 	"bitbucket": {Name: "BITBUCKET"}, "discord": {Name: "DISCORD"}, "facebook": {Name: "FACEBOOK"},
-	"figma": {Name: "FIGMA"}, "github": {Name: "GITHUB", Special: map[string]string{"enterpriseURL": "GITHUB_URL"}},
-	"gitlab": {Name: "GITLAB", Special: map[string]string{"url": "GITLAB_URL"}}, "google": {Name: "GOOGLE"},
-	"kakao": {Name: "KAKAO"}, "keycloak": {Name: "KEYCLOAK", Special: map[string]string{"realmURL": "KEYCLOAK_URL", "url": "KEYCLOAK_URL"}},
+	"figma": {Name: "FIGMA"}, "github": {Name: "GITHUB", Special: map[string]string{"enterpriseUrl": "GITHUB_URL"}},
+	"gitlab": {Name: "GITLAB", Special: map[string]string{"selfHostedUrl": "GITLAB_URL"}}, "google": {Name: "GOOGLE"},
+	"kakao": {Name: "KAKAO"}, "keycloak": {Name: "KEYCLOAK", Special: map[string]string{"realmUrl": "KEYCLOAK_URL"}},
 	"linkedin_oidc": {Name: "LINKEDIN_OIDC"}, "notion": {Name: "NOTION"}, "slack_oidc": {Name: "SLACK_OIDC"},
 	"snapchat": {Name: "SNAPCHAT"}, "spotify": {Name: "SPOTIFY"}, "twitch": {Name: "TWITCH"}, "twitter": {Name: "TWITTER"},
 	"workos": {Name: "WORKOS"}, "zoom": {Name: "ZOOM"},

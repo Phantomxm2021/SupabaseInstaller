@@ -2,6 +2,37 @@ package render
 
 import "supabase-manager/internal/contracts"
 
+import "fmt"
+
+func validateServiceConfiguration(config contracts.ProjectConfiguration) error {
+	s := config.Services
+	if s.Functions && !s.Gateway {
+		return fmt.Errorf("services.functions: requires services.gateway")
+	}
+	if s.Storage && (!s.Database || !s.REST) {
+		return fmt.Errorf("services.storage: requires services.database and services.rest")
+	}
+	if s.Realtime && !s.Database {
+		return fmt.Errorf("services.realtime: requires services.database")
+	}
+	if s.Supavisor && !s.Database {
+		return fmt.Errorf("services.supavisor: requires services.database")
+	}
+	if s.Logs && (!s.Database || !s.Vector) {
+		return fmt.Errorf("services.logs: requires services.database and services.vector")
+	}
+	if s.Vector && !s.Logs {
+		return fmt.Errorf("services.vector: requires services.logs")
+	}
+	if s.Studio && !s.PostgresMeta {
+		return fmt.Errorf("services.studio: requires services.postgresMeta")
+	}
+	if s.Imgproxy && !s.Storage {
+		return fmt.Errorf("services.imgproxy: requires services.storage")
+	}
+	return nil
+}
+
 // selectServices maps product capabilities to names in the pinned Compose
 // document. It intentionally does not retain unrelated template services.
 func selectServices(config contracts.Services, available map[string]any) map[string]bool {

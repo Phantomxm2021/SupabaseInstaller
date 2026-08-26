@@ -14,3 +14,13 @@ services:
     image: supabase/postgres-meta:v0.96.6
   studio:
     image: supabase/studio:2026.08.03-sha-022b374
+  realtime:
+    image: supabase/realtime:v2.102.3
+  storage:
+    image: supabase/storage-api:v1.60.4
+  imgproxy:
+    image: darthsim/imgproxy:v3.30.1
+  functions:
+    image: supabase/edge-runtime:v1.74.0
+  supavisor:
+    image: supabase/supavisor:2.9.5

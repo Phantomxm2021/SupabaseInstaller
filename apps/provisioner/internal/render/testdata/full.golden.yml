@@ -20,3 +20,7 @@ services:
     image: supabase/edge-runtime:v1.74.0
   supavisor:
     image: supabase/supavisor:2.9.5
+  analytics:
+    image: supabase/logflare:1.43.1
+  vector:
+    image: timberio/vector:0.53.0-alpine
