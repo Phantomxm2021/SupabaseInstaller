@@ -54,14 +54,9 @@ type Services struct {
 type ProjectDraft struct {
 	Name            string               `json:"name"`
 	Slug            string               `json:"slug"`
-	Domain          string               `json:"domain"`
-	SiteURL         string               `json:"siteUrl"`
 	SupabaseVersion string               `json:"supabaseVersion"`
 	Preset          Preset               `json:"preset"`
 	Configuration   ProjectConfiguration `json:"configuration"`
-	// Services is retained as a compatibility projection while clients migrate
-	// to the authoritative Configuration aggregate.
-	Services Services `json:"services"`
 }
 
 type Project struct {

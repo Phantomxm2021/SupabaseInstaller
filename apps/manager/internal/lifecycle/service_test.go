@@ -55,7 +55,7 @@ func newLifecycleService(t *testing.T) (*Service, *store.Store, *fakeProvisioner
 	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	t.Cleanup(func() { _ = database.Close() })
 	project := contracts.Project{ID: "bee", Name: "Bee", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", Status: contracts.ProjectStatusRunning, Health: contracts.HealthHealthy, SupabaseVersion: "self-hosted/v0.8.0", Preset: contracts.PresetLightweight, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	_ = database.CreateProject(context.Background(), project)
+	_ = database.CreateProject(context.Background(), project, contracts.ProjectConfiguration{General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services})
 	operations := operation.NewService(database, func() string { return "op-1" }, time.Now)
 	provisioner := &fakeProvisioner{}
 	return NewService(database, operations, provisioner), database, provisioner

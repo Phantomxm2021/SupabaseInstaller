@@ -14,8 +14,8 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
-func (s *Store) CreateProject(ctx context.Context, project contracts.Project, configurations ...contracts.ProjectConfiguration) error {
-	configuration := firstConfiguration(project, configurations...)
+func (s *Store) CreateProject(ctx context.Context, project contracts.Project, configuration contracts.ProjectConfiguration) error {
+	configuration.Revision = 1
 	if configurationHasReplacement(configuration) {
 		return errors.New("secret cipher is required for replacement values")
 	}
@@ -39,17 +39,13 @@ func configurationHasReplacement(cfg contracts.ProjectConfiguration) bool {
 	return false
 }
 
-func firstConfiguration(project contracts.Project, configurations ...contracts.ProjectConfiguration) contracts.ProjectConfiguration {
-	configuration := contracts.ProjectConfiguration{Revision: 1, General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services}
-	if len(configurations) > 0 {
-		configuration = configurations[0]
-	}
-	configuration.Revision = 1
-	return configuration
-}
-
 func (s *Store) CreateProjectWithSecrets(ctx context.Context, project contracts.Project, configuration contracts.ProjectConfiguration, mutations []SecretMutation) error {
-	servicesJSON, err := json.Marshal(project.Services)
+	// The aggregate is authoritative; SQL projections are derived from it.
+	project.Domain = configuration.General.Domain
+	project.SiteURL = configuration.General.SiteURL
+	project.SupabaseVersion = configuration.General.SupabaseVersion
+	project.Services = configuration.Services
+	servicesJSON, err := json.Marshal(configuration.Services)
 	if err != nil {
 		return fmt.Errorf("encode services: %w", err)
 	}

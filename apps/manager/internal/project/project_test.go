@@ -37,27 +37,10 @@ func TestConfigurationPresetsApplyDependencyClosure(t *testing.T) {
 	}
 }
 
-func TestNormalizeDraftConfigurationTakesPrecedenceOverLegacyProjection(t *testing.T) {
-	draft := validDraft()
-	draft.Domain = "legacy.example.com"
-	draft.SiteURL = "https://legacy.example.com"
-	draft.SupabaseVersion = "self-hosted/v0.8.0"
-	draft.Services = contracts.Services{Database: true}
-	draft.Configuration = DefaultConfiguration(contracts.PresetLightweight)
-	draft.Configuration.General = contracts.GeneralConfig{Domain: "typed.example.com", SiteURL: "https://typed.example.com", SupabaseVersion: "self-hosted/v0.8.0"}
-	draft.Configuration.Services = ApplyPreset(PresetLightweight)
-	draft.Configuration.Services.Storage = true
-
-	normalized := NormalizeDraft(draft)
-	if normalized.Domain != "typed.example.com" || normalized.SiteURL != "https://typed.example.com" || normalized.Services.Storage != true {
-		t.Fatalf("NormalizeDraft() did not project typed configuration: %#v", normalized)
-	}
-}
-
 func TestProjectJSONDoesNotExposeConfigurationSecrets(t *testing.T) {
 	draft := validDraft()
 	draft.Configuration = DefaultConfiguration(contracts.PresetLightweight)
-	draft.Configuration.General = contracts.GeneralConfig{Domain: draft.Domain, SiteURL: draft.SiteURL, SupabaseVersion: draft.SupabaseVersion}
+	draft.Configuration.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	draft.Configuration.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", Port: 587, Username: "bee", PasswordSet: false, Password: contracts.SecretInput{Action: "replace", Value: "smtp-plaintext"}, SenderEmail: "bee@example.com", SenderName: "Bee"}
 	draft.Configuration.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true, ClientID: "client", Secret: contracts.SecretInput{Action: "replace", Value: "oauth-plaintext"}}}
 	draft.Configuration.Storage = contracts.StorageConfig{Backend: contracts.StorageBackendS3, Bucket: "bucket", Region: "us-east-1", Endpoint: "https://s3.example.com", AccessKeyID: "access-key", SecretAccessKey: contracts.SecretInput{Action: "replace", Value: "s3-plaintext"}}
@@ -93,8 +76,8 @@ func TestLightweightPresetMatchesPRD(t *testing.T) {
 
 func TestValidateDraftRejectsStudioWithoutPostgresMeta(t *testing.T) {
 	draft := validDraft()
-	draft.Services.Studio = true
-	draft.Services.PostgresMeta = false
+	draft.Configuration.Services.Studio = true
+	draft.Configuration.Services.PostgresMeta = false
 
 	err := ValidateDraft(draft)
 	if err == nil || !strings.Contains(err.Error(), "postgres-meta") {
@@ -104,7 +87,7 @@ func TestValidateDraftRejectsStudioWithoutPostgresMeta(t *testing.T) {
 
 func TestValidateDraftRejectsRelativeSiteURL(t *testing.T) {
 	draft := validDraft()
-	draft.SiteURL = "localhost:3000"
+	draft.Configuration.General.SiteURL = "localhost:3000"
 
 	err := ValidateDraft(draft)
 	if err == nil || !strings.Contains(err.Error(), "siteUrl") {
@@ -114,7 +97,7 @@ func TestValidateDraftRejectsRelativeSiteURL(t *testing.T) {
 
 func TestValidateDraftRejectsLatestRuntimeVersion(t *testing.T) {
 	draft := validDraft()
-	draft.SupabaseVersion = "latest"
+	draft.Configuration.General.SupabaseVersion = "latest"
 
 	err := ValidateDraft(draft)
 	if err == nil || !strings.Contains(err.Error(), "supabaseVersion") {
@@ -126,10 +109,12 @@ func validDraft() Draft {
 	return Draft{
 		Name:            "Bee",
 		Slug:            "bee",
-		Domain:          "bee.example.com",
-		SiteURL:         "https://example.com",
 		SupabaseVersion: "self-hosted/v0.8.0",
 		Preset:          PresetLightweight,
-		Services:        ApplyPreset(PresetLightweight),
+		Configuration: func() contracts.ProjectConfiguration {
+			cfg := DefaultConfiguration(PresetLightweight)
+			cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+			return cfg
+		}(),
 	}
 }

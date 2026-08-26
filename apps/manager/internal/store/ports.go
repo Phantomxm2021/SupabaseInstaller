@@ -20,21 +20,47 @@ func (s *Store) ReservedPort(ctx context.Context, projectID, kind string) (int, 
 	return port, nil
 }
 
-func (s *Store) TryReservePort(ctx context.Context, projectID, kind string, port int, now time.Time) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `
-INSERT OR IGNORE INTO port_allocations(port, project_id, kind, created_at)
-VALUES (?, ?, ?, ?)`, port, projectID, kind, formatTime(now))
-	if err != nil {
-		return false, fmt.Errorf("reserve port: %w", err)
+// TryReservePorts atomically claims a set of ports. A conflict rolls back all
+// inserts so a multi-service install never leaves a partially allocated
+// aggregate behind.
+func (s *Store) TryReservePorts(ctx context.Context, projectID string, reservations map[string]int, now time.Time) (bool, error) {
+	conflict := errors.New("port reservation conflict")
+	err := s.InTx(ctx, func(tx *sql.Tx) error {
+		for kind, port := range reservations {
+			result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO port_allocations(port, project_id, kind, created_at) VALUES (?, ?, ?, ?)`, port, projectID, kind, formatTime(now))
+			if err != nil {
+				return fmt.Errorf("reserve %s port: %w", kind, err)
+			}
+			count, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if count != 1 {
+				return conflict
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, conflict) {
+		return false, nil
 	}
-	count, err := result.RowsAffected()
-	return count == 1, err
+	return err == nil, err
 }
 
 func (s *Store) ReleaseProjectPorts(ctx context.Context, projectID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM port_allocations WHERE project_id = ?`, projectID)
 	if err != nil {
 		return fmt.Errorf("release project ports: %w", err)
+	}
+	return nil
+}
+
+// ReleasePort removes one server-owned reservation when a capability is
+// disabled. Keeping this operation narrow lets installs preserve API/Studio
+// allocations while returning optional ports to the global pool.
+func (s *Store) ReleasePort(ctx context.Context, projectID, kind string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM port_allocations WHERE project_id = ? AND kind = ?`, projectID, kind); err != nil {
+		return fmt.Errorf("release %s port: %w", kind, err)
 	}
 	return nil
 }

@@ -129,7 +129,7 @@ func TestServiceCreationAtomicallyEncryptsAllConfigurationSecrets(t *testing.T) 
 	cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true, ClientID: "client", Secret: contracts.SecretInput{Action: "replace", Value: "oauth-secret"}}}
 	cfg.Storage = contracts.StorageConfig{Backend: contracts.StorageBackendS3, Bucket: "bee", Region: "us-east-1", Endpoint: "https://s3.example.com", AccessKeyID: "access", SecretAccessKey: contracts.SecretInput{Action: "replace", Value: "storage-secret"}}
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", Value: contracts.SecretInput{Action: "replace", Value: "function-one"}}, {Name: "SECOND_SECRET", Value: contracts.SecretInput{Action: "replace", Value: "function-two"}}}
-	draft := Draft{Name: "Bee", Slug: "bee", Configuration: cfg, Preset: contracts.PresetFull}
+	draft := Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg, Preset: contracts.PresetFull}
 	service := NewServiceWithCipher(database, func() string { return "project-1" }, time.Now, cipher)
 	if _, err := service.Create(context.Background(), draft); err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -168,7 +168,7 @@ func TestServiceCreationRejectsReplacementWithoutCipher(t *testing.T) {
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", Value: contracts.SecretInput{Action: "replace", Value: "secret"}}}
 	service := NewService(database, func() string { return "project-1" }, time.Now)
-	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", Configuration: cfg}); err == nil {
+	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg}); err == nil {
 		t.Fatal("Create() accepted replacement without cipher")
 	}
 	if _, err := database.GetProject(context.Background(), "project-1"); !errors.Is(err, store.ErrNotFound) {
@@ -186,7 +186,7 @@ func TestServiceCreationRemoveClearsMarkerAndSecretRow(t *testing.T) {
 	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", ValueSet: true, Value: contracts.SecretInput{Action: "remove"}}}
 	service := NewService(database, func() string { return "project-1" }, time.Now)
-	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", Configuration: cfg}); err != nil {
+	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	snapshot, err := database.GetConfiguration(context.Background(), "project-1")
@@ -215,7 +215,7 @@ func TestServiceCreationIgnoresMaliciousSecretMarkers(t *testing.T) {
 	cfg.Storage = contracts.StorageConfig{Backend: contracts.StorageBackendS3, Bucket: "bee", Region: "us-east-1", Endpoint: "https://s3.example.com", AccessKeyID: "access", SecretAccessKeySet: true}
 	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "OPENAI_API_KEY", ValueSet: true}}
 	service := NewService(database, func() string { return "project-1" }, time.Now)
-	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", Configuration: cfg}); err != nil {
+	if _, err := service.Create(context.Background(), Draft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Configuration: cfg}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	snapshot, err := database.GetConfiguration(context.Background(), "project-1")

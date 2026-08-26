@@ -1,4 +1,4 @@
-import { applyPreset, defaultConfiguration, normalizeCreateConfiguration, projectConfigurationSchema, projectSchema } from './projectSchema'
+import { applyPreset, defaultConfiguration, normalizeCreateConfiguration, projectConfigurationSchema, projectSchema, redactedSecretSchema, updateSecretSchema } from './projectSchema'
 
 function validProject() {
   return { name: 'Bee', slug: 'bee', preset: 'LIGHTWEIGHT' as const, configuration: { ...defaultConfiguration('LIGHTWEIGHT'), general: { domain: 'bee.example.com', siteUrl: 'https://example.com', supabaseVersion: 'self-hosted/v0.8.0' } } }
@@ -38,6 +38,22 @@ it('rejects Go-invalid domain, renderer fields, duplicate ports and service drif
   expect(projectSchema.safeParse({ ...validProject(), configuration }).success).toBe(false)
 })
 
+it('accepts IPv6/localhost parity and rejects Caddy without its gateway dependency', () => {
+  const project = validProject()
+  project.configuration.general.domain = '[::1]:8080'
+  expect(projectSchema.safeParse(project).success).toBe(true)
+  project.configuration.general.domain = '999.999.999.999'
+  expect(projectSchema.safeParse(project).success).toBe(false)
+  const caddy = validProject().configuration as any
+  caddy.network.httpsMode = 'caddy'
+  caddy.services.gateway = false
+  caddy.services.auth = false
+  caddy.auth.enabled = false
+  caddy.services.rest = false
+  caddy.services.studio = false
+  expect(projectConfigurationSchema.safeParse(caddy).success).toBe(false)
+})
+
 it('does not require hidden phone fields while disabled, but validates Twilio fields when enabled', () => {
   const disabled = validProject().configuration as any
   disabled.auth.phone = { enabled: false, provider: 'twilio', secretSet: false, secret: { action: '' }, fields: {} }
@@ -53,4 +69,13 @@ it.each(['', 'replace', 'remove'] as const)('accepts create secret action %s', (
   const configuration = validProject().configuration as any
   configuration.auth.smtp.password = action === 'replace' ? { action, value: 'secret' } : { action }
   expect(projectConfigurationSchema.safeParse(configuration).success).toBe(true)
+})
+
+it('keeps redacted and update secret truth tables distinct', () => {
+  expect(redactedSecretSchema.safeParse({ action: '' }).success).toBe(true)
+  expect(redactedSecretSchema.safeParse({ action: 'retain' }).success).toBe(false)
+  expect(updateSecretSchema.safeParse({ action: 'retain' }).success).toBe(true)
+  expect(updateSecretSchema.safeParse({ action: 'remove', value: 'leak' }).success).toBe(false)
+  expect(updateSecretSchema.safeParse({ action: 'replace' }).success).toBe(false)
+  expect(updateSecretSchema.safeParse({ action: 'replace', value: 'secret' }).success).toBe(true)
 })

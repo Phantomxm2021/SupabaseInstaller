@@ -21,49 +21,28 @@ func (e FieldError) Error() string {
 }
 
 func ValidateDraft(draft Draft) error {
-	draft = NormalizeDraft(draft)
 	var errs []error
+	cfg := draft.Configuration
 	if name := strings.TrimSpace(draft.Name); name == "" || len(name) > 80 {
 		errs = append(errs, FieldError{Field: "name", Message: "must contain 1 to 80 characters"})
 	}
 	if !slugPattern.MatchString(draft.Slug) {
 		errs = append(errs, FieldError{Field: "slug", Message: "must match [a-z0-9-] and be a valid DNS label"})
 	}
-	if !validDomain(draft.Domain) {
-		errs = append(errs, FieldError{Field: "domain", Message: "must be a hostname without a scheme or path"})
+	if !validDomain(cfg.General.Domain) {
+		errs = append(errs, FieldError{Field: "configuration.general.domain", Message: "must be a hostname without a scheme or path"})
 	}
-	if !validAbsoluteHTTPURL(draft.SiteURL) {
-		errs = append(errs, FieldError{Field: "siteUrl", Message: "must be an absolute http or https URL"})
+	if !validAbsoluteHTTPURL(cfg.General.SiteURL) {
+		errs = append(errs, FieldError{Field: "configuration.general.siteUrl", Message: "must be an absolute http or https URL"})
 	}
-	if draft.SupabaseVersion == "" || strings.EqualFold(draft.SupabaseVersion, "latest") || strings.EqualFold(draft.SupabaseVersion, "master") {
-		errs = append(errs, FieldError{Field: "supabaseVersion", Message: "must be a pinned supported version"})
+	if cfg.General.SupabaseVersion == "" || strings.EqualFold(cfg.General.SupabaseVersion, "latest") || strings.EqualFold(cfg.General.SupabaseVersion, "master") {
+		errs = append(errs, FieldError{Field: "configuration.general.supabaseVersion", Message: "must be a pinned supported version"})
 	}
-	errServices := validateServices(draft.Services)
-	if errServices != nil {
-		errs = append(errs, errServices)
+	if draft.SupabaseVersion != cfg.General.SupabaseVersion {
+		errs = append(errs, FieldError{Field: "supabaseVersion", Message: "must match configuration.general.supabaseVersion"})
 	}
-	if errConfiguration := ValidateConfiguration(draft.Configuration); errConfiguration != nil {
+	if errConfiguration := ValidateConfiguration(cfg); errConfiguration != nil {
 		errs = append(errs, errConfiguration)
-	}
-	return errors.Join(errs...)
-}
-
-func validateServices(services Services) error {
-	var errs []error
-	if !services.Database {
-		errs = append(errs, FieldError{Field: "services.database", Message: "PostgreSQL is required"})
-	}
-	if services.Studio && !services.PostgresMeta {
-		errs = append(errs, FieldError{Field: "services.postgresMeta", Message: "postgres-meta is required by Studio"})
-	}
-	if (services.Auth || services.REST || services.Studio || services.Realtime || services.Storage) && !services.Gateway {
-		errs = append(errs, FieldError{Field: "services.gateway", Message: "API Gateway is required by enabled public services"})
-	}
-	if services.Imgproxy && !services.Storage {
-		errs = append(errs, FieldError{Field: "services.imgproxy", Message: "Image Transformation requires Storage"})
-	}
-	if services.Logs != services.Vector {
-		errs = append(errs, FieldError{Field: "services.vector", Message: "Logs and Vector must be enabled together"})
 	}
 	return errors.Join(errs...)
 }

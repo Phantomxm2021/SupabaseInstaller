@@ -16,7 +16,7 @@ type Kind string
 const (
 	KindAPI       Kind = "API"
 	KindStudio    Kind = "STUDIO"
-	KindDirectDB  Kind = "DIRECT_DB"
+	KindDirectDB  Kind = "DATABASE"
 	KindPoolerTxn Kind = "POOLER_TRANSACTION"
 	KindPoolerSes Kind = "POOLER_SESSION"
 )
@@ -50,27 +50,79 @@ func NewAllocator(store *store.Store, minPort, maxPort int, probe Probe) *Alloca
 	return &Allocator{store: store, min: minPort, max: maxPort, probe: probe, now: time.Now}
 }
 
-func (a *Allocator) Reserve(ctx context.Context, projectID string, kind Kind) (int, error) {
-	if port, err := a.store.ReservedPort(ctx, projectID, string(kind)); err == nil {
-		return port, nil
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return 0, err
-	}
-	for port := a.min; port <= a.max; port++ {
-		if !a.probe.Available(port) {
+// ReserveMany allocates all requested server-owned ports as one atomic set.
+// Existing reservations are reused; newly selected candidates are committed
+// together, so a failed multi-service allocation cannot leak a partial set.
+func (a *Allocator) ReserveMany(ctx context.Context, projectID string, kinds []Kind) (map[Kind]int, error) {
+	allocated := make(map[Kind]int, len(kinds))
+	missing := make([]Kind, 0, len(kinds))
+	for _, kind := range kinds {
+		if _, seen := allocated[kind]; seen {
 			continue
 		}
-		reserved, err := a.store.TryReservePort(ctx, projectID, string(kind), port, a.now())
+		port, err := a.store.ReservedPort(ctx, projectID, string(kind))
+		if err == nil {
+			allocated[kind] = port
+			continue
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+		missing = append(missing, kind)
+	}
+	if len(missing) == 0 {
+		return allocated, nil
+	}
+	rangeSize := a.max - a.min + 1
+	for cursor := 0; cursor < rangeSize; cursor++ {
+		selected := make(map[string]int, len(missing))
+		used := make(map[int]bool, len(allocated))
+		for _, port := range allocated {
+			used[port] = true
+		}
+		for _, kind := range missing {
+			for offset := 0; offset < rangeSize; offset++ {
+				port := a.min + (cursor+offset)%rangeSize
+				if used[port] || !a.probe.Available(port) {
+					continue
+				}
+				selected[string(kind)] = port
+				used[port] = true
+				break
+			}
+		}
+		if len(selected) != len(missing) {
+			return nil, ErrExhausted
+		}
+		reserved, err := a.store.TryReservePorts(ctx, projectID, selected, a.now())
 		if err != nil {
-			return 0, fmt.Errorf("reserve %s port: %w", kind, err)
+			return nil, fmt.Errorf("reserve server-owned ports: %w", err)
 		}
 		if reserved {
-			return port, nil
+			for kind, port := range selected {
+				allocated[Kind(kind)] = port
+			}
+			return allocated, nil
+		}
+		for index := 0; index < len(missing); index++ {
+			port, readErr := a.store.ReservedPort(ctx, projectID, string(missing[index]))
+			if readErr == nil {
+				allocated[missing[index]] = port
+				missing = append(missing[:index], missing[index+1:]...)
+				index--
+			}
+		}
+		if len(missing) == 0 {
+			return allocated, nil
 		}
 	}
-	return 0, ErrExhausted
+	return nil, ErrExhausted
 }
 
 func (a *Allocator) ReleaseProject(ctx context.Context, projectID string) error {
 	return a.store.ReleaseProjectPorts(ctx, projectID)
+}
+
+func (a *Allocator) Release(ctx context.Context, projectID string, kind Kind) error {
+	return a.store.ReleasePort(ctx, projectID, string(kind))
 }

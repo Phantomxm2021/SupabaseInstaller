@@ -211,6 +211,12 @@ func TestValidateConfigurationDependencies(t *testing.T) {
 		{"studio requires meta", func(c *contracts.ProjectConfiguration) { c.Services.PostgresMeta = false }, "services.postgresMeta"},
 		{"imgproxy requires storage", func(c *contracts.ProjectConfiguration) { c.Services.Imgproxy = true }, "services.imgproxy"},
 		{"vector follows logs", func(c *contracts.ProjectConfiguration) { c.Services.Vector = true }, "services.vector"},
+		{"functions requires gateway", func(c *contracts.ProjectConfiguration) { c.Services.Functions = true; c.Services.Gateway = false }, "services.gateway"},
+		{"caddy requires gateway", func(c *contracts.ProjectConfiguration) {
+			c.Network.HTTPSMode = contracts.HTTPSModeCaddy
+			c.Services.Gateway = false
+		}, "services.gateway"},
+		{"storage requires rest", func(c *contracts.ProjectConfiguration) { c.Services.Storage = true; c.Services.REST = false }, "services.storage"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

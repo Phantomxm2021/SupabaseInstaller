@@ -45,6 +45,47 @@ func TestInstallPersistsEncryptedUniqueSecretsBeforePrepare(t *testing.T) {
 	}
 }
 
+func TestInstallAllocatesAndPersistsAllServerOwnedPorts(t *testing.T) {
+	orchestrator, provisioner, project := newTestOrchestrator(t)
+	project.Services.DirectDB = true
+	project.Services.Supavisor = true
+	snapshot, err := orchestrator.store.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Configuration.Services = project.Services
+	saved, err := orchestrator.store.SaveConfiguration(context.Background(), project.ID, snapshot.Revision, snapshot.Configuration, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orchestrator.store.MarkConfigurationGood(context.Background(), project.ID, saved.Revision); err != nil {
+		t.Fatal(err)
+	}
+	result, err := orchestrator.Install(context.Background(), project)
+	if err != nil || result.Status != operation.Succeeded {
+		t.Fatalf("Install() = %#v, %v", result, err)
+	}
+	cfg := provisioner.reconcile.Configuration
+	ports := []int{cfg.Network.APIPort, cfg.Network.StudioPort, cfg.Network.DirectDatabasePort, cfg.Pooler.TransactionPort, cfg.Pooler.SessionPort}
+	seen := map[int]bool{}
+	for _, port := range ports[:5] {
+		if port < 18001 || port > 18010 || seen[port] {
+			t.Fatalf("allocated ports = %#v, expected unique ports in allocator range", ports)
+		}
+		seen[port] = true
+	}
+	if cfg.Network.PoolerPort != 0 || cfg.Database.DirectPortNumber != cfg.Network.DirectDatabasePort || !cfg.Database.DirectPort {
+		t.Fatalf("allocated configuration is not synchronized: %#v", cfg)
+	}
+	stored, err := orchestrator.store.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Configuration.Network.DirectDatabasePort != cfg.Network.DirectDatabasePort || stored.Configuration.Network.APIPort != cfg.Network.APIPort {
+		t.Fatalf("stored allocated ports = %#v, reconcile = %#v", stored.Configuration.Network, cfg.Network)
+	}
+}
+
 func TestHydrateConfiguredSecretsSkipsDisabledAuthConsumers(t *testing.T) {
 	orchestrator, _, project := newTestOrchestrator(t)
 	envelope, err := orchestrator.cipher.Encrypt(project.ID, "smtp.password", []byte("auth-secret-sentinel"))
@@ -100,7 +141,8 @@ func newTestOrchestrator(t *testing.T) (*Orchestrator, *fakeProvisioner, contrac
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	project := contracts.Project{ID: "project-1", Name: "Bee", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", Status: contracts.ProjectStatusDraft, Health: contracts.HealthUnknown, SupabaseVersion: "self-hosted/v0.8.0", Preset: contracts.PresetLightweight, Services: contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true}, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	if err := database.CreateProject(context.Background(), project); err != nil {
+	configuration := contracts.ProjectConfiguration{General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services, Auth: contracts.AuthConfig{Enabled: true}}
+	if err := database.CreateProject(context.Background(), project, configuration); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	operationService := operation.NewService(database, func() string { return "operation-1" }, time.Now)

@@ -299,6 +299,43 @@ func (s *Store) SaveConfiguration(ctx context.Context, projectID string, expecte
 	return s.saveConfiguration(ctx, projectID, expected, cfg, now, nil)
 }
 
+// PersistAllocatedConfiguration records server-owned ports without creating a
+// user configuration revision. Allocation happens during installation before
+// the first desired revision is rendered, so the immutable create revision
+// must contain the exact ports that were reserved.
+func (s *Store) PersistAllocatedConfiguration(ctx context.Context, projectID string, cfg contracts.ProjectConfiguration, now time.Time) error {
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var revision int64
+		if err := tx.QueryRowContext(ctx, `SELECT config_revision FROM projects WHERE id=?`, projectID).Scan(&revision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("read configuration revision for allocation: %w", err)
+		}
+		cfg.Revision = revision
+		payload, err := json.Marshal(redactConfiguration(cfg))
+		if err != nil {
+			return fmt.Errorf("encode allocated configuration: %w", err)
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=?`, string(payload), projectID, revision)
+		if err != nil {
+			return fmt.Errorf("persist allocated configuration: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read allocated configuration update: %w", err)
+		}
+		if count == 0 {
+			return ErrNotFound
+		}
+		// Keep the query projections (services and server-owned ports) in sync
+		// with the allocated aggregate. This is intentionally in the same
+		// transaction as the aggregate update so a retry cannot expose a mixed
+		// configuration to the API or the provisioner.
+		return updateCanonicalProjectionTx(ctx, tx, projectID, cfg, now)
+	})
+}
+
 func (s *Store) SaveConfigurationWithSecrets(ctx context.Context, projectID string, expected int64, cfg contracts.ProjectConfiguration, now time.Time, mutations []SecretMutation) (ConfigurationSnapshot, error) {
 	return s.saveConfiguration(ctx, projectID, expected, cfg, now, mutations)
 }

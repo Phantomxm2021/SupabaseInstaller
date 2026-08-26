@@ -18,7 +18,7 @@ func TestOperationEventsResumeAfterLastEventID(t *testing.T) {
 	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	defer database.Close()
 	project := contracts.Project{ID: "bee", Name: "Bee", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", Status: contracts.ProjectStatusDraft, Health: contracts.HealthUnknown, SupabaseVersion: "self-hosted/v0.8.0", Preset: contracts.PresetLightweight}
-	_ = database.CreateProject(context.Background(), project)
+	_ = database.CreateProject(context.Background(), project, contracts.ProjectConfiguration{General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services})
 	operations := operation.NewService(database, func() string { return "op-1" }, time.Now)
 	created, _ := operations.Create(context.Background(), "bee", operation.TypeCreate)
 	_ = operations.Start(context.Background(), created.ID)

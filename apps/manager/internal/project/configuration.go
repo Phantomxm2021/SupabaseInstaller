@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/mail"
 	"net/url"
-	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -61,29 +60,6 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 	}
 }
 
-func configurationSupplied(cfg contracts.ProjectConfiguration) bool {
-	return !reflect.DeepEqual(cfg, contracts.ProjectConfiguration{})
-}
-
-// NormalizeDraft resolves the migration boundary once. A supplied typed
-// aggregate wins for all overlapping fields; legacy fields are projected only
-// when no aggregate was supplied. The returned draft always carries a complete
-// aggregate, making it safe for persistence and Provisioner handoff.
-func NormalizeDraft(draft Draft) Draft {
-	if configurationSupplied(draft.Configuration) {
-		draft.Domain = draft.Configuration.General.Domain
-		draft.SiteURL = draft.Configuration.General.SiteURL
-		draft.SupabaseVersion = draft.Configuration.General.SupabaseVersion
-		draft.Services = draft.Configuration.Services
-		return draft
-	}
-	cfg := DefaultConfiguration(draft.Preset)
-	cfg.General = contracts.GeneralConfig{Domain: draft.Domain, SiteURL: draft.SiteURL, SupabaseVersion: draft.SupabaseVersion}
-	cfg.Services = draft.Services
-	draft.Configuration = cfg
-	return draft
-}
-
 // ApplyConfigurationPreset builds the aggregate and applies all service
 // dependency closure rules in one deterministic operation.
 func ApplyConfigurationPreset(preset contracts.Preset) contracts.ProjectConfiguration {
@@ -122,6 +98,9 @@ func ValidateConfiguration(cfg contracts.ProjectConfiguration) error {
 		validation.add("general.supabaseVersion", "must be self-hosted/v0.8.0")
 	}
 	validateServicesConfiguration(cfg.Services, validation)
+	if cfg.Services.Auth != cfg.Auth.Enabled {
+		validation.add("auth.enabled", "must match services.auth")
+	}
 	validateAuth(cfg.Auth, validation)
 	validateStorage(cfg.Storage, validation)
 	validateRealtime(cfg.Realtime, validation)
@@ -129,6 +108,9 @@ func ValidateConfiguration(cfg contracts.ProjectConfiguration) error {
 	validateDatabase(cfg.Database, validation)
 	validatePooler(cfg.Pooler, validation)
 	validateNetwork(cfg.Network, validation)
+	if cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy && !cfg.Services.Gateway {
+		validation.add("services.gateway", "Caddy HTTPS requires API Gateway")
+	}
 	if len(validation.Fields) == 0 {
 		return nil
 	}
@@ -144,6 +126,27 @@ func validateServicesConfiguration(services contracts.Services, validation *Vali
 	}
 	if (services.Auth || services.REST || services.Studio || services.Realtime || services.Storage) && !services.Gateway {
 		validation.add("services.gateway", "API Gateway is required by enabled public services")
+	}
+	if services.Functions && !services.Gateway {
+		validation.add("services.gateway", "API Gateway is required by enabled Functions")
+	}
+	if services.Storage && (!services.Database || !services.REST) {
+		validation.add("services.storage", "Storage requires database and REST")
+	}
+	if services.Realtime && !services.Database {
+		validation.add("services.realtime", "Realtime requires database")
+	}
+	if services.Supavisor && !services.Database {
+		validation.add("services.supavisor", "Supavisor requires database")
+	}
+	if services.DirectDB && !services.Database {
+		validation.add("services.directDb", "Direct database requires database")
+	}
+	if services.Logs && (!services.Database || !services.Vector) {
+		validation.add("services.logs", "Logs requires database and Vector")
+	}
+	if services.Vector && !services.Logs {
+		validation.add("services.vector", "Vector requires Logs")
 	}
 	if services.Imgproxy && !services.Storage {
 		validation.add("services.imgproxy", "Image Transformation requires Storage")

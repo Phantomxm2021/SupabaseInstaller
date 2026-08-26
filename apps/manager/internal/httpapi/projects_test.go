@@ -25,10 +25,7 @@ func TestCreateProjectReturnsOperationAndNeverSecret(t *testing.T) {
 	installer := &fakeInstaller{}
 	mux := http.NewServeMux()
 	RegisterProjectRoutes(mux, ProjectOptions{Projects: projects, Installer: installer})
-	payload, _ := json.Marshal(contracts.ProjectDraft{
-		Name: "Bee", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0",
-		Preset: contracts.PresetLightweight, Services: contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true},
-	})
+	payload, _ := json.Marshal(projectDraftFixture())
 	request := httptest.NewRequest(http.MethodPost, "/api/projects", bytes.NewReader(payload))
 	response := httptest.NewRecorder()
 
@@ -47,11 +44,24 @@ func TestCreateProjectReturnsOperationAndNeverSecret(t *testing.T) {
 	}
 }
 
+func TestCreateProjectRejectsLegacyTopLevelProjections(t *testing.T) {
+	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	defer database.Close()
+	mux := http.NewServeMux()
+	RegisterProjectRoutes(mux, ProjectOptions{Projects: project.NewService(database, func() string { return "project-1" }, time.Now), Installer: &fakeInstaller{}})
+	request := httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(`{"name":"Bee","slug":"bee","domain":"bee.example.com"}`))
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("legacy create status = %d, body = %s; want bad request", response.Code, response.Body.String())
+	}
+}
+
 func TestLifecycleEndpointReturnsDurableOperation(t *testing.T) {
 	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	defer database.Close()
 	projects := project.NewService(database, func() string { return "project-1" }, time.Now)
-	created, _ := projects.Create(context.Background(), contracts.ProjectDraft{Name: "Bee", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0", Preset: contracts.PresetLightweight, Services: contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true}})
+	created, _ := projects.Create(context.Background(), projectDraftFixture())
 	lifecycleManager := &fakeLifecycle{}
 	mux := http.NewServeMux()
 	RegisterProjectRoutes(mux, ProjectOptions{Projects: projects, Installer: &fakeInstaller{}, Lifecycle: lifecycleManager})
@@ -69,7 +79,7 @@ func TestRetryEndpointCreatesNewInstallationOperation(t *testing.T) {
 	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	defer database.Close()
 	projects := project.NewService(database, func() string { return "project-1" }, time.Now)
-	created, _ := projects.Create(context.Background(), contracts.ProjectDraft{Name: "Bee", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0", Preset: contracts.PresetLightweight, Services: contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true}})
+	created, _ := projects.Create(context.Background(), projectDraftFixture())
 	installer := &fakeInstaller{}
 	mux := http.NewServeMux()
 	RegisterProjectRoutes(mux, ProjectOptions{Projects: projects, Installer: installer, Lifecycle: &fakeLifecycle{}})
@@ -84,6 +94,12 @@ func TestRetryEndpointCreatesNewInstallationOperation(t *testing.T) {
 }
 
 type fakeInstaller struct{ projectID string }
+
+func projectDraftFixture() contracts.ProjectDraft {
+	cfg := project.DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	return contracts.ProjectDraft{Name: "Bee", Slug: "bee", SupabaseVersion: "self-hosted/v0.8.0", Preset: contracts.PresetLightweight, Configuration: cfg}
+}
 
 func (fake *fakeInstaller) CreateOperation(_ context.Context, projectID string) (operation.Operation, error) {
 	fake.projectID = projectID

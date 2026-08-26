@@ -31,21 +31,21 @@ func NewServiceWithCipher(store *store.Store, id func() string, now func() time.
 }
 
 func (s *Service) Create(ctx context.Context, draft Draft) (Project, error) {
-	draft = NormalizeDraft(draft)
 	if err := ValidateDraft(draft); err != nil {
 		return Project{}, err
 	}
+	configuration := draft.Configuration
 	now := s.now()
 	project := contracts.Project{
-		ID: s.id(), Name: strings.TrimSpace(draft.Name), Slug: draft.Slug, Domain: draft.Domain,
-		SiteURL: draft.SiteURL, Status: contracts.ProjectStatusDraft, Health: contracts.HealthUnknown,
-		SupabaseVersion: draft.SupabaseVersion, Preset: draft.Preset, Services: draft.Configuration.Services, ConfigurationRevision: 1,
+		ID: s.id(), Name: strings.TrimSpace(draft.Name), Slug: draft.Slug, Domain: configuration.General.Domain,
+		SiteURL: configuration.General.SiteURL, Status: contracts.ProjectStatusDraft, Health: contracts.HealthUnknown,
+		SupabaseVersion: configuration.General.SupabaseVersion, Preset: draft.Preset, Services: configuration.Services, ConfigurationRevision: 1,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if project.ID == "" {
 		return Project{}, fmt.Errorf("project ID generator returned an empty ID")
 	}
-	persistedConfiguration, err := cloneConfiguration(draft.Configuration)
+	persistedConfiguration, err := cloneConfiguration(configuration)
 	if err != nil {
 		return Project{}, err
 	}

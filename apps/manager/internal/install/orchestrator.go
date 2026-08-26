@@ -55,13 +55,20 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 	}
 	_ = orchestrator.store.UpdateProjectStatus(ctx, project.ID, contracts.ProjectStatusInstalling, contracts.HealthStarting)
 
+	configuration := contracts.ProjectConfiguration{Revision: 1, General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services}
+	if snapshot, readErr := orchestrator.store.GetDesiredConfiguration(ctx, project.ID); readErr == nil {
+		configuration = snapshot.Configuration
+		configuration.Revision = 1
+	}
 	if err := orchestrator.step(ctx, current.ID, "VALIDATE_PORTS", 5, func() error {
-		_, err := orchestrator.ports.Reserve(ctx, project.ID, ports.KindAPI)
-		return err
+		if err := orchestrator.allocateConfigurationPorts(ctx, project.ID, &configuration); err != nil {
+			return err
+		}
+		return orchestrator.store.PersistAllocatedConfiguration(ctx, project.ID, configuration, orchestrator.now())
 	}); err != nil {
 		return orchestrator.rollback(ctx, project, current.ID, "VALIDATE_PORTS", err)
 	}
-	apiPort, _ := orchestrator.ports.Reserve(ctx, project.ID, ports.KindAPI)
+	apiPort := configuration.Network.APIPort
 
 	generated, err := orchestrator.generator.Generate()
 	if err != nil {
@@ -73,11 +80,6 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 		return orchestrator.rollback(ctx, project, current.ID, "GENERATE_SECRETS", err)
 	}
 
-	configuration := contracts.ProjectConfiguration{Revision: 1, General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services}
-	if snapshot, readErr := orchestrator.store.GetConfiguration(ctx, project.ID); readErr == nil {
-		configuration = snapshot.Configuration
-		configuration.Revision = 1
-	}
 	runtimeSecrets, hydrationErr := orchestrator.hydrateConfiguredSecrets(ctx, project.ID, configuration)
 	if hydrationErr != nil {
 		return orchestrator.rollback(ctx, project, current.ID, "HYDRATE_SECRETS", hydrationErr)
@@ -114,6 +116,62 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 		return current, err
 	}
 	return orchestrator.operations.Get(ctx, current.ID)
+}
+
+func (orchestrator *Orchestrator) allocateConfigurationPorts(ctx context.Context, projectID string, configuration *contracts.ProjectConfiguration) error {
+	release := func(kind ports.Kind) error { return orchestrator.ports.Release(ctx, projectID, kind) }
+	if !configuration.Services.Studio {
+		if err := release(ports.KindStudio); err != nil {
+			return err
+		}
+	}
+	if !configuration.Services.DirectDB {
+		if err := release(ports.KindDirectDB); err != nil {
+			return err
+		}
+	}
+	if !configuration.Services.Supavisor {
+		if err := release(ports.KindPoolerTxn); err != nil {
+			return err
+		}
+		if err := release(ports.KindPoolerSes); err != nil {
+			return err
+		}
+	}
+	kinds := []ports.Kind{ports.KindAPI}
+	if configuration.Services.Studio {
+		kinds = append(kinds, ports.KindStudio)
+	}
+	if configuration.Services.DirectDB {
+		kinds = append(kinds, ports.KindDirectDB)
+	}
+	if configuration.Services.Supavisor {
+		kinds = append(kinds, ports.KindPoolerTxn, ports.KindPoolerSes)
+	}
+	allocated, err := orchestrator.ports.ReserveMany(ctx, projectID, kinds)
+	if err != nil {
+		return err
+	}
+	configuration.Network.APIPort = allocated[ports.KindAPI]
+	configuration.Network.StudioPort = allocated[ports.KindStudio]
+	if configuration.Services.DirectDB {
+		configuration.Database.DirectPort = true
+		configuration.Database.DirectPortNumber = allocated[ports.KindDirectDB]
+		configuration.Network.DirectDatabasePort = allocated[ports.KindDirectDB]
+	} else {
+		configuration.Database.DirectPort = false
+		configuration.Database.DirectPortNumber = 0
+		configuration.Network.DirectDatabasePort = 0
+	}
+	if configuration.Services.Supavisor {
+		configuration.Pooler.TransactionPort = allocated[ports.KindPoolerTxn]
+		configuration.Pooler.SessionPort = allocated[ports.KindPoolerSes]
+		// The renderer derives the public pooler endpoint from sessionPort.
+		configuration.Network.PoolerPort = 0
+	} else {
+		configuration.Network.PoolerPort = 0
+	}
+	return nil
 }
 
 func (orchestrator *Orchestrator) hydrateConfiguredSecrets(ctx context.Context, projectID string, cfg contracts.ProjectConfiguration) (map[string]string, error) {

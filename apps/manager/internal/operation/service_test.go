@@ -55,7 +55,7 @@ func newOperationService(t *testing.T) *Service {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	project := contracts.Project{ID: "bee", Name: "Bee", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", Status: contracts.ProjectStatusDraft, Health: contracts.HealthUnknown, SupabaseVersion: "self-hosted/v0.8.0", Preset: contracts.PresetLightweight}
-	if err := database.CreateProject(context.Background(), project); err != nil {
+	if err := database.CreateProject(context.Background(), project, contracts.ProjectConfiguration{General: contracts.GeneralConfig{Domain: project.Domain, SiteURL: project.SiteURL, SupabaseVersion: project.SupabaseVersion}, Services: project.Services}); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	ids := []string{"op-1", "op-2"}

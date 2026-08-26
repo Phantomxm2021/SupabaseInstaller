@@ -17,7 +17,7 @@ import (
 func TestStoreCreatesAndReadsProject(t *testing.T) {
 	s := openTestStore(t)
 	want := projectFixture()
-	if err := s.CreateProject(context.Background(), want); err != nil {
+	if err := s.CreateProject(context.Background(), want, configurationFixture()); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	got, err := s.GetProject(context.Background(), want.ID)
@@ -36,7 +36,7 @@ func TestStoreCreatesAndReadsProject(t *testing.T) {
 func TestSecretVersionSnapshotRestoresPrePatchSet(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project); err != nil {
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
 		t.Fatal(err)
 	}
 	cipher, _ := secrets.NewCipher(bytes.Repeat([]byte{7}, 32))
@@ -66,7 +66,7 @@ func TestSecretVersionSnapshotRestoresPrePatchSet(t *testing.T) {
 func TestConfigurationLeaseSerializesAndRecoversAfterExpiry(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project); err != nil {
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -90,7 +90,7 @@ func TestConfigurationLeaseSerializesAndRecoversAfterExpiry(t *testing.T) {
 func TestConfigurationLeaseReleaseIsOwnerAndFenceBound(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project); err != nil {
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -116,7 +116,7 @@ func TestConfigurationLeaseReleaseIsOwnerAndFenceBound(t *testing.T) {
 func TestSnapshotMarkerDistinguishesEmptyRevision(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project); err != nil {
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
 		t.Fatal(err)
 	}
 	var present int
@@ -131,7 +131,7 @@ func TestSnapshotMarkerDistinguishesEmptyRevision(t *testing.T) {
 func TestStorePersistsOnlyEncryptedSecretEnvelope(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project); err != nil {
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	cipher, _ := secrets.NewCipher(bytes.Repeat([]byte{3}, 32))
@@ -155,7 +155,7 @@ func TestStorePersistsOnlyEncryptedSecretEnvelope(t *testing.T) {
 func TestConfigurationRevisionIsOptimisticAndRedacted(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project); err != nil {
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	cfg := configurationFixture()
@@ -202,7 +202,7 @@ func TestMigration002AddsLastGoodRevisionAndInitialSnapshot(t *testing.T) {
 	}
 	var lastGood int64
 	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project); err != nil {
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 	if err := s.DB().QueryRow(`SELECT last_good_revision FROM projects WHERE id = ?`, project.ID).Scan(&lastGood); err != nil {
@@ -323,7 +323,7 @@ func TestGetConfigurationRedactsLegacyNestedPlaintext(t *testing.T) {
 func TestMarkConfigurationGoodRequiresCurrentRevisionAndNeverRegresses(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project); err != nil {
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SaveConfiguration(context.Background(), project.ID, 1, configurationFixture(), time.Now()); err != nil {
@@ -369,7 +369,7 @@ func TestRedactionDoesNotMutateInputAggregate(t *testing.T) {
 func TestConfigurationSnapshotsAreImmutable(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
-	if err := s.CreateProject(context.Background(), project); err != nil {
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
 		t.Fatal(err)
 	}
 	first := configurationFixture()

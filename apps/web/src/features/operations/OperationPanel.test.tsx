@@ -18,12 +18,17 @@ it('awaits project invalidation and navigates exactly once with the operation pr
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'op-success', projectId: 'allocated-project', type: 'CREATE', status: 'SUCCEEDED', progress: 100 }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
   vi.stubGlobal('EventSource', class { close() {} addEventListener() {} } as unknown as typeof EventSource)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined)
-  function Location() { return <output data-testid="location">{useLocation().pathname}</output> }
-  render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={['/projects']}><Routes><Route path="*" element={<><Location /><OperationPanel operationId="op-success" projectName="Bee" /></>} /></Routes></MemoryRouter></QueryClientProvider>)
-  await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/projects/allocated-project/overview'))
-  expect(invalidate).toHaveBeenCalledWith({ queryKey: ['projects'] })
-  expect(screen.getByTestId('location')).toHaveTextContent('/projects/allocated-project/overview')
+  let release!: () => void
+  const invalidation = new Promise<void>((resolve) => { release = resolve })
+  const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockReturnValue(invalidation)
+  const onSucceeded = vi.fn()
+  render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={['/projects']}><Routes><Route path="*" element={<OperationPanel operationId="op-success" projectName="Bee" onSucceeded={onSucceeded} />} /></Routes></MemoryRouter></QueryClientProvider>)
+  await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['projects'] }))
+  expect(onSucceeded).not.toHaveBeenCalled()
+  release()
+  await waitFor(() => expect(onSucceeded).toHaveBeenCalledWith('allocated-project'))
+  expect(invalidate).toHaveBeenCalledTimes(1)
+  expect(onSucceeded).toHaveBeenCalledTimes(1)
 })
 
 it.each(['FAILED', 'ROLLED_BACK', 'CANCELLED'] as const)('does not navigate for terminal %s', async (status) => {
@@ -31,5 +36,6 @@ it.each(['FAILED', 'ROLLED_BACK', 'CANCELLED'] as const)('does not navigate for 
   vi.stubGlobal('EventSource', class { close() {} addEventListener() {} } as unknown as typeof EventSource)
   function Location() { return <output data-testid="location">{useLocation().pathname}</output> }
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects']}><Routes><Route path="*" element={<><Location /><OperationPanel operationId={`op-${status}`} projectName="Bee" /></>} /></Routes></MemoryRouter></QueryClientProvider>)
+  await screen.findByText(status)
   await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/projects'))
 })
