@@ -156,14 +156,14 @@ func (orchestrator *Orchestrator) hydrateConfiguredSecrets(ctx context.Context, 
 		runtime[runtimeKind] = string(plain)
 		return nil
 	}
-	if err := add("smtp.password", "smtp.password", cfg.Auth.SMTP.Enabled && cfg.Auth.SMTP.PasswordSet); err != nil {
+	if err := add("smtp.password", "smtp.password", cfg.Services.Auth && cfg.Auth.SMTP.Enabled && cfg.Auth.SMTP.PasswordSet); err != nil {
 		return nil, err
 	}
-	if err := add("phone.secret", "phone.secret", cfg.Auth.Phone.Enabled && cfg.Auth.Phone.SecretSet); err != nil {
+	if err := add("phone.secret", "phone.secret", cfg.Services.Auth && cfg.Auth.Phone.Enabled && cfg.Auth.Phone.SecretSet); err != nil {
 		return nil, err
 	}
 	for provider, value := range cfg.Auth.OAuth {
-		if err := add("oauth."+provider+".secret", "oauth."+provider+".secret", value.Enabled && value.SecretSet); err != nil {
+		if err := add("oauth."+provider+".secret", "oauth."+provider+".secret", cfg.Services.Auth && value.Enabled && value.SecretSet); err != nil {
 			return nil, err
 		}
 	}

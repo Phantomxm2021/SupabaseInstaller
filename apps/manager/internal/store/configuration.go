@@ -14,6 +14,7 @@ import (
 
 var ErrStaleConfiguration = errors.New("stale project configuration revision")
 var ErrConfigurationConflict = errors.New("project configuration conflicts with another project")
+var ErrConfigurationBusy = errors.New("project configuration operation is busy")
 
 type ConfigurationSnapshot struct {
 	ProjectID        string                         `json:"projectId"`
@@ -30,25 +31,55 @@ type SecretMutation struct {
 	Delete   bool
 }
 
-// AcquireConfigurationLease is the database-backed per-project fence used by
-// configuration workers. The expiry makes a queued operation recoverable after
-// a crashed manager instead of leaving an in-memory lock behind forever.
+type ConfigurationLease struct {
+	Owner string
+	Fence int64
+}
+
+// AcquireConfigurationLease is retained for callers that only need a boolean;
+// workers should retain the fencing generation from the extended method.
 func (s *Store) AcquireConfigurationLease(ctx context.Context, projectID, owner string, now time.Time, ttl time.Duration) (bool, error) {
+	_, acquired, err := s.AcquireConfigurationLeaseWithFence(ctx, projectID, owner, now, ttl)
+	return acquired, err
+}
+
+func (s *Store) AcquireConfigurationLeaseWithFence(ctx context.Context, projectID, owner string, now time.Time, ttl time.Duration) (int64, bool, error) {
 	expires := now.Add(ttl)
 	result, err := s.db.ExecContext(ctx, `
-INSERT INTO project_configuration_leases(project_id, owner, acquired_at, expires_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(project_id) DO UPDATE SET owner=excluded.owner, acquired_at=excluded.acquired_at, expires_at=excluded.expires_at
+INSERT INTO project_configuration_leases(project_id, owner, fence, acquired_at, expires_at)
+VALUES (?, ?, 1, ?, ?)
+ON CONFLICT(project_id) DO UPDATE SET owner=excluded.owner, fence=project_configuration_leases.fence+1, acquired_at=excluded.acquired_at, expires_at=excluded.expires_at
 WHERE project_configuration_leases.expires_at <= excluded.acquired_at`, projectID, owner, formatTime(now), formatTime(expires))
 	if err != nil {
-		return false, fmt.Errorf("acquire configuration lease: %w", err)
+		return 0, false, fmt.Errorf("acquire configuration lease: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil || count != 1 {
+		return 0, false, err
+	}
+	var fence int64
+	if err := s.db.QueryRowContext(ctx, `SELECT fence FROM project_configuration_leases WHERE project_id = ? AND owner = ?`, projectID, owner).Scan(&fence); err != nil {
+		return 0, false, err
+	}
+	return fence, true, nil
+}
+
+func (s *Store) ReleaseConfigurationLease(ctx context.Context, projectID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id = ?`, projectID)
+	return err
+}
+
+func (s *Store) RenewConfigurationLease(ctx context.Context, projectID, owner string, fence int64, now time.Time, ttl time.Duration) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE project_configuration_leases SET expires_at = ? WHERE project_id = ? AND owner = ? AND fence = ?`, formatTime(now.Add(ttl)), projectID, owner, fence)
+	if err != nil {
+		return false, err
 	}
 	count, err := result.RowsAffected()
 	return count == 1, err
 }
 
-func (s *Store) ReleaseConfigurationLease(ctx context.Context, projectID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id = ?`, projectID)
+func (s *Store) ReleaseConfigurationLeaseOwned(ctx context.Context, projectID, owner string, fence int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM project_configuration_leases WHERE project_id = ? AND owner = ? AND fence = ?`, projectID, owner, fence)
 	return err
 }
 
@@ -121,8 +152,14 @@ func (s *Store) saveConfiguration(ctx context.Context, projectID string, expecte
 	err = s.InTx(ctx, func(tx *sql.Tx) error {
 		var conflictID string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id <> ? AND (domain = ? OR EXISTS (
-			SELECT 1 FROM port_allocations pa WHERE pa.project_id <> projects.id AND pa.port > 0 AND pa.port IN (?, ?, ?, ?, ?, ?)
-		)) LIMIT 1`, projectID, cfg.General.Domain, cfg.Network.APIPort, cfg.Network.StudioPort, cfg.Network.DirectDatabasePort, cfg.Network.PoolerPort, cfg.Pooler.TransactionPort, cfg.Pooler.SessionPort).Scan(&conflictID); err == nil {
+			SELECT 1 FROM port_allocations pa WHERE pa.project_id <> ? AND ((? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?) OR (? > 0 AND ? AND pa.port = ?))
+		)) LIMIT 1`, projectID, cfg.General.Domain, projectID,
+			cfg.Network.APIPort, true, cfg.Network.APIPort,
+			cfg.Network.StudioPort, cfg.Services.Studio, cfg.Network.StudioPort,
+			cfg.Network.DirectDatabasePort, cfg.Services.DirectDB, cfg.Network.DirectDatabasePort,
+			cfg.Network.PoolerPort, cfg.Services.Supavisor, cfg.Network.PoolerPort,
+			cfg.Pooler.TransactionPort, cfg.Services.Supavisor, cfg.Pooler.TransactionPort,
+			cfg.Pooler.SessionPort, cfg.Services.Supavisor, cfg.Pooler.SessionPort).Scan(&conflictID); err == nil {
 			return fmt.Errorf("%w: %s", ErrConfigurationConflict, conflictID)
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("check configuration conflicts: %w", err)
@@ -159,6 +196,9 @@ func (s *Store) saveConfiguration(ctx context.Context, projectID string, expecte
 		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_versions(project_id, revision, kind, envelope_version, nonce, ciphertext) SELECT project_id, ?, kind, envelope_version, nonce, ciphertext FROM project_secrets WHERE project_id = ?`, next, projectID); err != nil {
 			return fmt.Errorf("snapshot encrypted secrets: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_snapshot_markers(project_id, revision, present) VALUES (?, ?, CASE WHEN EXISTS (SELECT 1 FROM project_secrets WHERE project_id = ?) THEN 1 ELSE 0 END)`, projectID, next, projectID); err != nil {
+			return fmt.Errorf("mark encrypted secret snapshot: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE projects SET domain = ?, site_url = ?, supabase_version = ?, services_json = ?, updated_at = ? WHERE id = ?`, cfg.General.Domain, cfg.General.SiteURL, cfg.General.SupabaseVersion, string(servicesJSON), formatTime(now), projectID); err != nil {
 			return fmt.Errorf("update project projection: %w", err)
 		}
@@ -171,21 +211,22 @@ func (s *Store) saveConfiguration(ctx context.Context, projectID string, expecte
 			}
 		}
 		for _, port := range []struct {
-			kind string
-			port int
+			kind    string
+			port    int
+			enabled bool
 		}{
-			{kind: "API", port: cfg.Network.APIPort},
-			{kind: "STUDIO", port: cfg.Network.StudioPort},
-			{kind: "DATABASE", port: cfg.Network.DirectDatabasePort},
-			{kind: "POOLER", port: cfg.Network.PoolerPort},
-			{kind: "POOLER_TRANSACTION", port: cfg.Pooler.TransactionPort},
-			{kind: "POOLER_SESSION", port: cfg.Pooler.SessionPort},
+			{kind: "API", port: cfg.Network.APIPort, enabled: true},
+			{kind: "STUDIO", port: cfg.Network.StudioPort, enabled: cfg.Services.Studio},
+			{kind: "DATABASE", port: cfg.Network.DirectDatabasePort, enabled: cfg.Services.DirectDB},
+			{kind: "POOLER", port: cfg.Network.PoolerPort, enabled: cfg.Services.Supavisor},
+			{kind: "POOLER_TRANSACTION", port: cfg.Pooler.TransactionPort, enabled: cfg.Services.Supavisor},
+			{kind: "POOLER_SESSION", port: cfg.Pooler.SessionPort, enabled: cfg.Services.Supavisor},
 		} {
-			if port.port == 0 {
-				continue
-			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM port_allocations WHERE project_id = ? AND kind = ?`, projectID, port.kind); err != nil {
 				return fmt.Errorf("replace port projection %s: %w", port.kind, err)
+			}
+			if port.port == 0 || !port.enabled {
+				continue
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO port_allocations(port, project_id, kind, created_at) VALUES (?, ?, ?, ?)`, port.port, projectID, port.kind, formatTime(now)); err != nil {
 				return fmt.Errorf("store port projection %s: %w", port.kind, err)
@@ -234,8 +275,17 @@ func projectServiceProjection(services contracts.Services) []serviceProjection {
 // before the specified configuration revision was attempted.
 func (s *Store) RestoreSecretsRevision(ctx context.Context, projectID string, revision int64) error {
 	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var present int
+		if err := tx.QueryRowContext(ctx, `SELECT present FROM project_secret_snapshot_markers WHERE project_id = ? AND revision = ?`, projectID, revision).Scan(&present); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM project_secrets WHERE project_id = ?`, projectID); err != nil {
 			return err
+		}
+		if present == 0 {
+			return nil
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id, kind, envelope_version, nonce, ciphertext, updated_at) SELECT project_id, kind, envelope_version, nonce, ciphertext, ? FROM project_secret_versions WHERE project_id = ? AND revision = ?`, formatTime(time.Now()), projectID, revision)
 		return err
@@ -243,12 +293,30 @@ func (s *Store) RestoreSecretsRevision(ctx context.Context, projectID string, re
 }
 
 func (s *Store) BindOperationConfiguration(ctx context.Context, operationID, projectID string, snapshot ConfigurationSnapshot, now time.Time) error {
+	return s.BindOperationConfigurationKind(ctx, operationID, projectID, snapshot, "UPDATE_CONFIG", now)
+}
+
+func (s *Store) BindOperationConfigurationKind(ctx context.Context, operationID, projectID string, snapshot ConfigurationSnapshot, kind string, now time.Time) error {
 	payload, err := json.Marshal(snapshot.Configuration)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO operation_configurations(operation_id, project_id, revision, config_json, created_at) VALUES (?, ?, ?, ?, ?)`, operationID, projectID, snapshot.Revision, string(payload), formatTime(now))
+	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO operation_configurations(operation_id, project_id, revision, config_json, operation_kind, created_at) VALUES (?, ?, ?, ?, ?, ?)`, operationID, projectID, snapshot.Revision, string(payload), kind, formatTime(now))
 	return err
+}
+
+func (s *Store) SetOperationKind(ctx context.Context, operationID, kind string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE operation_configurations SET operation_kind = ? WHERE operation_id = ?`, kind, operationID)
+	return err
+}
+
+func (s *Store) GetOperationKind(ctx context.Context, operationID string) (string, error) {
+	var kind string
+	err := s.db.QueryRowContext(ctx, `SELECT operation_kind FROM operation_configurations WHERE operation_id = ?`, operationID).Scan(&kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return kind, err
 }
 
 func (s *Store) GetOperationConfiguration(ctx context.Context, operationID string) (ConfigurationSnapshot, error) {

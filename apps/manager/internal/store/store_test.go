@@ -87,6 +87,47 @@ func TestConfigurationLeaseSerializesAndRecoversAfterExpiry(t *testing.T) {
 	}
 }
 
+func TestConfigurationLeaseReleaseIsOwnerAndFenceBound(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	fence, acquired, err := s.AcquireConfigurationLeaseWithFence(context.Background(), project.ID, "first", now, time.Minute)
+	if err != nil || !acquired {
+		t.Fatalf("acquire = %d, %v, %v", fence, acquired, err)
+	}
+	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, "stale-owner", fence); err != nil {
+		t.Fatal(err)
+	}
+	if acquired, err := s.AcquireConfigurationLease(context.Background(), project.ID, "second", now.Add(2*time.Minute), time.Minute); err != nil || !acquired {
+		t.Fatalf("expired takeover = %v, %v", acquired, err)
+	}
+	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, "first", fence); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM project_configuration_leases WHERE project_id = ?`, project.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("stale owner release removed successor: count=%d err=%v", count, err)
+	}
+}
+
+func TestSnapshotMarkerDistinguishesEmptyRevision(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	var present int
+	if err := s.DB().QueryRow(`SELECT present FROM project_secret_snapshot_markers WHERE project_id = ? AND revision = 1`, project.ID).Scan(&present); err != nil || present != 0 {
+		t.Fatalf("revision-1 empty marker = %d, %v", present, err)
+	}
+	if err := s.RestoreSecretsRevision(context.Background(), project.ID, 1); err != nil {
+		t.Fatalf("restore empty snapshot: %v", err)
+	}
+}
+
 func TestStorePersistsOnlyEncryptedSecretEnvelope(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()

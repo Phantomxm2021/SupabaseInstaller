@@ -45,6 +45,25 @@ func TestInstallPersistsEncryptedUniqueSecretsBeforePrepare(t *testing.T) {
 	}
 }
 
+func TestHydrateConfiguredSecretsSkipsDisabledAuthConsumers(t *testing.T) {
+	orchestrator, _, project := newTestOrchestrator(t)
+	envelope, err := orchestrator.cipher.Encrypt(project.ID, "smtp.password", []byte("auth-secret-sentinel"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orchestrator.store.PutSecret(context.Background(), project.ID, "smtp.password", envelope); err != nil {
+		t.Fatal(err)
+	}
+	cfg := contracts.ProjectConfiguration{Services: contracts.Services{Auth: false}, Auth: contracts.AuthConfig{SMTP: contracts.SMTPConfig{Enabled: true, PasswordSet: true}}}
+	runtime, err := orchestrator.hydrateConfiguredSecrets(context.Background(), project.ID, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := runtime["smtp.password"]; ok {
+		t.Fatalf("disabled auth secret was hydrated: %#v", runtime)
+	}
+}
+
 type fakeProvisioner struct {
 	prepare        contracts.PrepareProjectRequest
 	failStart      error

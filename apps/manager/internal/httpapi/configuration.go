@@ -236,6 +236,10 @@ func (h configurationHandlers) queue(w http.ResponseWriter, r *http.Request, pat
 }
 
 func (h configurationHandlers) handleConfigError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrConfigurationBusy) {
+		writeError(w, http.StatusConflict, "CONFIGURATION_BUSY", "Another configuration operation is active")
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
 		return

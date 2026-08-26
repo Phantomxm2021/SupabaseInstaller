@@ -90,6 +90,9 @@ INSERT INTO projects (
 				return fmt.Errorf("create encrypted secret %s: %w", mutation.Kind, err)
 			}
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_snapshot_markers(project_id, revision, present) VALUES (?, 1, CASE WHEN EXISTS (SELECT 1 FROM project_secrets WHERE project_id = ?) THEN 1 ELSE 0 END)`, project.ID, project.ID); err != nil {
+			return fmt.Errorf("create initial secret snapshot marker: %w", err)
+		}
 		return nil
 	})
 	return err
