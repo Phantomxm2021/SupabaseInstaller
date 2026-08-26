@@ -37,4 +37,9 @@ describe('EmailTemplateEditorPage', () => {
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
     expect(requestSave).not.toHaveBeenCalled()
   })
+
+  it('does not throw when a project still has no mailer configuration', () => {
+    render(<MemoryRouter><EmailTemplateEditorPage context={{ ...context, auth: {} } as AuthenticationWorkspaceContext} templateKey="confirm-signup" /></MemoryRouter>)
+    expect(screen.getByText('Email configuration is being upgraded. Return to Emails after the project configuration migration completes.')).toBeVisible()
+  })
 })

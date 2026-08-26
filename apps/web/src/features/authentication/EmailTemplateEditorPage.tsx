@@ -19,8 +19,14 @@ function templateInfo(key: string): Info | undefined { const t = emailTemplates.
 export function EmailTemplateEditorPage({ context: provided, templateKey: keyProp }: { context?: AuthenticationWorkspaceContext; templateKey?: TemplateKey }) {
   const workspace = useAuthenticationWorkspace(); const context = provided ?? workspace; const { templateKey: routeKey } = useParams(); const info = templateInfo(keyProp ?? routeKey ?? '')
   if (!info) return <main className="page"><h1>Template not found</h1><Link to={`/projects/${context.projectId}/authentication/emails`}>Back to Emails</Link></main>
+  if (!hasCompleteMailer(context.auth)) return <main className="page"><header className="page-heading"><div><h1>Emails</h1><p className="muted">Email configuration is being upgraded. Return to Emails after the project configuration migration completes.</p></div></header><Link className="text-sm underline" to={`/projects/${context.projectId}/authentication/emails`}>Back to Emails</Link></main>
   const defaults = defaultMailerConfiguration(); const initial = info.template ? context.auth.mailer.templates[info.template] : context.auth.mailer.notifications[info.notification!].template; const fallback = info.template ? defaults.templates[info.template] : defaults.notifications[info.notification!].template
   return <TemplateEditor context={context} info={info} initial={initial} fallback={fallback} />
+}
+
+function hasCompleteMailer(auth: AuthenticationWorkspaceContext['auth']) {
+  const mailer = (auth as { mailer?: MailerConfig }).mailer
+  return Boolean(mailer?.templates && mailer.notifications)
 }
 
 function TemplateEditor({ context, info, initial, fallback }: { context: AuthenticationWorkspaceContext; info: Info; initial: EmailTemplateConfig; fallback: EmailTemplateConfig }) {
