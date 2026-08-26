@@ -231,6 +231,217 @@ func TestStageRuntimeFilesPreservesStableVolumeDataAcrossGenerations(t *testing.
 	}
 }
 
+func TestStageRuntimeFilesMigratesLegacyRootRuntimeFiles(t *testing.T) {
+	base := t.TempDir()
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "volumes", "db"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "volumes", "storage"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "functions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "project.json"), []byte(`{"projectId":"legacy"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"docker-compose.yml": "stale-compose",
+		".env":               "stale-env",
+		".env.functions":     "stale-functions",
+	} {
+		if err := os.WriteFile(filepath.Join(project, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, content := range map[string]string{
+		filepath.Join(project, "volumes", "db", "sentinel"):      "db-data",
+		filepath.Join(project, "volumes", "storage", "sentinel"): "storage-data",
+		filepath.Join(project, "functions", "main.ts"):           "function-source",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, commit, err := root.StageRuntimeFiles("legacy", RuntimeFiles{Compose: []byte("current-compose"), Env: []byte("current-env"), FunctionsEnv: []byte("current-functions")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"docker-compose.yml", ".env", ".env.functions"} {
+		if _, err := os.Lstat(filepath.Join(project, name)); !os.IsNotExist(err) {
+			t.Fatalf("legacy root %s still exists: %v", name, err)
+		}
+	}
+	current := filepath.Join(project, ".manager-runtime", "current")
+	for name, want := range map[string]string{
+		"docker-compose.yml": "current-compose",
+		".env":               "current-env",
+		".env.functions":     "current-functions",
+	} {
+		if got := string(mustRead(t, filepath.Join(current, name))); got != want {
+			t.Fatalf("current %s = %q, want %q", name, got, want)
+		}
+	}
+	for path, want := range map[string]string{
+		filepath.Join(project, "project.json"):                   `{"projectId":"legacy"}`,
+		filepath.Join(project, "volumes", "db", "sentinel"):      "db-data",
+		filepath.Join(project, "volumes", "storage", "sentinel"): "storage-data",
+		filepath.Join(project, "functions", "main.ts"):           "function-source",
+	} {
+		if got := string(mustRead(t, path)); got != want {
+			t.Fatalf("user data %s = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestStageRuntimeFilesSkipsNonRegularLegacyRuntimeEntries(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _ := root.ProjectPath("legacy")
+	if err := os.MkdirAll(filepath.Join(project, ".env.functions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, commit, err := root.StageRuntimeFiles("legacy", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(project, ".env.functions")); err != nil || !info.IsDir() {
+		t.Fatalf("non-regular legacy entry was removed or changed: info=%v err=%v", info, err)
+	}
+}
+
+func TestStageRuntimeFilesRestoresChainedGenerations(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreA, commitA, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("A"), Env: []byte("A"), FunctionsEnv: []byte("A")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitA(); err != nil {
+		t.Fatal(err)
+	}
+	restoreB, commitB, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("B"), Env: []byte("B"), FunctionsEnv: []byte("B")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitB(); err != nil {
+		t.Fatal(err)
+	}
+	restoreC, commitC, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("C"), Env: []byte("C"), FunctionsEnv: []byte("C")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitC(); err != nil {
+		t.Fatal(err)
+	}
+	compose, _ := root.RuntimeComposePath("bee")
+	targetC := assertCurrentRuntime(t, root, "bee", compose, "C")
+	if err := restoreC(); err != nil {
+		t.Fatal(err)
+	}
+	targetB := assertCurrentRuntime(t, root, "bee", compose, "B")
+	if err := restoreB(); err != nil {
+		t.Fatal(err)
+	}
+	targetA := assertCurrentRuntime(t, root, "bee", compose, "A")
+	if targetC == targetB || targetB == targetA || targetC == targetA {
+		t.Fatalf("generation links were not distinct: A=%q B=%q C=%q", targetA, targetB, targetC)
+	}
+	if err := restoreA(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(compose); !os.IsNotExist(err) {
+		t.Fatalf("restoring first generation retained current runtime: %v", err)
+	}
+}
+
+func TestStageRuntimeFilesRejectsStaleRestoreAfterNewerUnrelatedCommit(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commitA, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("A"), Env: []byte("A"), FunctionsEnv: []byte("A")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitA(); err != nil {
+		t.Fatal(err)
+	}
+	restoreB, commitB, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("B"), Env: []byte("B"), FunctionsEnv: []byte("B")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitB(); err != nil {
+		t.Fatal(err)
+	}
+	_, commitC, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("C"), Env: []byte("C"), FunctionsEnv: []byte("C")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitC(); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreB(); err == nil || !strings.Contains(err.Error(), "stale runtime generation") {
+		t.Fatalf("stale restore error = %v", err)
+	}
+	compose, _ := root.RuntimeComposePath("bee")
+	assertCurrentRuntime(t, root, "bee", compose, "C")
+}
+
+func TestNewCleansAbandonedRuntimeCandidates(t *testing.T) {
+	base := t.TempDir()
+	project := filepath.Join(base, "bee")
+	runtimeRoot := filepath.Join(project, ".manager-runtime")
+	generation := filepath.Join(runtimeRoot, "generations", "generation-keep")
+	candidate := filepath.Join(runtimeRoot, ".candidate-orphan")
+	if err := os.MkdirAll(generation, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(candidate, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generation, "docker-compose.yml"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(candidate, "docker-compose.yml"), []byte("orphan"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("generations", "generation-keep"), filepath.Join(runtimeRoot, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(candidate); !os.IsNotExist(err) {
+		t.Fatalf("startup retained abandoned candidate: %v", err)
+	}
+	if got := string(mustRead(t, filepath.Join(runtimeRoot, "current", "docker-compose.yml"))); got != "keep" {
+		t.Fatalf("startup changed current generation to %q", got)
+	}
+	if _, err := os.Stat(generation); err != nil {
+		t.Fatalf("startup removed committed generation: %v", err)
+	}
+}
+
 func TestConcurrentRuntimeStagesSerializePublication(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
@@ -270,4 +481,24 @@ func mustRead(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func assertCurrentRuntime(t *testing.T, root *Root, slug, composePath, want string) string {
+	t.Helper()
+	project, err := root.ProjectPath(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(project, ".manager-runtime", "current")
+	target, err := os.Readlink(current)
+	if err != nil {
+		t.Fatalf("read current runtime link: %v", err)
+	}
+	if !strings.HasPrefix(filepath.ToSlash(target), "generations/") {
+		t.Fatalf("current runtime target = %q, want generation target", target)
+	}
+	if got := string(mustRead(t, composePath)); got != want {
+		t.Fatalf("current runtime contents = %q, want %q", got, want)
+	}
+	return target
 }

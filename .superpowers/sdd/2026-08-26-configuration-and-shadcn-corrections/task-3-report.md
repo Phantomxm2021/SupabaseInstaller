@@ -90,3 +90,21 @@ GREEN verification:
 - `git diff --check` — PASS.
 
 Out of scope for Task 3 / Task 5 hydration note: after restart, later reconciliation must load and decrypt the newly generated internal secret kinds before rendering. This change adds generation and persistence but does not implement Manager reconciliation hydration.
+
+## Fix Round 4
+
+Addressed the remaining runtime migration, generation restore, phone mapping, and Auth semantic findings. Existing projects now remove only the exact root runtime filenames (`docker-compose.yml`, `.env`, `.env.functions`) after the new `current` pointer is durable, and only when those entries are regular files or symlinks. Non-runtime project data remains untouched. Root initialization invokes candidate cleanup for every direct project slug; startup removes only `.candidate-*` entries and preserves `current` plus all committed generations. Generation pruning was removed so chained A -> B -> C -> B -> A restores remain valid, with stale restore CAS protection retained. Phone fields preserve the `SMS_` prefix in their `GOTRUE_SMS_*` mappings. Global signup flags now require `DisableSignup == !AllowSignup`, reject disabled global signup when phone, anonymous, or OAuth signup paths are enabled, and emit `DISABLE_SIGNUP` directly. Secure email change and double-confirm changes require equal values and map the shared official capability without OR-collapsing.
+
+RED evidence:
+
+- New legacy migration, startup candidate cleanup, chained restore, SMS-prefix, and Auth truth-table tests failed on the pre-fix implementation (stale root files remained, ancestor restore was missing, candidates survived `New`, SMS prefixes were dropped, and invalid Auth combinations were accepted).
+
+GREEN verification:
+
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 2m ./apps/provisioner/internal/projectfs ./apps/provisioner/internal/render ./apps/manager/internal/project` — PASS.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -race -count=1 -timeout 2m ./apps/provisioner/internal/projectfs ./apps/provisioner/internal/server ./apps/provisioner/internal/runtime ./apps/provisioner/internal/compose` — PASS.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 5m ./apps/manager/... ./internal/...` — PASS.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 5m ./apps/provisioner/...` — PASS.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 5m ./...` — PASS.
+- `GOCACHE=/tmp/supabase-installer-go-cache GOMODCACHE=/tmp/supabase-installer-go-mod-cache go test -count=1 -timeout 2m ./apps/provisioner/internal/render -run TestRepresentativeComposeConfig -v` — PASS; real stable-project-root `docker compose config --quiet` validation passed for lightweight, standard, and full outputs.
+- `git diff --check` — PASS.

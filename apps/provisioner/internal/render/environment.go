@@ -35,6 +35,9 @@ var phoneSecretEnv = map[string][]string{
 
 func renderEnvironment(input Input) (string, string, error) {
 	cfg := input.Configuration
+	if err := validateAuthConfiguration(cfg.Auth); err != nil {
+		return "", "", err
+	}
 	if err := requireRuntimeSecrets(input); err != nil {
 		return "", "", err
 	}
@@ -54,7 +57,7 @@ func renderEnvironment(input Input) (string, string, error) {
 		"PG_META_CRYPTO_KEY":  input.Secrets.SecretKeyBase,
 		"REALTIME_DB_ENC_KEY": firstNonempty(input.RuntimeSecrets["realtime.dbEncryptionKey"], input.Secrets.RealtimeDBEncryptionKey), "OPENAI_API_KEY": "",
 		"ADDITIONAL_REDIRECT_URLS": strings.Join(cfg.Auth.RedirectURLs, ","),
-		"JWT_EXPIRY":               strconv.Itoa(cfg.Auth.JWTExpiry), "DISABLE_SIGNUP": boolString(cfg.Auth.DisableSignup || !cfg.Auth.Email.AllowSignup),
+		"JWT_EXPIRY":               strconv.Itoa(cfg.Auth.JWTExpiry), "DISABLE_SIGNUP": boolString(cfg.Auth.DisableSignup),
 		"ENABLE_EMAIL_SIGNUP":      boolString(cfg.Auth.Email.Enabled),
 		"ENABLE_EMAIL_AUTOCONFIRM": boolString(!cfg.Auth.Email.ConfirmEmail),
 		"ENABLE_ANONYMOUS_USERS":   boolString(cfg.Auth.AnonymousSignIn),
@@ -62,7 +65,7 @@ func renderEnvironment(input Input) (string, string, error) {
 		"SMTP_ADMIN_EMAIL": cfg.Auth.SMTP.SenderEmail, "SMTP_HOST": cfg.Auth.SMTP.Host,
 		"SMTP_PORT": strconv.Itoa(cfg.Auth.SMTP.Port), "SMTP_USER": cfg.Auth.SMTP.Username,
 		"SMTP_PASS": "", "SMTP_SENDER_NAME": cfg.Auth.SMTP.SenderName,
-		"SECURE_EMAIL_CHANGE_ENABLED": boolString(cfg.Auth.Email.SecureEmailChange || cfg.Auth.Email.DoubleConfirmChanges),
+		"SECURE_EMAIL_CHANGE_ENABLED": boolString(cfg.Auth.Email.SecureEmailChange),
 		"STORAGE_BACKEND":             storageBackend(cfg.Storage.Backend), "GLOBAL_S3_BUCKET": cfg.Storage.Bucket,
 		"GLOBAL_S3_ENDPOINT": cfg.Storage.Endpoint, "GLOBAL_S3_FORCE_PATH_STYLE": boolString(cfg.Storage.ForcePathStyle),
 		"GLOBAL_S3_PROTOCOL": storageProtocol(cfg.Storage.Endpoint),
@@ -333,11 +336,12 @@ func injectAuthEnvironment(raw any, input Input) error {
 		service["environment"] = env
 	}
 	set := func(key, value string) { env[key] = "${" + value + "}" }
+	set("GOTRUE_DISABLE_SIGNUP", "DISABLE_SIGNUP")
 	set("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED", "SECURE_EMAIL_CHANGE_ENABLED")
 	if input.Configuration.Auth.Phone.Enabled {
 		set("GOTRUE_SMS_PROVIDER", "SMS_PROVIDER")
 		for _, envKey := range phoneFieldKeys[input.Configuration.Auth.Phone.Provider] {
-			set("GOTRUE_"+strings.TrimPrefix(envKey, "SMS_"), envKey)
+			set("GOTRUE_"+envKey, envKey)
 		}
 		for _, secretKey := range phoneSecretEnv[input.Configuration.Auth.Phone.Provider] {
 			env[secretKey] = "${PHONE_SECRET}"

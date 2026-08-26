@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -50,6 +51,11 @@ func Lightweight(input Input) (OutputFiles, error) {
 	if input.Configuration.Services == (contracts.Services{}) {
 		input.Configuration.Services = contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true}
 	}
+	if reflect.DeepEqual(input.Configuration.Auth, contracts.AuthConfig{}) {
+		// Preserve the old Lightweight request contract while Project enforces
+		// the explicit global signup invariants for typed configurations.
+		input.Configuration.Auth = contracts.AuthConfig{Enabled: true, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}}
+	}
 	return Project(input)
 }
 
@@ -74,6 +80,9 @@ func Project(input Input) (OutputFiles, error) {
 	}
 	if input.Configuration.General.Domain == "" || input.Configuration.General.SiteURL == "" {
 		return OutputFiles{}, fmt.Errorf("domain and site URL are required")
+	}
+	if err := validateAuthConfiguration(input.Configuration.Auth); err != nil {
+		return OutputFiles{}, err
 	}
 	if err := validateStorageConfiguration(input.Configuration.Storage); err != nil {
 		return OutputFiles{}, err
@@ -107,9 +116,6 @@ func Project(input Input) (OutputFiles, error) {
 	}
 	if input.Configuration.Services.Supavisor && (input.Configuration.Pooler.SessionPort < 1 || input.Configuration.Pooler.SessionPort > 65535 || input.Configuration.Pooler.TransactionPort < 1 || input.Configuration.Pooler.TransactionPort > 65535) {
 		return OutputFiles{}, fmt.Errorf("pooler.sessionPort/transactionPort: valid host ports are required when Supavisor is enabled")
-	}
-	if !input.Configuration.Auth.Email.AllowSignup && (input.Configuration.Auth.DisableSignup || input.Configuration.Auth.Phone.Enabled || input.Configuration.Auth.AnonymousSignIn || hasEnabledOAuth(input.Configuration.Auth.OAuth)) {
-		return OutputFiles{}, fmt.Errorf("auth.email.allowSignup: cannot disable email signup while another signup path is enabled")
 	}
 	if err := validateGeneratedSecrets(input); err != nil {
 		return OutputFiles{}, err
@@ -213,6 +219,19 @@ func Project(input Input) (OutputFiles, error) {
 	}
 	sort.Strings(enabled)
 	return OutputFiles{Env: env, FunctionsEnv: functionsEnv, Compose: string(encoded), ComposeProjectName: "supabase-manager-" + input.Slug, EnabledComposeServices: enabled}, nil
+}
+
+func validateAuthConfiguration(auth contracts.AuthConfig) error {
+	if auth.DisableSignup != !auth.Email.AllowSignup {
+		return fmt.Errorf("auth.disableSignup/auth.email.allowSignup: disableSignup must equal !allowSignup")
+	}
+	if auth.DisableSignup && (auth.Phone.Enabled || auth.AnonymousSignIn || hasEnabledOAuth(auth.OAuth)) {
+		return fmt.Errorf("auth.disableSignup: cannot disable global signup while phone, anonymous, or OAuth signup is enabled")
+	}
+	if auth.Email.SecureEmailChange != auth.Email.DoubleConfirmChanges {
+		return fmt.Errorf("auth.email.secureEmailChange/auth.email.doubleConfirmChanges: pinned runtime supports one shared capability")
+	}
+	return nil
 }
 
 func validateGeneratedSecrets(input Input) error {

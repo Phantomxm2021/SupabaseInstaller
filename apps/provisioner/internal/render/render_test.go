@@ -275,6 +275,173 @@ func TestRenderPhoneProviderRegistry(t *testing.T) {
 	}
 }
 
+func TestRenderPhoneProviderEnvironmentKeysPreserveSMSPrefix(t *testing.T) {
+	cases := []struct {
+		provider string
+		fields   map[string]string
+		env      []string
+		compose  []string
+		secret   string
+	}{
+		{
+			provider: "twilio",
+			fields: map[string]string{
+				"accountSid":        "AC123",
+				"messageServiceSid": "MG123",
+				"verifySid":         "VS123",
+			},
+			env: []string{
+				"SMS_TWILIO_ACCOUNT_SID=AC123",
+				"SMS_TWILIO_MESSAGE_SERVICE_SID=MG123",
+				"SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID=VS123",
+			},
+			compose: []string{
+				"GOTRUE_SMS_TWILIO_ACCOUNT_SID: ${SMS_TWILIO_ACCOUNT_SID}",
+				"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID: ${SMS_TWILIO_MESSAGE_SERVICE_SID}",
+				"GOTRUE_SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID: ${SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID}",
+				"GOTRUE_SMS_TWILIO_AUTH_TOKEN: ${PHONE_SECRET}",
+				"GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN: ${PHONE_SECRET}",
+			},
+			secret: "PHONE_SECRET=phone-secret",
+		},
+		{
+			provider: "messagebird",
+			fields:   map[string]string{"originator": "Bee"},
+			env:      []string{"SMS_MESSAGEBIRD_ORIGINATOR=Bee"},
+			compose: []string{
+				"GOTRUE_SMS_MESSAGEBIRD_ORIGINATOR: ${SMS_MESSAGEBIRD_ORIGINATOR}",
+				"GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY: ${PHONE_SECRET}",
+			},
+			secret: "PHONE_SECRET=phone-secret",
+		},
+		{
+			provider: "textlocal",
+			fields:   map[string]string{"sender": "Bee"},
+			env:      []string{"SMS_TEXTLOCAL_SENDER=Bee"},
+			compose: []string{
+				"GOTRUE_SMS_TEXTLOCAL_SENDER: ${SMS_TEXTLOCAL_SENDER}",
+				"GOTRUE_SMS_TEXTLOCAL_API_KEY: ${PHONE_SECRET}",
+			},
+			secret: "PHONE_SECRET=phone-secret",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			cfg := testConfiguration()
+			cfg.Auth.Phone = contracts.PhoneAuthConfig{Enabled: true, Provider: tc.provider, SecretSet: true, Fields: tc.fields}
+			out, err := Project(Input{Slug: "phone-" + tc.provider, APIPort: 18001, Configuration: cfg, RuntimeSecrets: map[string]string{SecretPhone: "phone-secret"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range tc.env {
+				if !strings.Contains(out.Env, line) {
+					t.Errorf(".env missing %q", line)
+				}
+			}
+			if !strings.Contains(out.Env, tc.secret) {
+				t.Errorf(".env missing secret source %q", tc.secret)
+			}
+			for _, line := range tc.compose {
+				if !strings.Contains(out.Compose, line) {
+					t.Errorf("Compose missing %q", line)
+				}
+			}
+			if strings.Contains(out.Compose, "GOTRUE_"+strings.ToUpper(tc.provider)+"_") {
+				t.Errorf("Compose dropped SMS prefix for %s", tc.provider)
+			}
+		})
+	}
+}
+
+func TestRenderAuthSignupAndEmailChangeTruthTables(t *testing.T) {
+	t.Run("signup", func(t *testing.T) {
+		cases := []struct {
+			name      string
+			disable   bool
+			allow     bool
+			phone     bool
+			anonymous bool
+			oauth     bool
+			wantError bool
+		}{
+			{name: "enabled", disable: false, allow: true},
+			{name: "globally disabled", disable: true, allow: false},
+			{name: "mismatched disabled false", disable: false, allow: false, wantError: true},
+			{name: "mismatched allowed true", disable: true, allow: true, wantError: true},
+			{name: "phone path conflicts", disable: true, allow: false, phone: true, wantError: true},
+			{name: "anonymous path conflicts", disable: true, allow: false, anonymous: true, wantError: true},
+			{name: "oauth path conflicts", disable: true, allow: false, oauth: true, wantError: true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := testConfiguration()
+				cfg.Auth.DisableSignup = tc.disable
+				cfg.Auth.Email.AllowSignup = tc.allow
+				cfg.Auth.Phone.Enabled = tc.phone
+				cfg.Auth.AnonymousSignIn = tc.anonymous
+				if tc.oauth {
+					cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true}}
+				}
+				out, err := Project(Input{Slug: "auth-signup-" + strings.ReplaceAll(tc.name, " ", "-"), APIPort: 18001, Configuration: cfg})
+				if tc.wantError {
+					if err == nil || !strings.Contains(err.Error(), "auth") {
+						t.Fatalf("Project() error = %v, want auth field error", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "DISABLE_SIGNUP=" + boolString(tc.disable)
+				if !strings.Contains(out.Env, want) {
+					t.Fatalf(".env missing exact global mapping %q", want)
+				}
+				if !strings.Contains(out.Compose, "GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP}") {
+					t.Fatal("Compose missing exact GOTRUE_DISABLE_SIGNUP mapping")
+				}
+			})
+		}
+	})
+
+	t.Run("secure email change", func(t *testing.T) {
+		cases := []struct {
+			name         string
+			secure       bool
+			double       bool
+			wantError    bool
+			wantEnvValue string
+		}{
+			{name: "both disabled", secure: false, double: false, wantEnvValue: "false"},
+			{name: "both enabled", secure: true, double: true, wantEnvValue: "true"},
+			{name: "secure only", secure: true, double: false, wantError: true},
+			{name: "double only", secure: false, double: true, wantError: true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := testConfiguration()
+				cfg.Auth.Email.SecureEmailChange = tc.secure
+				cfg.Auth.Email.DoubleConfirmChanges = tc.double
+				out, err := Project(Input{Slug: "auth-email-" + strings.ReplaceAll(tc.name, " ", "-"), APIPort: 18001, Configuration: cfg})
+				if tc.wantError {
+					if err == nil || !strings.Contains(err.Error(), "secureEmailChange") {
+						t.Fatalf("Project() error = %v, want secureEmailChange field error", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(out.Env, "SECURE_EMAIL_CHANGE_ENABLED="+tc.wantEnvValue) {
+					t.Fatalf(".env missing pinned capability value %q", tc.wantEnvValue)
+				}
+				if !strings.Contains(out.Compose, "GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: ${SECURE_EMAIL_CHANGE_ENABLED}") {
+					t.Fatal("Compose missing official secure email change mapping")
+				}
+			})
+		}
+	})
+}
+
 func TestRenderRejectsUnicodeControlInjection(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.General.SiteURL = "https://example.com/\u0085"

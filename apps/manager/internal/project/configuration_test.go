@@ -68,6 +68,79 @@ func TestPhoneSecretUsesSecretInput(t *testing.T) {
 	}
 }
 
+func TestAuthSignupAndEmailChangeTruthTables(t *testing.T) {
+	signupCases := []struct {
+		name      string
+		disable   bool
+		allow     bool
+		phone     bool
+		anonymous bool
+		oauth     bool
+		wantError bool
+	}{
+		{name: "enabled", disable: false, allow: true},
+		{name: "globally disabled", disable: true, allow: false},
+		{name: "mismatched disabled false", disable: false, allow: false, wantError: true},
+		{name: "mismatched allowed true", disable: true, allow: true, wantError: true},
+		{name: "phone path conflicts", disable: true, allow: false, phone: true, wantError: true},
+		{name: "anonymous path conflicts", disable: true, allow: false, anonymous: true, wantError: true},
+		{name: "oauth path conflicts", disable: true, allow: false, oauth: true, wantError: true},
+	}
+	for _, tc := range signupCases {
+		t.Run("signup/"+tc.name, func(t *testing.T) {
+			cfg := DefaultConfiguration(contracts.PresetLightweight)
+			cfg.Auth.DisableSignup = tc.disable
+			cfg.Auth.Email.AllowSignup = tc.allow
+			cfg.Auth.Phone.Enabled = tc.phone
+			cfg.Auth.AnonymousSignIn = tc.anonymous
+			if tc.oauth {
+				cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true}}
+			}
+			err := ValidateConfiguration(cfg)
+			if tc.wantError {
+				var validation *ValidationError
+				if !errors.As(err, &validation) || validation.Fields["auth.disableSignup"] == "" {
+					t.Fatalf("ValidateConfiguration() error = %v, want auth.disableSignup field error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateConfiguration() error = %v", err)
+			}
+		})
+	}
+
+	emailCases := []struct {
+		name      string
+		secure    bool
+		double    bool
+		wantError bool
+	}{
+		{name: "both disabled", secure: false, double: false},
+		{name: "both enabled", secure: true, double: true},
+		{name: "secure only", secure: true, double: false, wantError: true},
+		{name: "double only", secure: false, double: true, wantError: true},
+	}
+	for _, tc := range emailCases {
+		t.Run("email-change/"+tc.name, func(t *testing.T) {
+			cfg := DefaultConfiguration(contracts.PresetLightweight)
+			cfg.Auth.Email.SecureEmailChange = tc.secure
+			cfg.Auth.Email.DoubleConfirmChanges = tc.double
+			err := ValidateConfiguration(cfg)
+			if tc.wantError {
+				var validation *ValidationError
+				if !errors.As(err, &validation) || validation.Fields["auth.email.secureEmailChange"] == "" {
+					t.Fatalf("ValidateConfiguration() error = %v, want secureEmailChange field error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateConfiguration() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestConfigurationPatchOmitsFullConfigurationForSectionPatch(t *testing.T) {
 	payload, err := json.Marshal(contracts.ConfigurationPatch{ExpectedRevision: 2, General: &contracts.GeneralConfig{Domain: "bee.example.com"}})
 	if err != nil {

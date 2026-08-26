@@ -154,6 +154,17 @@ func validateServicesConfiguration(services contracts.Services, validation *Vali
 }
 
 func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
+	if auth.DisableSignup != !auth.Email.AllowSignup {
+		validation.add("auth.disableSignup", "must equal the inverse of auth.email.allowSignup")
+		validation.add("auth.email.allowSignup", "must equal the inverse of auth.disableSignup")
+	}
+	if auth.DisableSignup && (auth.Phone.Enabled || auth.AnonymousSignIn || hasEnabledOAuth(auth.OAuth)) {
+		validation.add("auth.disableSignup", "cannot disable global signup while phone, anonymous, or OAuth signup is enabled")
+	}
+	if auth.Email.SecureEmailChange != auth.Email.DoubleConfirmChanges {
+		validation.add("auth.email.secureEmailChange", "must match doubleConfirmChanges for the pinned runtime capability")
+		validation.add("auth.email.doubleConfirmChanges", "must match secureEmailChange for the pinned runtime capability")
+	}
 	validateSecretInput(auth.SMTP.Password, "auth.smtp.password", validation)
 	validatePhone(auth.Phone, validation)
 	if auth.SMTP.Enabled {
@@ -234,6 +245,15 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 			}
 		}
 	}
+}
+
+func hasEnabledOAuth(providers map[string]contracts.OAuthProviderConfig) bool {
+	for _, provider := range providers {
+		if provider.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 func validatePhone(phone contracts.PhoneAuthConfig, validation *ValidationError) {

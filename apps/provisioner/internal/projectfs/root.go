@@ -53,6 +53,11 @@ type RuntimeFiles struct {
 	FunctionsEnv []byte
 }
 
+// legacyRuntimeNames are the only runtime artifacts ever written by older
+// Manager versions at the project root. All other root entries belong to the
+// user's project data and must remain untouched during migration.
+var legacyRuntimeNames = []string{"docker-compose.yml", ".env", ".env.functions"}
+
 // RuntimeRef describes the stable Compose project directory and the current
 // atomically selected generated configuration files.
 type RuntimeRef struct {
@@ -124,6 +129,10 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 		}
 	} else if err != nil {
 		return nil, nil, fmt.Errorf("inspect project directory: %w", err)
+	}
+	legacyFiles, err := identifyLegacyRuntimeFiles(projectPath)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
@@ -204,9 +213,13 @@ func (r *Root) StageRuntimeFiles(slug string, files RuntimeFiles) (restore func(
 			return err
 		}
 		committedTarget = generationName
-		if err := pruneGenerations(filepath.Join(runtimeRoot, "generations"), generationName, previousTarget); err != nil {
-			_ = switchRuntimePointer(runtimeRoot, current, previousTarget)
-			_ = os.RemoveAll(generationPath)
+		// Keep every committed generation while restore closures may still
+		// refer to it. Chained rollback (A -> B -> C -> B -> A) depends on
+		// ancestors remaining valid; startup cleanup only removes candidates.
+		if err := removeLegacyRuntimeFiles(projectPath, legacyFiles); err != nil {
+			// The pointer already selects a complete, durable generation. Return
+			// the cleanup error without switching back to stale root files, so a
+			// failed migration can always recover from current.
 			return err
 		}
 		committed = true
@@ -225,15 +238,24 @@ func (r *Root) CleanupAbandonedRuntimeCandidates(slug string) error {
 	if err != nil {
 		return err
 	}
+	return cleanupAbandonedRuntimeCandidates(projectPath)
+}
+
+func cleanupAbandonedRuntimeCandidates(projectPath string) error {
 	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
 	matches, err := filepath.Glob(filepath.Join(runtimeRoot, ".candidate-*"))
 	if err != nil {
 		return err
 	}
+	removed := false
 	for _, path := range matches {
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("remove abandoned runtime candidate: %w", err)
 		}
+		removed = true
+	}
+	if removed {
+		return syncDirectory(runtimeRoot)
 	}
 	return nil
 }
@@ -309,21 +331,46 @@ func switchRuntimePointer(runtimeRoot, current, target string) error {
 	return syncDirectory(runtimeRoot)
 }
 
-func pruneGenerations(directory, current, previous string) error {
-	previous = strings.TrimPrefix(filepath.ToSlash(previous), "generations/")
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == current || entry.Name() == previous {
+func identifyLegacyRuntimeFiles(projectPath string) ([]string, error) {
+	identified := make([]string, 0, len(legacyRuntimeNames))
+	for _, name := range legacyRuntimeNames {
+		info, err := os.Lstat(filepath.Join(projectPath, name))
+		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(directory, entry.Name())); err != nil {
-			return err
+		if err != nil {
+			return nil, fmt.Errorf("inspect legacy runtime file %s: %w", name, err)
+		}
+		if info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			identified = append(identified, name)
 		}
 	}
-	return syncDirectory(directory)
+	return identified, nil
+}
+
+func removeLegacyRuntimeFiles(projectPath string, names []string) error {
+	removed := false
+	for _, name := range names {
+		path := filepath.Join(projectPath, name)
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect legacy runtime file %s: %w", name, err)
+		}
+		if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("remove legacy runtime file %s: %w", name, err)
+		}
+		removed = true
+	}
+	if removed {
+		return syncDirectory(projectPath)
+	}
+	return nil
 }
 
 func writeAtomic(directory, name string, data []byte, mode fs.FileMode) error {
@@ -383,7 +430,31 @@ func New(base string) (*Root, error) {
 	if err := os.MkdirAll(absolute, 0o700); err != nil {
 		return nil, fmt.Errorf("create project root: %w", err)
 	}
-	return &Root{base: filepath.Clean(absolute)}, nil
+	root := &Root{base: filepath.Clean(absolute)}
+	if err := root.cleanupAbandonedRuntimeCandidatesAtStartup(); err != nil {
+		return nil, fmt.Errorf("clean abandoned runtime candidates: %w", err)
+	}
+	return root, nil
+}
+
+// cleanupAbandonedRuntimeCandidatesAtStartup is called once during
+// Provisioner root initialization. It only inspects direct project
+// directories and removes entries named .candidate-* below each project's
+// .manager-runtime directory; current and committed generations are kept.
+func (r *Root) cleanupAbandonedRuntimeCandidatesAtStartup() error {
+	entries, err := os.ReadDir(r.base)
+	if err != nil {
+		return fmt.Errorf("list project root: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !slugPattern.MatchString(entry.Name()) {
+			continue
+		}
+		if err := r.CleanupAbandonedRuntimeCandidates(entry.Name()); err != nil {
+			return fmt.Errorf("clean project %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
 }
 
 func (r *Root) ProjectPath(slug string) (string, error) {
