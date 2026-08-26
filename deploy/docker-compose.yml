@@ -1,0 +1,75 @@
+name: supabase-manager
+
+services:
+  manager:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.manager
+    image: supabase-manager:${MANAGER_IMAGE_TAG:-local}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    environment:
+      MANAGER_LISTEN_ADDR: 0.0.0.0:8080
+      MANAGER_DATABASE_PATH: /var/lib/supabase-manager/manager.db
+      MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:?set MASTER_ENCRYPTION_KEY in deploy/.env}
+      PROVISIONER_URL: http://provisioner:9090
+      PROVISIONER_TOKEN: ${PROVISIONER_TOKEN:?set PROVISIONER_TOKEN in deploy/.env}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      PORT_RANGE_START: ${PORT_RANGE_START:-8000}
+      PORT_RANGE_END: ${PORT_RANGE_END:-8999}
+    ports:
+      - "${MANAGER_PORT:-8080}:8080"
+    volumes:
+      - manager-data:/var/lib/supabase-manager
+    networks: [frontend, management]
+    depends_on:
+      provisioner:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/health/ready]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  provisioner:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.provisioner
+    image: supabase-provisioner:${MANAGER_IMAGE_TAG:-local}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    environment:
+      PROVISIONER_LISTEN_ADDR: 0.0.0.0:9090
+      MANAGER_TOKEN: ${PROVISIONER_TOKEN:?set PROVISIONER_TOKEN in deploy/.env}
+      ACCEPTANCE_INSPECTOR_FAIL_ONCE: ${ACCEPTANCE_INSPECTOR_FAIL_ONCE:-0}
+      PROJECT_ROOT: ${PROJECT_ROOT:-/opt/supabase-manager/projects}
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PROJECT_ROOT:-/opt/supabase-manager/projects}:${PROJECT_ROOT:-/opt/supabase-manager/projects}
+    networks: [management, runtime-egress]
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:9090/health/live]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  manager-data:
+
+networks:
+  frontend:
+  management:
+    internal: true
+  runtime-egress:

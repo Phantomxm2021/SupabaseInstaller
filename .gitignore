@@ -1,1 +1,15 @@
 .worktrees/
+node_modules/
+dist/
+!apps/manager/webdist/dist/
+!apps/manager/webdist/dist/.keep
+coverage/
+*.tsbuildinfo
+apps/web/vite.config.js
+apps/web/vite.config.d.ts
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
