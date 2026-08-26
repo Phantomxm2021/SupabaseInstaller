@@ -36,7 +36,8 @@ an extra generation and startup did not restore quarantine entries.
 
 ## Commit
 
-The implementation is committed as `feat: reconcile project configuration with rollback`.
+The implementation is committed as `feat: reconcile project configuration with rollback`
+(`10feb83`). This report is updated in the follow-up documentation commit.
 
 ## Residual risks
 
