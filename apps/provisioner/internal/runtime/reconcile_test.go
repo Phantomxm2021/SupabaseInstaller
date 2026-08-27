@@ -207,6 +207,37 @@ func TestReconcilePollsStartingHealthBeforeAdvancingRevision(t *testing.T) {
 	}
 }
 
+func TestInitialReconcileFailureRemovesRuntimeBeforeClearingGeneration(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	inspector := &sequenceInspector{reports: []health.Report{{Health: contracts.HealthUnhealthy}}}
+	backend := NewBackend(root, runner, inspector)
+
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err == nil {
+		t.Fatal("initial reconcile unexpectedly succeeded")
+	}
+	if len(runner.down) != 1 {
+		t.Fatalf("down calls = %d, want 1", len(runner.down))
+	}
+	if len(runner.removed) != 0 {
+		t.Fatalf("remove-stopped calls = %#v, want none for initial failure", runner.removed)
+	}
+}
+
+func TestHealthTimeoutErrorNamesServicesStillStarting(t *testing.T) {
+	err := healthTimeoutError(health.Report{Services: []contracts.ServiceState{
+		{Name: "auth", Health: contracts.HealthStarting, Status: "running"},
+		{Name: "realtime", Health: contracts.HealthStarting, Status: "running"},
+	}})
+	message := err.Error()
+	if !strings.Contains(message, "auth") || !strings.Contains(message, "realtime") || !strings.Contains(message, "running") {
+		t.Fatalf("timeout error = %q, want pending service diagnostics", message)
+	}
+}
+
 func TestAffectedServicesCoversRenderedTopologyAndRuntimeFields(t *testing.T) {
 	before := baseConfig()
 	cases := []struct {
@@ -339,8 +370,8 @@ func TestInitialRollbackRestoresPointerWhenCandidateCleanupFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &fakeReconcileRunner{removeError: errors.New("injected candidate cleanup failure")}
-	backend := NewBackend(root, runner, &sequenceInspector{})
+	runner := &fakeReconcileRunner{downError: errors.New("injected candidate cleanup failure")}
+	backend := NewBackend(root, runner, &sequenceInspector{reports: []health.Report{{Health: contracts.HealthUnhealthy}}})
 	result, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1))
 	if err == nil || result.RolledBack {
 		t.Fatalf("result=%#v err=%v", result, err)
@@ -514,8 +545,10 @@ type fakeReconcileRunner struct {
 	removed          []string
 	removedCompose   string
 	removeError      error
+	downError        error
 	validateError    error
 	recreateError    error
+	down             []string
 }
 
 type captureComposeExecutor struct{ calls [][]string }
@@ -549,7 +582,10 @@ func (r *fakeReconcileRunner) Stop(context.Context, compose.ProjectRef) error { 
 func (r *fakeReconcileRunner) Restart(context.Context, compose.ProjectRef, ...string) error {
 	return nil
 }
-func (r *fakeReconcileRunner) DownRuntime(context.Context, compose.ProjectRef) error { return nil }
+func (r *fakeReconcileRunner) DownRuntime(_ context.Context, project compose.ProjectRef) error {
+	r.down = append(r.down, project.ComposeFile)
+	return r.downError
+}
 func (r *fakeReconcileRunner) Validate(_ context.Context, project compose.ProjectRef) error {
 	r.validated++
 	r.validatedDir, r.validatedCompose, r.validatedEnv = project.Dir, project.ComposeFile, project.EnvFile

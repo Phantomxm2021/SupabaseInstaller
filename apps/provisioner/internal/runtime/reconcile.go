@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	"supabase-manager/apps/provisioner/internal/compose"
@@ -102,9 +103,18 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				return fn(actionCtx)
 			}
 			var cleanupErr error
-			if published && len(added) > 0 {
-				// The current candidate is still selected while containers are
-				// removed; this leaves volumes intact before restoring the pointer.
+			if published && len(previousServices) == 0 {
+				// A first reconcile has no prior generation to restore. Remove the
+				// entire scoped Compose runtime while the candidate env/compose files
+				// are still selected; otherwise running containers survive rollback
+				// and become orphaned after the current generation is cleared.
+				cleanupErr = action(func(actionCtx context.Context) error {
+					return backend.runner.DownRuntime(actionCtx, currentProject)
+				})
+			} else if published && len(added) > 0 {
+				// The current candidate is still selected while newly added
+				// containers are removed; this leaves volumes intact before restoring
+				// the previous pointer.
 				cleanupErr = action(func(actionCtx context.Context) error {
 					return backend.runner.RemoveStopped(actionCtx, currentProject, added...)
 				})
@@ -267,11 +277,13 @@ func (backend *Backend) waitHealthy(ctx context.Context, slug string, enabled []
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, reconcileHealthTimeout)
 	defer cancel()
+	var lastReport health.Report
 	for {
 		report, err := backend.inspector.Project(checkCtx, health.ProjectRef{Slug: slug, Enabled: enabled})
 		if err != nil {
 			return err
 		}
+		lastReport = report
 		if report.Health == contracts.HealthHealthy {
 			return nil
 		}
@@ -282,12 +294,30 @@ func (backend *Backend) waitHealthy(ctx context.Context, slug string, enabled []
 		select {
 		case <-checkCtx.Done():
 			if errors.Is(checkCtx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("runtime health did not become healthy before deadline")
+				return healthTimeoutError(lastReport)
 			}
 			return checkCtx.Err()
 		case <-timer.C:
 		}
 	}
+}
+
+func healthTimeoutError(report health.Report) error {
+	starting := make([]string, 0)
+	for _, service := range report.Services {
+		if service.Health != contracts.HealthStarting {
+			continue
+		}
+		label := service.Name
+		if service.Status != "" {
+			label += " (" + service.Status + ")"
+		}
+		starting = append(starting, label)
+	}
+	if len(starting) == 0 {
+		return fmt.Errorf("runtime health did not become healthy before deadline")
+	}
+	return fmt.Errorf("runtime health did not become healthy before deadline; still starting: %s", strings.Join(starting, ", "))
 }
 
 func reportHasTransientService(report health.Report) bool {
