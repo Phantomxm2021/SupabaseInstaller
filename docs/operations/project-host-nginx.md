@@ -22,8 +22,27 @@ reconciling the project:
 | --- | --- | --- |
 | `General.Domain` | `bee.supabase.example.com` | Public Supabase host; do not include a scheme or path |
 | `General.SiteURL` | `https://app.example.com` | Application redirect URL; this is not the Supabase host |
-| `Network.APIPort` | `18001` | Host loopback port for the project API Gateway |
-| `Network.StudioPort` | `18002` | Host loopback port for the project Studio |
+| `Network.APIPort` | `8000`* | Host loopback port for the project API Gateway |
+| `Network.StudioPort` | `8001`* | Host loopback port for the project Studio |
+
+\* These are the current defaults when `deploy/.env` uses
+`PORT_RANGE_START=8000` and `PORT_RANGE_END=8999`. They are not fixed ports;
+the allocator may assign different values for another project or another
+range. Always use the ports written to that project's generated Compose file.
+
+On the host, read the actual bindings before writing Nginx configuration:
+
+```sh
+PROJECT_DIR=/home/supabase-manager/projects/beegamestudio
+RUNTIME_DIR="$PROJECT_DIR/.manager-runtime/current"
+sudo grep -nE '127\.0\.0\.1:[0-9]+:(8000|3000)' "$RUNTIME_DIR/docker-compose.yml"
+sudo docker compose --file "$RUNTIME_DIR/docker-compose.yml" \
+  --env-file "$RUNTIME_DIR/.env" ps api-gw studio
+```
+
+The API port is the host-side port mapped to container port `8000`; the Studio
+port is the host-side port mapped to container port `3000`. Do not substitute
+the Manager port (`8080`) or Provisioner port (`9090`).
 
 The renderer derives the runtime URLs from `General.Domain`:
 
@@ -72,8 +91,9 @@ the host where Nginx runs.
 
 ## 4. Per-project server block
 
-Create one block per project. Replace `18001`, `18002`, and the certificate
-paths with the values for that project.
+Create one block per project. The example below uses the current default
+bindings (`8000` for API Gateway and `8001` for Studio). Replace both ports
+with the actual values from the generated Compose file before reloading Nginx.
 
 ```nginx
 # /etc/nginx/conf.d/supabase-projects.conf
@@ -108,43 +128,43 @@ server {
     # Studio UI. Protect this location with Cloudflare Access or an additional
     # Nginx auth policy when Studio is not intended to be public.
     location / {
-        proxy_pass http://127.0.0.1:18002;
+        proxy_pass http://127.0.0.1:8001;
     }
 
     # Supabase API Gateway paths.
     location /auth {
-        proxy_pass http://127.0.0.1:18001;
+        proxy_pass http://127.0.0.1:8000;
     }
 
     location /rest {
-        proxy_pass http://127.0.0.1:18001;
+        proxy_pass http://127.0.0.1:8000;
     }
 
     location /graphql {
-        proxy_pass http://127.0.0.1:18001;
+        proxy_pass http://127.0.0.1:8000;
     }
 
     location /storage/v1/ {
-        proxy_pass http://127.0.0.1:18001;
+        proxy_pass http://127.0.0.1:8000;
         proxy_buffering off;
         proxy_request_buffering off;
     }
 
     location /functions {
-        proxy_pass http://127.0.0.1:18001;
+        proxy_pass http://127.0.0.1:8000;
     }
 
     location /mcp {
-        proxy_pass http://127.0.0.1:18001;
+        proxy_pass http://127.0.0.1:8000;
     }
 
     location /sso {
-        proxy_pass http://127.0.0.1:18001;
+        proxy_pass http://127.0.0.1:8000;
     }
 
     # Realtime requires WebSocket forwarding.
     location /realtime/v1/ {
-        proxy_pass http://127.0.0.1:18001;
+        proxy_pass http://127.0.0.1:8000;
         proxy_set_header Upgrade    $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 3600s;
