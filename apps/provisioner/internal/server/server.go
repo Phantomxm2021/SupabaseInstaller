@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 
 	provisionerauth "supabase-manager/apps/provisioner/internal/auth"
 	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/apps/provisioner/internal/redact"
 	"supabase-manager/internal/contracts"
 )
 
@@ -26,15 +28,21 @@ type Options struct {
 	ManagerToken string
 	ProjectFS    *projectfs.Root
 	Backend      Backend
+	Logger       *slog.Logger
 }
 
 type server struct {
 	projectFS *projectfs.Root
 	backend   Backend
+	logger    *slog.Logger
 }
 
 func New(options Options) http.Handler {
-	service := &server{projectFS: options.ProjectFS, backend: options.Backend}
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	service := &server{projectFS: options.ProjectFS, backend: options.Backend, logger: logger}
 	private := http.NewServeMux()
 	private.HandleFunc("POST /internal/v1/projects/lifecycle", service.lifecycle)
 	private.HandleFunc("POST /internal/v1/projects/inspect", service.inspect)
@@ -74,6 +82,7 @@ func (s *server) lifecycle(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if err := s.backend.Lifecycle(request.Context(), input); err != nil {
+		s.logger.Error("project lifecycle failed", "project_id", input.ProjectID, "slug", input.Slug, "action", input.Action, "error", redact.New(nil).String(err.Error()))
 		writeError(response, http.StatusUnprocessableEntity, "LIFECYCLE_FAILED", err.Error())
 		return
 	}

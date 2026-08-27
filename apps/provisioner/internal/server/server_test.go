@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,6 +104,21 @@ func TestReconcileEndpointInvokesProductionBackend(t *testing.T) {
 	}
 }
 
+func TestLifecycleEndpointLogsSafeFailureDetails(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	backend := &lifecycleFailureStub{err: errors.New("compose action failed: env file POSTGRES_PASSWORD=secret-value missing")}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/lifecycle", contracts.LifecycleRequest{ProjectID: "project-1", Slug: "bee", Action: contracts.LifecycleDeleteData})
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(logs.String(), "project lifecycle failed") || !strings.Contains(logs.String(), "project-1") || strings.Contains(logs.String(), "secret-value") {
+		t.Fatalf("unsafe or missing lifecycle log: %s", logs.String())
+	}
+}
+
 func TestHostResourcesEndpointReturnsReadOnlySnapshot(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
@@ -142,6 +159,18 @@ func (source *serverSequenceSource) Containers(context.Context, string) ([]healt
 }
 
 type reconcileStub struct{ err error }
+
+type lifecycleFailureStub struct{ err error }
+
+func (stub *lifecycleFailureStub) Lifecycle(context.Context, contracts.LifecycleRequest) error {
+	return stub.err
+}
+func (*lifecycleFailureStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
+	return contracts.InspectProjectResponse{}, nil
+}
+func (*lifecycleFailureStub) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
+}
 
 type hostResourcesStub struct{ resources contracts.HostResources }
 

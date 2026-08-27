@@ -117,6 +117,17 @@ func TestDownRuntimeTreatsMissingProjectContainersAsAlreadyRemoved(t *testing.T)
 	}
 }
 
+func TestRunnerIncludesRedactedComposeOutputInError(t *testing.T) {
+	executor := &sequenceExecutor{results: []executorResult{{
+		output: []byte("FATAL: POSTGRES_PASSWORD=super-secret\nmissing env file"),
+		err:    errors.New("exit status 1"),
+	}}}
+	err := NewRunner(executor).Validate(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"})
+	if err == nil || !strings.Contains(err.Error(), "missing env file") || strings.Contains(err.Error(), "super-secret") || !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestRunnerUsesStableProjectDirAndCurrentConfig(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)

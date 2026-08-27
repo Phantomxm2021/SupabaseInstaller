@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"supabase-manager/apps/provisioner/internal/redact"
 )
 
 type ProjectRef struct {
@@ -171,7 +173,14 @@ func (r *Runner) run(ctx context.Context, project ProjectRef, action ...string) 
 	args := append(r.baseArgs(project), action...)
 	output, err := r.executor.Run(ctx, "docker", args, nil)
 	if err != nil {
-		return fmt.Errorf("compose action failed: %w; output length=%d", err, len(output))
+		detail := redact.New(nil).String(strings.TrimSpace(string(output)))
+		if len(detail) > 4096 {
+			detail = detail[:4096] + "…"
+		}
+		if detail != "" {
+			return fmt.Errorf("compose action failed: %w; output=%s", err, detail)
+		}
+		return fmt.Errorf("compose action failed: %w", err)
 	}
 	return nil
 }
