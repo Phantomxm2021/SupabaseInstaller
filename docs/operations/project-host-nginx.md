@@ -37,7 +37,8 @@ PROJECT_DIR=/home/supabase-manager/projects/beegamestudio
 RUNTIME_DIR="$PROJECT_DIR/.manager-runtime/current"
 sudo grep -nE '127\.0\.0\.1:[0-9]+:(8000|3000)' "$RUNTIME_DIR/docker-compose.yml"
 sudo docker compose --file "$RUNTIME_DIR/docker-compose.yml" \
-  --env-file "$RUNTIME_DIR/.env" ps api-gw studio
+  --env-file "$RUNTIME_DIR/.env" \
+  --project-directory "$PROJECT_DIR" ps api-gw studio
 ```
 
 The API port is the host-side port mapped to container port `8000`; the Studio
