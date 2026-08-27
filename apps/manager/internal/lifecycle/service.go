@@ -70,7 +70,7 @@ func (service *Service) ForceDelete(ctx context.Context, project contracts.Proje
 	operationID := fmt.Sprintf("force-delete-%s-%d", project.ID, time.Now().UnixNano())
 	request := contracts.LifecycleRequest{
 		OperationID: operationID, IdempotencyKey: operationID + ":" + string(action), ProjectID: project.ID,
-		Slug: project.Slug, Action: provisionerAction(action), ConfirmProjectName: confirmation,
+		ProjectName: project.Name, Slug: project.Slug, Action: provisionerAction(action), ConfirmProjectName: confirmation,
 	}
 	if err := service.provisioner.Lifecycle(ctx, request); err != nil {
 		return err
@@ -88,7 +88,7 @@ func (service *Service) Run(ctx context.Context, project contracts.Project, acti
 	_ = service.operations.StartStep(ctx, queued.ID, string(action), 25)
 	request := contracts.LifecycleRequest{
 		OperationID: queued.ID, IdempotencyKey: queued.ID + ":" + string(action), ProjectID: project.ID,
-		Slug: project.Slug, Action: provisionerAction(action), ConfirmProjectName: project.Name,
+		ProjectName: project.Name, Slug: project.Slug, Action: provisionerAction(action), ConfirmProjectName: project.Name,
 	}
 	if err := service.provisioner.Lifecycle(ctx, request); err != nil {
 		_ = service.operations.Fail(ctx, queued.ID, string(action), err)

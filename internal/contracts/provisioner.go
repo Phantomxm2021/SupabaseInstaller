@@ -123,6 +123,7 @@ type LifecycleRequest struct {
 	OperationID        string          `json:"operationId"`
 	IdempotencyKey     string          `json:"idempotencyKey"`
 	ProjectID          string          `json:"projectId"`
+	ProjectName        string          `json:"projectName,omitempty"`
 	Slug               string          `json:"slug"`
 	Action             LifecycleAction `json:"action"`
 	ConfirmProjectName string          `json:"confirmProjectName,omitempty"`

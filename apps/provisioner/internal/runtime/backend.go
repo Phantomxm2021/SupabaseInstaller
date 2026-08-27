@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -75,10 +76,22 @@ func (backend *Backend) Lifecycle(ctx context.Context, request contracts.Lifecyc
 		return backend.runner.DownRuntime(ctx, project)
 	case contracts.LifecycleDeleteData:
 		metadata, err := backend.projectFS.Metadata(request.Slug)
-		if err != nil {
+		metadataMissing := errors.Is(err, projectfs.ErrNotFound)
+		if err != nil && !metadataMissing {
 			return err
 		}
-		if request.ConfirmProjectName == "" || request.ConfirmProjectName != metadata.ProjectName {
+		// The Manager owns the authoritative project record and sends its
+		// authenticated name with destructive requests. A failed installation
+		// can leave Provisioner metadata without ProjectName, so rejecting against
+		// that empty/stale value would make the project impossible to delete.
+		expectedName := metadata.ProjectName
+		if request.ProjectName != "" {
+			expectedName = request.ProjectName
+		}
+		if metadataMissing && request.ProjectName == "" {
+			return fmt.Errorf("project metadata is missing and Manager project name was not provided")
+		}
+		if request.ConfirmProjectName == "" || request.ConfirmProjectName != expectedName {
 			return fmt.Errorf("exact project name confirmation is required")
 		}
 		if err := backend.runner.DownRuntime(ctx, project); err != nil {

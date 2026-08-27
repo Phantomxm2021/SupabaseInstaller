@@ -50,6 +50,9 @@ func TestForceDeleteRemovesProjectMetadataOnlyAfterProvisionerSucceeds(t *testin
 	if provisioner.lastAction != contracts.LifecycleDeleteData {
 		t.Fatalf("provisioner action = %s, want delete data", provisioner.lastAction)
 	}
+	if provisioner.lastProjectName != "Bee" || provisioner.lastConfirmation != "Bee" {
+		t.Fatalf("provisioner delete identity = %q/%q, want Bee/Bee", provisioner.lastProjectName, provisioner.lastConfirmation)
+	}
 	if _, err := database.GetProject(context.Background(), project.ID); err != store.ErrNotFound {
 		t.Fatalf("project lookup error = %v, want metadata deleted", err)
 	}
@@ -68,12 +71,16 @@ func TestForceDeleteLeavesMetadataWhenProvisionerFails(t *testing.T) {
 }
 
 type fakeProvisioner struct {
-	lastAction contracts.LifecycleAction
-	err        error
+	lastAction       contracts.LifecycleAction
+	lastProjectName  string
+	lastConfirmation string
+	err              error
 }
 
 func (fake *fakeProvisioner) Lifecycle(_ context.Context, request contracts.LifecycleRequest) error {
 	fake.lastAction = request.Action
+	fake.lastProjectName = request.ProjectName
+	fake.lastConfirmation = request.ConfirmProjectName
 	return fake.err
 }
 func (fake *fakeProvisioner) Inspect(_ context.Context, request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {

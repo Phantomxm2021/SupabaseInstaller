@@ -58,6 +58,52 @@ func TestDeleteDataRemovesOnlyConfirmedContainedProject(t *testing.T) {
 	}
 }
 
+func TestDeleteDataUsesManagerProjectNameWhenMetadataNameIsMissing(t *testing.T) {
+	base := t.TempDir()
+	root, _ := projectfs.New(base)
+	if _, err := root.UpdateMetadata("bee", func(metadata *projectfs.Metadata) error {
+		metadata.ProjectID = "project-1"
+		metadata.ProjectName = ""
+		return nil
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "bee", "data.marker"), []byte("data"), 0o600); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	backend := NewBackend(root, &recordingRunner{}, staticInspector{})
+	err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{
+		ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", Action: contracts.LifecycleDeleteData, ConfirmProjectName: "Bee",
+	})
+	if err != nil {
+		t.Fatalf("Lifecycle() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "bee")); !os.IsNotExist(err) {
+		t.Fatalf("project directory still exists or stat failed: %v", err)
+	}
+}
+
+func TestDeleteDataAllowsMissingProvisionerMetadataAfterManagerConfirmation(t *testing.T) {
+	base := t.TempDir()
+	root, _ := projectfs.New(base)
+	if err := os.MkdirAll(filepath.Join(base, "bee", "runtime-data"), 0o700); err != nil {
+		t.Fatalf("create project data: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "bee", "runtime-data", "marker"), []byte("data"), 0o600); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	backend := NewBackend(root, &recordingRunner{}, staticInspector{})
+	err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{
+		ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", Action: contracts.LifecycleDeleteData, ConfirmProjectName: "Bee",
+	})
+	if err != nil {
+		t.Fatalf("Lifecycle() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "bee")); !os.IsNotExist(err) {
+		t.Fatalf("project directory still exists or stat failed: %v", err)
+	}
+}
+
 type recordingRunner struct{ calls []string }
 
 func (runner *recordingRunner) UpDatabase(context.Context, compose.ProjectRef) error {
