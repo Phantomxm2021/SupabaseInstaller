@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { RouterProvider } from 'react-router-dom'
 import { createAppRouter } from '../../app/router'
 
-function configuration(revision: number, googleEnabled = false) { return {
+function configuration(revision: number, googleEnabled = false, oauthOverrides: Record<string, unknown> = {}) { return {
   projectId: 'bee', revision, lastGoodRevision: revision,
   configuration: {
     revision,
@@ -14,7 +14,7 @@ function configuration(revision: number, googleEnabled = false) { return {
       enabled: true, jwtExpiry: 3600, disableSignup: false,
       email: { enabled: true, allowSignup: true, confirmEmail: false, secureEmailChange: false, doubleConfirmChanges: false },
       phone: { enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} },
-      anonymousSignIn: false, redirectUrls: [], oauth: googleEnabled ? { google: { enabled: true, clientId: 'google-client', secretSet: true, secret: { action: '' }, fields: {} } } : {},
+      anonymousSignIn: false, redirectUrls: [], oauth: { ...(googleEnabled ? { google: { enabled: true, clientId: 'google-client', secretSet: true, secret: { action: '' }, fields: {} } } : {}), ...oauthOverrides },
       smtp: { enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' },
       rateLimits: { emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 },
       mfa: { totpEnrollEnabled: true, totpVerifyEnabled: true, phoneEnrollEnabled: false, phoneVerifyEnabled: false, maxEnrolledFactors: 10, phoneOtpLength: 6 },
@@ -27,14 +27,14 @@ function configuration(revision: number, googleEnabled = false) { return {
   },
 } }
 
-function renderSignInProviders() {
+function renderSignInProviders(oauthOverrides: Record<string, unknown> = {}) {
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   let revision = 7
   let googleEnabled = false
   const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
     const path = String(input)
     if (path.endsWith('/session')) return new Response(JSON.stringify({ username: 'admin', mustChangePassword: false, csrfToken: 'csrf-token' }), { headers: { 'Content-Type': 'application/json' } })
-    if (path.endsWith('/configuration')) return new Response(JSON.stringify(configuration(revision, googleEnabled)), { headers: { 'Content-Type': 'application/json' } })
+    if (path.endsWith('/configuration')) return new Response(JSON.stringify(configuration(revision, googleEnabled, oauthOverrides)), { headers: { 'Content-Type': 'application/json' } })
     if (path.includes('/configuration/oauth/google')) { revision += 1; googleEnabled = true; return new Response(JSON.stringify({ projectId: 'bee', operationId: 'operation-1', revision }), { headers: { 'Content-Type': 'application/json' } }) }
     throw new Error(`Unexpected request: ${path} ${init?.method ?? 'GET'}`)
   })
@@ -53,16 +53,17 @@ it('saves only Google with a replacement secret then refetches its revision', as
   await user.click(await screen.findByRole('button', { name: /Google.*Disabled/i }))
   expect(screen.getByRole('dialog', { name: 'Google' })).toBeVisible()
   await user.click(screen.getByRole('switch', { name: 'Enable Google' }))
-  await user.type(screen.getByLabelText('Client ID'), 'google-client')
-  await user.type(screen.getByLabelText('Google client secret'), 'secret')
+  await user.click(screen.getByRole('switch', { name: 'Skip nonce checks' }))
+  await user.type(screen.getByLabelText('Client IDs'), 'google-client')
+  await user.type(screen.getByLabelText('Client Secret (for OAuth)'), 'secret')
   await user.click(screen.getByRole('button', { name: 'Save changes' }))
   await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
   await waitFor(() => expect(screen.getByRole('button', { name: /Google.*Enabled/i })).toBeVisible())
   const patches = () => fetchMock.mock.calls.filter(([path, init]) => String(path).includes('/configuration/oauth/google') && (init as RequestInit).method === 'PATCH')
-  expect(JSON.parse((patches()[0][1] as RequestInit).body as string)).toEqual(expect.objectContaining({ expectedRevision: 7, value: expect.objectContaining({ enabled: true, clientId: 'google-client', secret: { action: 'replace', value: 'secret' } }) }))
+  expect(JSON.parse((patches()[0][1] as RequestInit).body as string)).toEqual(expect.objectContaining({ expectedRevision: 7, value: expect.objectContaining({ enabled: true, clientId: 'google-client', secret: { action: 'replace', value: 'secret' }, fields: expect.objectContaining({ skipNonceChecks: 'true' }) }) }))
   expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith('/configuration'))).toBe(true)
   await user.click(screen.getByRole('button', { name: /Google.*Enabled/i }))
-  await user.type(screen.getByLabelText('Client ID'), '-2')
+  await user.type(screen.getByLabelText('Client IDs'), '-2')
   await user.click(screen.getByRole('button', { name: 'Save changes' }))
   await user.click(screen.getByRole('button', { name: 'Confirm and apply' }))
   await waitFor(() => expect(patches()).toHaveLength(2))
@@ -83,5 +84,92 @@ it('asks before discarding dirty Sheet changes', async () => {
   await user.click(screen.getByRole('button', { name: 'Close' }))
   await user.click(screen.getByRole('button', { name: 'Discard changes' }))
   expect(screen.queryByRole('dialog', { name: 'Google' })).not.toBeInTheDocument()
+  router.dispose()
+})
+
+it('separates built-in and OAuth provider browsing with the Supabase Cloud tab layout', async () => {
+  const { router } = renderSignInProviders()
+  const user = userEvent.setup()
+
+  expect(await screen.findByRole('tab', { name: 'Supabase Auth' })).toBeVisible()
+  expect(screen.getByRole('tab', { name: 'Third-Party Auth' })).toBeVisible()
+  expect(screen.getByRole('switch', { name: 'Allow manual linking' })).toBeVisible()
+  expect(screen.getByRole('button', { name: /Email.*Enabled/i })).toBeVisible()
+  expect(screen.getByRole('button', { name: /Google.*Disabled/i })).toBeVisible()
+
+  await user.click(screen.getByRole('tab', { name: 'Third-Party Auth' }))
+  expect(screen.getByText(/No separate third-party provider configuration/i)).toBeVisible()
+  expect(screen.queryByRole('button', { name: /Google.*Disabled/i })).not.toBeInTheDocument()
+  router.dispose()
+})
+
+it('exposes the official email security and OTP controls in the provider drawer', async () => {
+  const { router } = renderSignInProviders()
+  const user = userEvent.setup()
+
+  await user.click(await screen.findByRole('button', { name: /Email.*Enabled/i }))
+  expect(screen.getByRole('dialog', { name: 'Email' })).toBeVisible()
+  expect(screen.getByRole('dialog', { name: 'Email' })).toHaveAttribute('data-provider-drawer', 'true')
+  expect(screen.getByRole('switch', { name: 'Secure password change' })).toBeVisible()
+  expect(screen.getByRole('switch', { name: 'Require current password when updating' })).toBeVisible()
+  expect(screen.getByRole('switch', { name: 'Prevent use of leaked passwords' })).toBeVisible()
+  expect(screen.getByRole('spinbutton', { name: 'Minimum password length' })).toHaveValue(6)
+  expect(screen.getByRole('spinbutton', { name: 'Email OTP expiration' })).toHaveValue(3600)
+  expect(screen.getByRole('spinbutton', { name: 'Email OTP length' })).toHaveValue(8)
+  router.dispose()
+})
+
+it('exposes Google nonce and missing-email controls with the official labels', async () => {
+  const { router } = renderSignInProviders()
+  const user = userEvent.setup()
+
+  await user.click(await screen.findByRole('button', { name: /Google.*Disabled/i }))
+  expect(screen.getByText('Client IDs')).toBeVisible()
+  expect(screen.getByRole('switch', { name: 'Skip nonce checks' })).toBeVisible()
+  expect(screen.getByRole('switch', { name: 'Allow users without an email' })).toBeVisible()
+  await user.click(screen.getByRole('switch', { name: 'Enable Google' }))
+  expect(screen.getByRole('button', { name: 'Copy Callback URL (for OAuth)' })).toBeVisible()
+  router.dispose()
+})
+
+it.each(['Azure', 'GitHub', 'GitLab', 'KeyCloak'])('does not ask to discard unchanged %s provider settings', async (provider) => {
+  const { router } = renderSignInProviders()
+  const user = userEvent.setup()
+
+  await user.click(await screen.findByRole('button', { name: new RegExp(`${provider}.*Disabled`, 'i') }))
+  expect(screen.getByRole('dialog', { name: provider })).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+  expect(screen.queryByRole('alertdialog', { name: 'Discard changes?' })).not.toBeInTheDocument()
+  router.dispose()
+})
+
+it.each([
+  ['Azure', { enabled: true, clientId: 'azure-client', secretSet: true, secret: { action: '' }, fields: { tenantUrl: 'https://login.microsoftonline.com/tenant' } }],
+  ['GitHub', { enabled: true, clientId: 'github-client', secretSet: true, secret: { action: '' }, fields: { enterpriseUrl: 'https://github.example.com' } }],
+  ['GitLab', { enabled: true, clientId: 'gitlab-client', secretSet: true, secret: { action: '' }, fields: { selfHostedUrl: 'https://gitlab.example.com' } }],
+  ['KeyCloak', { enabled: true, clientId: 'keycloak-client', secretSet: true, secret: { action: '' }, fields: { realmUrl: 'https://keycloak.example.com/realms/example' } }],
+] as const)('does not mark unchanged special-field %s configuration dirty', async (provider, config) => {
+  const { router } = renderSignInProviders({ [provider.toLowerCase()]: config })
+  const user = userEvent.setup()
+
+  await user.click(await screen.findByRole('button', { name: new RegExp(`${provider}.*Enabled`, 'i') }))
+  expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+  expect(screen.queryByRole('alertdialog', { name: 'Discard changes?' })).not.toBeInTheDocument()
+  router.dispose()
+})
+
+it('resets provider dirty state after discarding one provider before opening another', async () => {
+  const { router } = renderSignInProviders()
+  const user = userEvent.setup()
+
+  await user.click(await screen.findByRole('button', { name: /Google.*Disabled/i }))
+  await user.click(screen.getByRole('switch', { name: 'Enable Google' }))
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+  await user.click(screen.getByRole('button', { name: 'Discard changes' }))
+
+  await user.click(screen.getByRole('button', { name: /Azure.*Disabled/i }))
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+  expect(screen.queryByRole('alertdialog', { name: 'Discard changes?' })).not.toBeInTheDocument()
   router.dispose()
 })

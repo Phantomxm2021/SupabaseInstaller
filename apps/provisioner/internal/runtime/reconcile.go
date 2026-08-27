@@ -80,7 +80,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			return fail(reconcileFailure(err, false))
 		}
 		candidateRef, restore, commit, err := backend.projectFS.StageRuntimeFilesWithRef(request.Slug, projectfs.RuntimeFiles{
-			Compose: []byte(rendered.Compose), Env: []byte(rendered.Env), FunctionsEnv: []byte(rendered.FunctionsEnv),
+			Compose: []byte(rendered.Compose), Env: []byte(rendered.Env), FunctionsEnv: []byte(rendered.FunctionsEnv), MailerTemplates: rendered.MailerTemplates,
 		})
 		if err != nil {
 			return fail(reconcileFailure(err, false))
@@ -313,6 +313,7 @@ func affectedServices(before, after contracts.ProjectConfiguration) []string {
 	}
 	if before.Auth.SMTP != after.Auth.SMTP || !reflect.DeepEqual(before.Auth, after.Auth) {
 		set["auth"] = true
+		set["auth-templates"] = true
 	}
 	if !reflect.DeepEqual(before.Functions, after.Functions) {
 		set["functions"] = true
@@ -404,6 +405,7 @@ func enabledServices(config contracts.ProjectConfiguration) []string {
 	add("db", config.Services.Database)
 	add("api-gw", config.Services.Gateway)
 	add("auth", config.Services.Auth)
+	add("auth-templates", config.Services.Auth)
 	add("rest", config.Services.REST)
 	add("meta", config.Services.PostgresMeta)
 	add("studio", config.Services.Studio)

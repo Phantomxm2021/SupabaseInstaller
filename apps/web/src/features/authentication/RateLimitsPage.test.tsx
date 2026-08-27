@@ -14,8 +14,9 @@ const context = { projectId: 'bee', revision: 2, auth, general: { domain: 'bee.e
 
 describe('RateLimitsPage', () => {
   it('renders the GoTrue rate limits in screenshot-style labelled rows', () => {
-    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><RateLimitsPage context={context} /></MemoryRouter></QueryClientProvider>)
+    const { container } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><RateLimitsPage context={context} /></MemoryRouter></QueryClientProvider>)
     expect(screen.getByRole('heading', { name: 'Rate Limits' })).toBeVisible()
+    expect(container.querySelector('.auth-rate-limits-card')).toBeInTheDocument()
     expect(screen.getByText(/Safeguard against bursts of incoming traffic to prevent abuse and maximize stability/)).toBeVisible()
     expect(screen.getByLabelText('Rate limit for sending emails')).toHaveValue(30)
     expect(screen.getByText('emails/h')).toBeVisible()

@@ -12,7 +12,9 @@ export const authenticationGroups: readonly AuthenticationGroup[] = [
   { label: 'Configuration', items: [['sign-in-providers', 'Sign In / Providers'], ['rate-limits', 'Rate Limits'], ['multi-factor', 'Multi-Factor'], ['url-configuration', 'URL Configuration']] },
 ] as const
 
-const compactBreakpoint = 900
+export const unsupportedAuthenticationRoutes: readonly (readonly [path: string, label: string])[] = []
+
+const compactBreakpoint = 768
 
 function useCompactAuthenticationNavigation() {
   const [isCompact, setIsCompact] = useState(() => typeof window !== 'undefined' && window.innerWidth <= compactBreakpoint)
@@ -53,11 +55,12 @@ export function AuthenticationNavigation() {
 
 function AuthenticationNavigationContent({ projectId, onNavigate }: { projectId: string; onNavigate?: () => void }) {
   return <nav aria-label="Authentication navigation" className="authentication-navigation">
+    <header className="authentication-navigation-title"><h1>Authentication</h1></header>
     {authenticationGroups.map((group) => <section className="authentication-navigation-group" key={group.label} aria-labelledby={`authentication-${group.label.toLowerCase()}`}>
       <h2 id={`authentication-${group.label.toLowerCase()}`} className="authentication-navigation-label">{group.label.toUpperCase()}</h2>
       <ul className="authentication-navigation-list">
         {group.items.map(([path, label]) => <li key={path}>
-          <NavLink to={`/projects/${projectId}/authentication/${path}`} className="authentication-navigation-link" onClick={onNavigate}>{label}</NavLink>
+          <NavLink to={`/projects/${projectId}/authentication/${path}`} className="authentication-navigation-link" onClick={onNavigate}><span>{label}</span></NavLink>
         </li>)}
       </ul>
     </section>)}

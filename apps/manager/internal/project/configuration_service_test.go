@@ -3,6 +3,7 @@ package project
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -60,6 +61,82 @@ func TestConfigurationServiceRejectsInvalidServiceClosure(t *testing.T) {
 	}
 }
 
+func TestConfigurationServiceResetsLegacyAuthConfiguration(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "legacy.example.com", SiteURL: "https://legacy.example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "project-legacy-auth", Slug: "legacy", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	legacy := cfg
+	legacy.Auth.Email = contracts.EmailAuthConfig{Enabled: true, AllowSignup: true, ConfirmEmail: true, SecureEmailChange: true, DoubleConfirmChanges: true}
+	legacy.Auth.Phone = contracts.PhoneAuthConfig{Enabled: true, Provider: "messagebird", SecretSet: true, Fields: map[string]string{"originator": "Legacy"}}
+	legacy.Auth.AnonymousSignIn = true
+	legacy.Auth.RedirectURLs = []string{"https://legacy.example.com/callback"}
+	legacy.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true, ClientID: "legacy-client", SecretSet: true}}
+	legacy.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.legacy.example.com", Port: 465, Username: "legacy-user", PasswordSet: true, SenderEmail: "no-reply@legacy.example.com", SenderName: "Legacy Mailer"}
+	legacy.Auth.RateLimits.EmailSent = 45
+	legacy.Auth.MFA.PhoneEnrollEnabled = true
+	legacy.Auth.Mailer = contracts.MailerConfig{}
+	cipher, err := managersecrets.NewCipher(bytes.Repeat([]byte{3}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for kind, value := range map[string]string{
+		"smtp.password":       "smtp-secret",
+		"phone.secret":        "phone-secret",
+		"oauth.google.secret": "oauth-secret",
+	} {
+		envelope, err := cipher.Encrypt(project.ID, kind, []byte(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.PutSecret(context.Background(), project.ID, kind, envelope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	payload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DB().Exec(`UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=1`, string(payload), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	service := NewConfigurationService(database, nil, time.Now)
+	count, err := service.ResetLegacyAuthConfigurations(context.Background())
+	if err != nil || count != 1 {
+		t.Fatalf("ResetLegacyAuthConfigurations() = %d, %v; want 1, nil", count, err)
+	}
+	got, err := database.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Configuration.Auth.Mailer.Templates.Confirmation.Subject != "Confirm your signup" || got.Configuration.Auth.Mailer.Templates.Confirmation.Body == "" || got.Configuration.Auth.Mailer.Notifications.PasswordChanged.Enabled {
+		t.Fatalf("legacy Mailer was not replaced with current defaults: %#v", got.Configuration.Auth.Mailer)
+	}
+	if got.Configuration.Auth.SMTP.Host != legacy.Auth.SMTP.Host || got.Configuration.Auth.SMTP.Port != legacy.Auth.SMTP.Port || got.Configuration.Auth.SMTP.Username != legacy.Auth.SMTP.Username || got.Configuration.Auth.SMTP.SenderEmail != legacy.Auth.SMTP.SenderEmail || got.Configuration.Auth.SMTP.SenderName != legacy.Auth.SMTP.SenderName || !got.Configuration.Auth.SMTP.PasswordSet {
+		t.Fatalf("SMTP configuration was modified during mailer migration: %#v", got.Configuration.Auth.SMTP)
+	}
+	if !got.Configuration.Auth.Phone.Enabled || got.Configuration.Auth.Phone.Provider != legacy.Auth.Phone.Provider || !got.Configuration.Auth.Phone.SecretSet || got.Configuration.Auth.Phone.Fields["originator"] != legacy.Auth.Phone.Fields["originator"] || got.Configuration.Auth.AnonymousSignIn != legacy.Auth.AnonymousSignIn || got.Configuration.Auth.OAuth["google"].ClientID != legacy.Auth.OAuth["google"].ClientID || !got.Configuration.Auth.OAuth["google"].SecretSet || got.Configuration.Auth.RateLimits.EmailSent != legacy.Auth.RateLimits.EmailSent || got.Configuration.Auth.MFA.PhoneEnrollEnabled != legacy.Auth.MFA.PhoneEnrollEnabled {
+		t.Fatalf("non-mailer Auth configuration was modified during mailer migration: %#v", got.Configuration.Auth)
+	}
+	for _, kind := range []string{"smtp.password", "phone.secret", "oauth.google.secret"} {
+		stored, err := database.GetSecret(context.Background(), project.ID, kind)
+		if err != nil {
+			t.Fatalf("secret %s was removed during mailer migration: %v", kind, err)
+		}
+		plain, err := cipher.Decrypt(project.ID, kind, stored)
+		if err != nil || string(plain) == "" {
+			t.Fatalf("secret %s did not survive mailer migration: %q, %v", kind, plain, err)
+		}
+	}
+}
+
 func TestConfigurationServicePersistsMailerTemplatePatch(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
@@ -77,7 +154,7 @@ func TestConfigurationServicePersistsMailerTemplatePatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth := cfg.Auth
-	auth.Mailer.Templates.Recovery.TemplateURL = "https://templates.example.com/recovery.html"
+	auth.Mailer.Templates.Recovery.Body = "<p>Recover your account</p>"
 	service := NewConfigurationService(database, cipher, time.Now)
 	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Auth: &auth}); err != nil {
 		t.Fatalf("admit mailer patch: %v", err)
@@ -86,8 +163,8 @@ func TestConfigurationServicePersistsMailerTemplatePatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Configuration.Auth.Mailer.Templates.Recovery.TemplateURL != auth.Mailer.Templates.Recovery.TemplateURL {
-		t.Fatalf("persisted recovery template URL = %q, want %q", got.Configuration.Auth.Mailer.Templates.Recovery.TemplateURL, auth.Mailer.Templates.Recovery.TemplateURL)
+	if got.Configuration.Auth.Mailer.Templates.Recovery.Body != auth.Mailer.Templates.Recovery.Body {
+		t.Fatalf("persisted recovery template body = %q, want %q", got.Configuration.Auth.Mailer.Templates.Recovery.Body, auth.Mailer.Templates.Recovery.Body)
 	}
 }
 

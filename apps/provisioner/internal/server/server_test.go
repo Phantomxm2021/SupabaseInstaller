@@ -113,7 +113,7 @@ type serverSequenceSource struct{ calls int }
 
 func (source *serverSequenceSource) Containers(context.Context, string) ([]health.Container, error) {
 	source.calls++
-	services := []string{"db", "api-gw", "auth", "meta", "rest", "studio"}
+	services := []string{"db", "api-gw", "auth", "auth-templates", "meta", "rest", "studio"}
 	containers := make([]health.Container, 0, len(services))
 	state, healthState := "running", "healthy"
 	if source.calls == 2 {

@@ -27,6 +27,8 @@ services:
     volumes:
       - manager-data:/var/lib/supabase-manager
     networks: [frontend, management]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       provisioner:
         condition: service_healthy

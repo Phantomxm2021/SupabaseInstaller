@@ -67,22 +67,19 @@ it('renders project navigation in the single global Sidebar on project routes', 
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/configuration?section=services']}><AppShell /></MemoryRouter></QueryClientProvider>)
   const sidebar = document.querySelector('[data-slot="sidebar"][data-state]')
   expect(document.querySelectorAll('[data-slot="sidebar"]')).toHaveLength(1)
-  expect(sidebar).toHaveAttribute('data-state', 'expanded')
+  expect(sidebar).toHaveAttribute('data-state', 'collapsed')
   expect(document.querySelectorAll('[data-slot="sidebar-gap"]')).toHaveLength(1)
   const projectNavigation = screen.getByRole('navigation', { name: /project navigation/i })
   const expectedLinks = [
-    ['Overview', '/projects/bee/overview'], ['General', '/projects/bee/configuration?section=general'], ['Services', '/projects/bee/configuration?section=services'],
-    ['Authentication', '/projects/bee/authentication/sign-in-providers'],
-    ['Storage', '/projects/bee/configuration?section=storage'], ['Realtime', '/projects/bee/configuration?section=realtime'], ['Functions', '/projects/bee/configuration?section=functions'],
-    ['Database', '/projects/bee/configuration?section=database'], ['Connection Pool', '/projects/bee/configuration?section=pooler'], ['Gateway & Network', '/projects/bee/configuration?section=network'], ['API & Secrets', '/projects/bee/configuration?section=secrets'],
+    ['Project Overview', '/projects/bee/overview'],
+    ['Authentication', '/projects/bee/authentication'],
+    ['Project Settings', '/projects/bee/configuration'],
   ] as const
   expect(within(projectNavigation).getAllByRole('link')).toHaveLength(expectedLinks.length)
   for (const [name, href] of expectedLinks) expect(within(projectNavigation).getByRole('link', { name })).toHaveAttribute('href', href)
-  expect(within(projectNavigation).getByRole('link', { name: 'Services' })).toHaveAttribute('aria-current', 'page')
+  expect(within(projectNavigation).getByRole('link', { name: 'Project Overview' })).toHaveClass('primary-sidebar-menu-button')
+  expect(within(projectNavigation).getByRole('link', { name: 'Project Settings' })).toHaveAttribute('aria-current', 'page')
   expect(new Set(Array.from(within(projectNavigation).getAllByRole('link')).map((link) => link.getAttribute('href'))).size).toBe(expectedLinks.length)
-  const runtimeNavigation = screen.getByRole('navigation', { name: /runtime navigation/i })
-  expect(within(runtimeNavigation).getByRole('link', { name: 'Logs' })).toHaveAttribute('href', '/projects/bee/logs')
-  expect(within(runtimeNavigation).getByRole('link', { name: 'Backups' })).toHaveAttribute('href', '/projects/bee/backups')
 })
 
 it('uses the same global Sidebar Sheet for project navigation on mobile', async () => {
@@ -93,28 +90,71 @@ it('uses the same global Sidebar Sheet for project navigation on mobile', async 
   expect(screen.queryByRole('navigation', { name: /project navigation/i })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Open sidebar' }))
   expect(await screen.findByRole('navigation', { name: /project navigation/i })).toBeVisible()
-  expect(screen.getByRole('link', { name: 'General' })).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Project Settings' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Close' })).toBeVisible()
   expect(document.querySelector('[data-slot="sidebar-trigger"]')).toHaveAttribute('aria-label', 'Close sidebar')
   expect(document.querySelector('[data-slot="sidebar"][data-mobile="true"][data-open]')).toBeVisible()
 })
 
-it('updates the global desktop trigger name as the Sidebar changes state', async () => {
+it('starts the desktop sidebar collapsed so it can expand as an overlay on hover', () => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
+  expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument()
+})
+
+it('collapses the primary sidebar after a project tab is clicked', async () => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   const user = userEvent.setup()
-  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
-  await user.click(screen.getByRole('button', { name: 'Close sidebar' }))
-  expect(screen.getByRole('button', { name: 'Open sidebar' })).toBeVisible()
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/overview']}><AppShell /></MemoryRouter></QueryClientProvider>)
+
+  const sidebar = document.querySelector('[data-slot="sidebar"][data-state]')
+  expect(sidebar).toHaveAttribute('data-state', 'collapsed')
+  await user.click(screen.getByRole('link', { name: 'Authentication' }))
+  expect(sidebar).toHaveAttribute('data-state', 'collapsed')
+})
+
+it('renders a page-wide dashboard header above the project navigation shell', () => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/authentication/users']}><AppShell /></MemoryRouter></QueryClientProvider>)
+
+  const header = screen.getByRole('banner', { name: 'Dashboard header' })
+  expect(header).toHaveClass('topbar')
+  expect(header).toHaveTextContent('bee')
+  expect(screen.getByRole('button', { name: 'Show projects' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Show branches' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Show organizations' })).not.toBeInTheDocument()
+})
+
+it('switches projects from the header menu and routes creation through the existing wizard', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ projects: [
+    { id: 'bee', name: 'BeeGame', slug: 'bee', domain: 'bee.local', siteUrl: '', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'v2', preset: 'DEFAULT', configurationRevision: 1, services: {}, createdAt: '', updatedAt: '' },
+    { id: 'other', name: 'Other project', slug: 'other', domain: 'other.local', siteUrl: '', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'v2', preset: 'DEFAULT', configurationRevision: 1, services: {}, createdAt: '', updatedAt: '' },
+  ] }), { status: 200 })))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/overview']}><AppShell /></MemoryRouter></QueryClientProvider>)
+
+  await user.click(screen.getByRole('button', { name: 'Show projects' }))
+  expect(await screen.findByPlaceholderText('Find project...')).toBeVisible()
+  expect(await screen.findByRole('menuitem', { name: 'Other project' })).toHaveAttribute('href', '/projects/other/overview')
+  expect(screen.getByRole('menuitem', { name: 'New project' })).toHaveAttribute('href', '/projects/new')
+})
+
+it('opens the header branch menu with the current local main branch selected', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/overview']}><AppShell /></MemoryRouter></QueryClientProvider>)
+
+  await user.click(screen.getByRole('button', { name: 'Show branches' }))
+  expect(await screen.findByRole('menuitemradio', { name: /main.*local/i })).toHaveAttribute('aria-checked', 'true')
 })
 
 it.each([
   ['/projects', 'Projects'],
-  ['/projects/bee/overview', 'Overview'],
-  ['/projects/bee/configuration', 'General'],
+  ['/projects/bee/overview', 'Project Overview'],
+  ['/projects/bee/configuration', 'Project Settings'],
   ['/projects/bee/authentication/emails', 'Authentication'],
-  ['/projects/bee/logs', 'Logs'],
-  ['/projects/bee/backups', 'Backups'],
 ] as const)('marks only the canonical active link for %s', (path, activeLabel) => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
@@ -133,8 +173,8 @@ it.each(['/projects', '/projects/new', '/settings'])('does not render project na
 })
 
 it.each([
-  ['/projects/bee/configuration', 'General'],
-  ['/projects/bee/configuration?section=unknown', 'General'],
+  ['/projects/bee/configuration', 'Project Settings'],
+  ['/projects/bee/configuration?section=unknown', 'Project Settings'],
   ['/projects/bee/authentication/sign-in-providers', 'Authentication'],
 ] as const)('highlights the canonical configuration section for %s', (path, activeLabel) => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })

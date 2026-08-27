@@ -26,11 +26,11 @@ export function useResetOnServerRevision<T extends FieldValues>(form: UseFormRet
   }, [form, initial, revision])
 }
 
-export function Toggle({ id, label, checked, onChange, disabled, description, error }: { id?: string; label: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean; description?: string; error?: string }) {
+export function Toggle({ id, label, checked, onChange, disabled, description, error, className }: { id?: string; label: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean; description?: string; error?: string; className?: string }) {
   const uid = useId()
   const controlId = id ?? `toggle-${uid.replace(/[^a-zA-Z0-9]/g, '')}`
   const errorId = `${controlId}-error`
-  return <div className="rounded-lg border border-border p-3"><div className="flex items-center justify-between gap-3"><label htmlFor={controlId} className="text-sm font-medium">{label}</label><Switch id={controlId} aria-label={label} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} checked={checked} onCheckedChange={onChange} disabled={disabled} /></div>{description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}{error && <FieldError id={errorId}>{error}</FieldError>}</div>
+  return <div className={className ?? 'rounded-lg border border-border p-3'}><div className="flex items-center justify-between gap-3"><label htmlFor={controlId} className="text-sm font-medium">{label}</label><Switch id={controlId} aria-label={label} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} checked={checked} onCheckedChange={onChange} disabled={disabled} /></div>{description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}{error && <FieldError id={errorId}>{error}</FieldError>}</div>
 }
 
 export function TextField<T extends FieldValues>({ form, name, label, placeholder }: { form: UseFormReturn<T>; name: Path<T>; label: string; placeholder?: string }) {

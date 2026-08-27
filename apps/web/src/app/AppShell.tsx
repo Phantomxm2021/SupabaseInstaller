@@ -1,15 +1,12 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Activity, Boxes, Braces, Database, FileClock, HardDrive, KeyRound, LayoutDashboard, LockKeyhole, LogOut, Network, Radio, ScrollText, ServerCog, Settings, ShieldCheck, UserCircle, Waypoints } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { Boxes, ChevronsUpDown, Database, LayoutDashboard, LogOut, Plus, Search, ServerCog, Settings, ShieldCheck, UserCircle } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { apiFetch, setCSRFToken } from '../api/client'
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
   SidebarInset,
   SidebarMenu,
   SidebarMenuButton,
@@ -22,27 +19,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
 import { Badge } from '../components/ui/badge'
-import { CONFIGURATION_SECTIONS } from '../features/project/configuration/types'
-
-const projectNavigation = [
-  ['configuration?section=general', 'General', Settings], ['configuration?section=services', 'Services', Activity], ['authentication/sign-in-providers', 'Authentication', ShieldCheck], ['configuration?section=storage', 'Storage', HardDrive], ['configuration?section=realtime', 'Realtime', Radio], ['configuration?section=functions', 'Functions', Braces],
-  ['configuration?section=database', 'Database', Database], ['configuration?section=pooler', 'Connection Pool', Waypoints], ['configuration?section=network', 'Gateway & Network', Network], ['configuration?section=secrets', 'API & Secrets', KeyRound],
-] as const
-
-const runtimeNavigation = [['logs', 'Logs', ScrollText], ['backups', 'Backups', FileClock]] as const
-
-function isActiveProjectLink(location: ReturnType<typeof useLocation>, path: string) {
-  const [pathname, query] = path.split('?')
-  if (pathname === 'authentication/sign-in-providers') return location.pathname.includes('/authentication')
-  if (pathname !== 'configuration') return location.pathname.endsWith(`/${pathname}`)
-  if (!location.pathname.endsWith('/configuration')) return false
-  const requested = new URLSearchParams(location.search).get('section') ?? 'general'
-  const section = CONFIGURATION_SECTIONS.includes(requested as typeof CONFIGURATION_SECTIONS[number]) ? requested : 'general'
-  return section === new URLSearchParams(query ?? '').get('section')
-}
+import type { Project } from '../api/types'
 
 export function AppShell() {
   const navigate = useNavigate()
@@ -51,6 +34,15 @@ export function AppShell() {
   const projectMatch = location.pathname.match(/^\/projects\/([^/]+)(?:\/|$)/)
   const projectId = projectMatch?.[1]
   const isProjectRoute = Boolean(projectId) && projectId !== 'new'
+  const projects = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => apiFetch<{ projects: Project[] }>('/api/projects'),
+    enabled: isProjectRoute,
+    staleTime: 30_000,
+  })
+  const [projectSearch, setProjectSearch] = useState('')
+  const activeProject = projects.data?.projects.find((project) => project.id === projectId)
+  const visibleProjects = projects.data?.projects.filter((project) => project.name.toLocaleLowerCase().includes(projectSearch.trim().toLocaleLowerCase())) ?? []
   const logout = useMutation({
     mutationFn: () => apiFetch('/api/session', { method: 'DELETE' }),
     onSuccess: () => {
@@ -60,44 +52,24 @@ export function AppShell() {
     },
   })
   return (
-    <SidebarProvider defaultOpen>
-      <Sidebar collapsible="icon">
-          <SidebarHeader>
-            <div className="brand-row sidebar-brand"><span className="brand-mark"><Database size={20} /></span><span>Supabase Manager</span></div>
-          </SidebarHeader>
+      <SidebarProvider defaultOpen={false}>
+      <Sidebar collapsible="icon" className="primary-sidebar">
           <SidebarContent>
-            <nav aria-label="Main navigation">
+            {!isProjectRoute && <nav aria-label="Main navigation">
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton isActive={location.pathname === '/projects'} tooltip="Projects" render={<NavLink to="/projects" end />}>
+                  <SidebarMenuButton className="primary-sidebar-menu-button" collapsibleIcon={false} isActive={location.pathname === '/projects'} render={<NavLink to="/projects" end />}>
                     <Boxes /> <span>Projects</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
-            </nav>
-            {isProjectRoute && projectId && <nav aria-label="Project navigation">
-              <SidebarGroup>
-                <SidebarGroupLabel><LockKeyhole /> Project</SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    <SidebarMenuItem><SidebarMenuButton isActive={location.pathname === `/projects/${projectId}` || location.pathname.endsWith('/overview')} tooltip="Overview" render={<Link to={`/projects/${projectId}/overview`} aria-current={location.pathname === `/projects/${projectId}` || location.pathname.endsWith('/overview') ? 'page' : undefined} />}><LayoutDashboard /><span>Overview</span></SidebarMenuButton></SidebarMenuItem>
-                    {projectNavigation.map(([path, label, Icon]) => {
-                      const active = isActiveProjectLink(location, path)
-                      return <SidebarMenuItem key={`${path}-${label}`}><SidebarMenuButton isActive={active} tooltip={label} render={<Link to={`/projects/${projectId}/${path}`} aria-current={active ? 'page' : undefined} />}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>
-                    })}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
             </nav>}
-            {isProjectRoute && projectId && <nav aria-label="Runtime navigation">
-              <SidebarGroup>
-                <SidebarGroupLabel>Runtime</SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    {runtimeNavigation.map(([path, label, Icon]) => { const active = isActiveProjectLink(location, path); return <SidebarMenuItem key={path}><SidebarMenuButton isActive={active} tooltip={label} render={<Link to={`/projects/${projectId}/${path}`} aria-current={active ? 'page' : undefined} />}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem> })}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
+            {isProjectRoute && projectId && <nav aria-label="Project navigation" className="primary-project-navigation">
+              <SidebarMenu>
+                <SidebarMenuItem><SidebarMenuButton className="primary-sidebar-menu-button" collapsibleIcon={false} isActive={location.pathname === `/projects/${projectId}` || location.pathname.endsWith('/overview')} render={<Link to={`/projects/${projectId}/overview`} aria-current={location.pathname === `/projects/${projectId}` || location.pathname.endsWith('/overview') ? 'page' : undefined} />}><LayoutDashboard /><span>Project Overview</span></SidebarMenuButton></SidebarMenuItem>
+                <SidebarMenuItem><SidebarMenuButton className="primary-sidebar-menu-button" collapsibleIcon={false} isActive={location.pathname.includes('/authentication')} render={<Link to={`/projects/${projectId}/authentication`} aria-current={location.pathname.includes('/authentication') ? 'page' : undefined} />}><ShieldCheck /><span>Authentication</span></SidebarMenuButton></SidebarMenuItem>
+                <SidebarMenuItem><SidebarMenuButton className="primary-sidebar-menu-button" collapsibleIcon={false} isActive={location.pathname.endsWith('/configuration')} render={<Link to={`/projects/${projectId}/configuration`} aria-current={location.pathname.endsWith('/configuration') ? 'page' : undefined} />}><Settings /><span>Project Settings</span></SidebarMenuButton></SidebarMenuItem>
+              </SidebarMenu>
             </nav>}
           </SidebarContent>
           <div className="sidebar-status">
@@ -105,7 +77,7 @@ export function AppShell() {
           </div>
           <SidebarFooter>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<SidebarMenuButton tooltip="Account" />}>
+              <DropdownMenuTrigger render={<SidebarMenuButton className="primary-sidebar-menu-button" collapsibleIcon={false} />}>
                 <UserCircle /><span>Account</span>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="right" align="end">
@@ -116,9 +88,12 @@ export function AppShell() {
           </SidebarFooter>
       </Sidebar>
       <SidebarInset>
-        <header className="topbar">
+        <header className="topbar" aria-label="Dashboard header">
           <ResponsiveSidebarTrigger />
-          <div><HardDrive size={16} /> Local Docker host</div><Badge variant="outline">Installer Core</Badge>
+          <div className="topbar-left">
+            <span className="topbar-logo" aria-hidden="true"><Database size={18} /></span>
+            {isProjectRoute && <><span className="topbar-slash" aria-hidden="true" /><DropdownMenu onOpenChange={(open) => { if (!open) setProjectSearch('') }}><DropdownMenuTrigger className="topbar-project-trigger" aria-label="Show projects"><Database /><span>{activeProject?.name ?? projectId}</span><ChevronsUpDown /></DropdownMenuTrigger><DropdownMenuContent className="topbar-menu topbar-project-menu" sideOffset={8} align="start"><label className="topbar-project-search"><Search /><input aria-label="Find project" autoFocus value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Find project..." /></label>{visibleProjects.map((project) => <DropdownMenuItem key={project.id} render={<Link to={`/projects/${project.id}/overview`} />} className="topbar-menu-item" data-current={project.id === projectId || undefined}><span>{project.name}</span>{project.id === projectId && <span className="topbar-menu-current">✓</span>}</DropdownMenuItem>)}<DropdownMenuSeparator /><DropdownMenuItem render={<Link to="/projects/new" />} className="topbar-menu-item topbar-menu-create"><Plus /><span>New project</span></DropdownMenuItem></DropdownMenuContent></DropdownMenu><span className="topbar-slash" aria-hidden="true" /><DropdownMenu><DropdownMenuTrigger className="topbar-project-trigger topbar-branch-trigger" aria-label="Show branches"><span>main</span><Badge variant="outline">Local</Badge><ChevronsUpDown /></DropdownMenuTrigger><DropdownMenuContent className="topbar-menu topbar-branch-menu" sideOffset={8} align="start"><DropdownMenuRadioGroup value="main"><DropdownMenuRadioItem value="main" className="topbar-menu-item"><span>main</span><Badge variant="outline">Local</Badge></DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent></DropdownMenu></>}
+          </div>
         </header>
         <div className="content-shell"><Outlet /></div>
       </SidebarInset>
@@ -129,5 +104,5 @@ export function AppShell() {
 function ResponsiveSidebarTrigger() {
   const { isMobile, openMobile, state } = useSidebar()
   const isOpen = isMobile ? openMobile : state === 'expanded'
-  return <SidebarTrigger aria-label={isOpen ? 'Close sidebar' : 'Open sidebar'} />
+  return <SidebarTrigger className="desktop-sidebar-trigger" aria-label={isOpen ? 'Close sidebar' : 'Open sidebar'} />
 }

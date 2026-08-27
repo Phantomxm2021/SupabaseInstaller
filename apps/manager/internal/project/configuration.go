@@ -47,12 +47,13 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		General:  contracts.GeneralConfig{SupabaseVersion: "self-hosted/v0.8.0"},
 		Services: ApplyPreset(preset),
 		Auth: contracts.AuthConfig{
-			Enabled:    true,
-			Email:      contracts.EmailAuthConfig{Enabled: true, AllowSignup: true},
-			SMTP:       contracts.SMTPConfig{Port: 587},
-			Mailer:     defaultMailerConfig(),
-			RateLimits: contracts.RateLimitConfig{EmailSent: 30, SMSSent: 30, TokenRefresh: 150, TokenVerification: 30, AnonymousUsers: 30, SignupsAndSignins: 30},
-			MFA:        contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6},
+			Enabled:       true,
+			Email:         contracts.EmailAuthConfig{Enabled: true, AllowSignup: true, MinimumPasswordLength: 6, EmailOTPExpiration: 3600, EmailOTPLength: 8},
+			ManualLinking: false,
+			SMTP:          contracts.SMTPConfig{Port: 587},
+			Mailer:        defaultMailerConfig(),
+			RateLimits:    contracts.RateLimitConfig{EmailSent: 30, SMSSent: 30, TokenRefresh: 150, TokenVerification: 30, AnonymousUsers: 30, SignupsAndSignins: 30},
+			MFA:           contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6},
 		},
 		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
@@ -64,7 +65,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 }
 
 func defaultMailerTemplate(subject string) contracts.EmailTemplateConfig {
-	return contracts.EmailTemplateConfig{Subject: subject}
+	return contracts.EmailTemplateConfig{Subject: subject, Body: "<!doctype html>\n<html>\n  <body>\n    <h2>" + subject + "</h2>\n  </body>\n</html>"}
 }
 
 func defaultMailerConfig() contracts.MailerConfig {
@@ -219,6 +220,15 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 		validation.add("auth.email.secureEmailChange", "must match doubleConfirmChanges for the pinned runtime capability")
 		validation.add("auth.email.doubleConfirmChanges", "must match secureEmailChange for the pinned runtime capability")
 	}
+	if auth.Email.MinimumPasswordLength != 0 && (auth.Email.MinimumPasswordLength < 6 || auth.Email.MinimumPasswordLength > 72) {
+		validation.add("auth.email.minimumPasswordLength", "must be between 6 and 72 characters")
+	}
+	if auth.Email.EmailOTPExpiration != 0 && (auth.Email.EmailOTPExpiration < 60 || auth.Email.EmailOTPExpiration > 86400) {
+		validation.add("auth.email.emailOtpExpiration", "must be between 60 and 86400 seconds")
+	}
+	if auth.Email.EmailOTPLength != 0 && (auth.Email.EmailOTPLength < 6 || auth.Email.EmailOTPLength > 10) {
+		validation.add("auth.email.emailOtpLength", "must be between 6 and 10 digits")
+	}
 	validateRateLimits(auth.RateLimits, validation)
 	validateMFA(auth.MFA, validation)
 	validateMailer(auth.Mailer, validation)
@@ -358,13 +368,13 @@ func validateMailerTemplate(template contracts.EmailTemplateConfig, field string
 	if strings.ContainsAny(template.Subject, "\r\n") {
 		validation.add(field+".subject", "must not contain a newline")
 	}
-	if template.TemplateURL != "" {
-		parsed, err := url.ParseRequestURI(template.TemplateURL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-			validation.add(field+".templateUrl", "must be an absolute http or https URL")
-		}
+	if len(template.Body) == 0 {
+		validation.add(field+".body", "is required")
+	} else if len(template.Body) > 256*1024 {
+		validation.add(field+".body", "must be at most 256 KiB")
 	}
 	validateMailerTemplateVariables(template.Subject, field+".subject", validation)
+	validateMailerTemplateVariables(template.Body, field+".body", validation)
 }
 
 func validateMailerTemplateVariables(value, field string, validation *ValidationError) {
@@ -433,7 +443,12 @@ func oauthRequiredFields(provider string) []string {
 }
 
 func providerFieldAllowed(provider, field string) bool {
+	if field == "skipNonceChecks" || field == "allowUsersWithoutEmail" {
+		return true
+	}
 	switch provider {
+	case "google":
+		return false
 	case "azure":
 		return field == "tenantUrl"
 	case "github":

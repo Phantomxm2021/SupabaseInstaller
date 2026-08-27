@@ -352,6 +352,88 @@ func (s *Store) GetDesiredConfiguration(ctx context.Context, projectID string) (
 	return snapshot, nil
 }
 
+// ResetLegacyAuthConfigurations replaces only the obsolete Mailer section for
+// projects that predate the typed mailer model. It is an intentional data
+// migration, not a read-time compatibility path.
+func (s *Store) ResetLegacyAuthConfigurations(ctx context.Context, defaults contracts.AuthConfig) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, config_revision, last_good_revision FROM projects`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	type projectRevision struct {
+		id                 string
+		revision, lastGood int64
+	}
+	var projects []projectRevision
+	for rows.Next() {
+		var item projectRevision
+		if err := rows.Scan(&item.id, &item.revision, &item.lastGood); err != nil {
+			return 0, err
+		}
+		projects = append(projects, item)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	updated := 0
+	for _, item := range projects {
+		if item.revision != item.lastGood {
+			continue
+		}
+		var raw string
+		err := s.db.QueryRowContext(ctx, `SELECT config_json FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, item.id, item.revision).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return updated, err
+		}
+		var cfg contracts.ProjectConfiguration
+		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+			return updated, fmt.Errorf("decode legacy configuration %s: %w", item.id, err)
+		}
+		if cfg.Auth.Mailer == (contracts.MailerConfig{}) || !hasMailerTemplateBodies(cfg.Auth.Mailer) {
+			// The retired URL-only format cannot power the source editor
+			// or the project-local template service. Keep every other Auth setting.
+			cfg.Auth.Mailer = defaults.Mailer
+		} else {
+			continue
+		}
+		cfg.Revision = item.revision
+		payload, err := json.Marshal(redactConfiguration(cfg))
+		if err != nil {
+			return updated, err
+		}
+		err = s.InTx(ctx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=?`, string(payload), item.id, item.revision)
+			return err
+		})
+		if err != nil {
+			return updated, err
+		}
+		updated++
+	}
+	return updated, nil
+}
+
+func hasMailerTemplateBodies(mailer contracts.MailerConfig) bool {
+	templates := []contracts.EmailTemplateConfig{
+		mailer.Templates.Confirmation, mailer.Templates.Invite, mailer.Templates.MagicLink,
+		mailer.Templates.EmailChange, mailer.Templates.Recovery, mailer.Templates.Reauthentication,
+		mailer.Notifications.PasswordChanged.Template, mailer.Notifications.EmailChanged.Template,
+		mailer.Notifications.PhoneChanged.Template, mailer.Notifications.IdentityLinked.Template,
+		mailer.Notifications.IdentityUnlinked.Template, mailer.Notifications.MFAFactorEnrolled.Template,
+		mailer.Notifications.MFAFactorUnenrolled.Template,
+	}
+	for _, template := range templates {
+		if template.Body == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // PersistAllocatedConfiguration records server-owned ports without creating a
 // user configuration revision. Allocation happens during installation before
 // the first desired revision is rendered, so the immutable create revision
