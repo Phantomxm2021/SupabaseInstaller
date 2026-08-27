@@ -87,6 +87,20 @@ func TestSynchronizeDatabaseRolePasswordsUsesRenderedDatabasePassword(t *testing
 	}
 }
 
+func TestVerifyDatabaseBootstrapRejectsAnIncompleteOfficialBootstrap(t *testing.T) {
+	executor := &sequenceExecutor{results: []executorResult{{
+		output: []byte("schema:auth:supabase_admin\nfunction:email:supabase_auth_admin\nfunction:role:supabase_auth_admin\nfunction:uid:supabase_admin\n"),
+	}}}
+	err := NewRunner(executor).VerifyDatabaseBootstrap(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"})
+	if err == nil || !strings.Contains(err.Error(), "auth.uid") || !strings.Contains(err.Error(), "supabase_auth_admin") {
+		t.Fatalf("VerifyDatabaseBootstrap() error = %v, want auth.uid ownership violation", err)
+	}
+	want := []string{"compose", "--file", "/projects/bee/docker-compose.yml", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "exec", "-T", "db", "psql", "-v", "ON_ERROR_STOP=1", "-U", "supabase_admin", "-d", "postgres", "-At", "-c"}
+	if len(executor.calls) != 1 || len(executor.calls[0]) != len(want)+1 || !reflect.DeepEqual(executor.calls[0][:len(want)], want) {
+		t.Fatalf("bootstrap verification args = %#v, want %#v", executor.calls, want)
+	}
+}
+
 func TestRunnerUsesArgumentVectorAndFixedProjectDirectory(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)

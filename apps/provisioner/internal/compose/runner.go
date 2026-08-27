@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -59,6 +60,19 @@ var internalDatabaseRoles = []string{
 	"supabase_storage_admin",
 }
 
+// requiredBootstrapObjects are produced by the pinned official PostgreSQL
+// image during its one-time initialization. Auth and PostgREST must never be
+// started against a database that does not satisfy this contract: GoTrue
+// migrations cannot replace functions owned by another role, and PostgREST
+// cannot load graphql_public when its schema is missing.
+var requiredBootstrapObjects = map[string]string{
+	"schema:auth":           "supabase_admin",
+	"schema:graphql_public": "supabase_admin",
+	"function:auth.email":   "supabase_auth_admin",
+	"function:auth.role":    "supabase_auth_admin",
+	"function:auth.uid":     "supabase_auth_admin",
+}
+
 // RotateDatabasePassword changes the database credential for every internal
 // service role, not only postgres. Auth, Storage, REST and Supavisor all use
 // POSTGRES_PASSWORD, so leaving their roles on the old credential makes a
@@ -82,6 +96,50 @@ func (r *Runner) SynchronizeDatabaseRolePasswords(ctx context.Context, project P
 		return err
 	}
 	return r.setInternalDatabaseRolePasswords(ctx, project, password)
+}
+
+// VerifyDatabaseBootstrap verifies the authoritative result of the pinned
+// PostgreSQL image's initial migration sequence. It deliberately performs no
+// repair: an incomplete bootstrap is unsafe to continue from and must be
+// discarded by the revision-zero rollback path before Retry starts it fresh.
+func (r *Runner) VerifyDatabaseBootstrap(ctx context.Context, project ProjectRef) error {
+	query := `
+SELECT 'schema:' || nspname || ':' || pg_get_userbyid(nspowner)
+FROM pg_namespace
+WHERE nspname IN ('auth', 'graphql_public')
+UNION ALL
+SELECT 'function:auth.' || proname || ':' || pg_get_userbyid(proowner)
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'auth'
+  AND p.proname IN ('uid', 'role', 'email')
+  AND pg_get_function_identity_arguments(p.oid) = '';
+`
+	args := append(r.baseArgs(project), "exec", "-T", "db", "psql", "-v", "ON_ERROR_STOP=1", "-U", "supabase_admin", "-d", "postgres", "-At", "-c", query)
+	output, err := r.executor.Run(ctx, "docker", args, nil)
+	if err != nil {
+		return fmt.Errorf("inspect official database bootstrap: %w", err)
+	}
+	actual := make(map[string]string, len(requiredBootstrapObjects))
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), ":", 3)
+		if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			continue
+		}
+		key := parts[0] + ":" + parts[1]
+		actual[key] = parts[2]
+	}
+	violations := make([]string, 0)
+	for key, owner := range requiredBootstrapObjects {
+		if actual[key] != owner {
+			violations = append(violations, fmt.Sprintf("%s owner=%q want %q", key, actual[key], owner))
+		}
+	}
+	if len(violations) > 0 {
+		sort.Strings(violations)
+		return fmt.Errorf("official PostgreSQL bootstrap is incomplete: %s", strings.Join(violations, "; "))
+	}
+	return nil
 }
 
 func (r *Runner) setInternalDatabaseRolePasswords(ctx context.Context, project ProjectRef, password string) error {

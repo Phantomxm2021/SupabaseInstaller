@@ -173,6 +173,9 @@ type serverCaptureExecutor struct{ calls [][]string }
 
 func (e *serverCaptureExecutor) Run(_ context.Context, _ string, args, _ []string) ([]byte, error) {
 	e.calls = append(e.calls, append([]string(nil), args...))
+	if strings.Contains(strings.Join(args, " "), "exec -T db psql") {
+		return []byte("schema:auth:supabase_admin\nschema:graphql_public:supabase_admin\nfunction:auth.email:supabase_auth_admin\nfunction:auth.role:supabase_auth_admin\nfunction:auth.uid:supabase_auth_admin\n"), nil
+	}
 	return nil, nil
 }
 

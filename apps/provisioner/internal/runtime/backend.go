@@ -15,6 +15,7 @@ import (
 
 type LifecycleRunner interface {
 	UpDatabase(ctx context.Context, project compose.ProjectRef) error
+	VerifyDatabaseBootstrap(ctx context.Context, project compose.ProjectRef) error
 	SynchronizeDatabaseRolePasswords(ctx context.Context, project compose.ProjectRef) error
 	ResetDatabaseConfig(ctx context.Context, project compose.ProjectRef) error
 	UpServices(ctx context.Context, project compose.ProjectRef, services ...string) error
@@ -67,6 +68,9 @@ func (backend *Backend) Lifecycle(ctx context.Context, request contracts.Lifecyc
 	switch request.Action {
 	case contracts.LifecycleStart:
 		if err := backend.runner.UpDatabase(ctx, project); err != nil {
+			return err
+		}
+		if err := backend.runner.VerifyDatabaseBootstrap(ctx, project); err != nil {
 			return err
 		}
 		if err := backend.runner.SynchronizeDatabaseRolePasswords(ctx, project); err != nil {

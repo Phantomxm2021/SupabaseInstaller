@@ -280,7 +280,7 @@ func TestInitialReconcileStartsDatabaseBeforeDependents(t *testing.T) {
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
 		t.Fatalf("initial reconcile: %v", err)
 	}
-	if !equalStrings(runner.calls, []string{"down", "reset-db-config", "db", "sync-db-roles", "selected"}) {
+	if !equalStrings(runner.calls, []string{"down", "reset-db-config", "db", "verify-bootstrap", "sync-db-roles", "selected"}) {
 		t.Fatalf("runtime calls = %#v, want clean database configuration and start before dependents", runner.calls)
 	}
 }
@@ -314,7 +314,7 @@ func TestInitialRetryRemovesPartialDatabaseBeforeBootstrap(t *testing.T) {
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
 		t.Fatalf("initial retry reconcile: %v", err)
 	}
-	if !equalStrings(runner.calls, []string{"down", "reset-db-config", "db", "sync-db-roles", "selected"}) {
+	if !equalStrings(runner.calls, []string{"down", "reset-db-config", "db", "verify-bootstrap", "sync-db-roles", "selected"}) {
 		t.Fatalf("runtime calls = %#v, want stop/reset bootstrap and database configuration before db", runner.calls)
 	}
 	if _, err := os.Lstat(dataDirectory); !os.IsNotExist(err) {
@@ -323,6 +323,31 @@ func TestInitialRetryRemovesPartialDatabaseBeforeBootstrap(t *testing.T) {
 	backups, err := filepath.Glob(filepath.Join(project, "volumes", "db", "data.failed-bootstrap-*"))
 	if err != nil || len(backups) != 0 {
 		t.Fatalf("database backups = %v, err=%v; want none", backups, err)
+	}
+}
+
+func TestInitialReconcileRollsBackIncompleteDatabaseBootstrapBeforeStartingDependents(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{bootstrapError: errors.New("official PostgreSQL bootstrap is incomplete: schema:graphql_public owner=\"\" want \"supabase_admin\"")}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err == nil || !strings.Contains(errors.Unwrap(err).Error(), "official PostgreSQL bootstrap is incomplete") {
+		t.Fatalf("initial reconcile error = %v, want bootstrap contract violation", err)
+	}
+	if !equalStrings(runner.calls, []string{"down", "reset-db-config", "db", "verify-bootstrap", "down", "reset-db-config"}) {
+		t.Fatalf("runtime calls = %#v, want rollback before dependent services", runner.calls)
+	}
+	if len(runner.up) != 0 {
+		t.Fatalf("dependent services were started after an incomplete bootstrap: %#v", runner.up)
+	}
+	if _, err := os.Lstat(filepath.Join(project, "volumes", "db", "data")); !os.IsNotExist(err) {
+		t.Fatalf("incomplete bootstrap data remains after rollback: %v", err)
 	}
 }
 
@@ -650,12 +675,16 @@ type fakeReconcileRunner struct {
 	down             []string
 	calls            []string
 	onUpDatabase     func() error
+	bootstrapError   error
 }
 
 type captureComposeExecutor struct{ calls [][]string }
 
 func (e *captureComposeExecutor) Run(_ context.Context, _ string, args, _ []string) ([]byte, error) {
 	e.calls = append(e.calls, append([]string(nil), args...))
+	if strings.Contains(strings.Join(args, " "), "exec -T db psql") {
+		return []byte("schema:auth:supabase_admin\nschema:graphql_public:supabase_admin\nfunction:auth.email:supabase_auth_admin\nfunction:auth.role:supabase_auth_admin\nfunction:auth.uid:supabase_auth_admin\n"), nil
+	}
 	return nil, nil
 }
 
@@ -685,6 +714,10 @@ func (r *fakeReconcileRunner) UpDatabase(context.Context, compose.ProjectRef) er
 		return r.onUpDatabase()
 	}
 	return nil
+}
+func (r *fakeReconcileRunner) VerifyDatabaseBootstrap(context.Context, compose.ProjectRef) error {
+	r.calls = append(r.calls, "verify-bootstrap")
+	return r.bootstrapError
 }
 func (r *fakeReconcileRunner) SynchronizeDatabaseRolePasswords(context.Context, compose.ProjectRef) error {
 	r.calls = append(r.calls, "sync-db-roles")

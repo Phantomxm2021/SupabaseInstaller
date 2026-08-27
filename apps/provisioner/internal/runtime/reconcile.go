@@ -188,6 +188,9 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			if err := backend.runner.UpDatabase(ctx, currentProject); err != nil {
 				return fail(rollback(err))
 			}
+			if err := backend.runner.VerifyDatabaseBootstrap(ctx, currentProject); err != nil {
+				return fail(rollback(err))
+			}
 			if err := backend.runner.SynchronizeDatabaseRolePasswords(ctx, currentProject); err != nil {
 				return fail(rollback(err))
 			}
