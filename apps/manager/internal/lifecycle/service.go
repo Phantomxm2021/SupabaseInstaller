@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"supabase-manager/apps/manager/internal/operation"
 	"supabase-manager/apps/manager/internal/store"
@@ -52,6 +53,32 @@ func (service *Service) Queue(ctx context.Context, project contracts.Project, ac
 		return operation.Operation{}, fmt.Errorf("unsupported lifecycle action %q", action)
 	}
 	return service.operations.Create(ctx, project.ID, operationType)
+}
+
+// ForceDelete performs the destructive delete inline. Unlike normal lifecycle
+// actions, deletion must not return an accepted background operation while the
+// project metadata is still present: callers only receive success after the
+// provisioner has removed the runtime/data and the Manager has removed the
+// project record.
+func (service *Service) ForceDelete(ctx context.Context, project contracts.Project, action Action, confirmation string) error {
+	if action != ActionDeleteRuntime && action != ActionDeleteData {
+		return fmt.Errorf("unsupported delete action %q", action)
+	}
+	if action == ActionDeleteData && confirmation != project.Name {
+		return fmt.Errorf("exact project name confirmation is required")
+	}
+	operationID := fmt.Sprintf("force-delete-%s-%d", project.ID, time.Now().UnixNano())
+	request := contracts.LifecycleRequest{
+		OperationID: operationID, IdempotencyKey: operationID + ":" + string(action), ProjectID: project.ID,
+		Slug: project.Slug, Action: provisionerAction(action), ConfirmProjectName: confirmation,
+	}
+	if err := service.provisioner.Lifecycle(ctx, request); err != nil {
+		return err
+	}
+	if action == ActionDeleteData {
+		return service.store.DeleteProject(ctx, project.ID)
+	}
+	return service.store.UpdateProjectStatus(ctx, project.ID, contracts.ProjectStatusStopped, contracts.HealthStopped)
 }
 
 func (service *Service) Run(ctx context.Context, project contracts.Project, action Action, queued operation.Operation) (operation.Operation, error) {

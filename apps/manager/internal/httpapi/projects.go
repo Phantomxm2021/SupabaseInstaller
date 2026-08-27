@@ -23,6 +23,7 @@ type Installer interface {
 type LifecycleManager interface {
 	Queue(ctx context.Context, project contracts.Project, action lifecycle.Action, confirmation string) (operation.Operation, error)
 	Run(ctx context.Context, project contracts.Project, action lifecycle.Action, operation operation.Operation) (operation.Operation, error)
+	ForceDelete(ctx context.Context, project contracts.Project, action lifecycle.Action, confirmation string) error
 }
 
 type ProjectOptions struct {
@@ -100,7 +101,24 @@ func (handlers projectHandlers) delete(response http.ResponseWriter, request *ht
 		writeError(response, http.StatusUnprocessableEntity, "INVALID_DELETE_MODE", "Delete mode must be runtime or data")
 		return
 	}
-	handlers.queueLifecycle(response, request, action, input.Confirmation)
+	if handlers.options.Lifecycle == nil {
+		writeError(response, http.StatusServiceUnavailable, "LIFECYCLE_UNAVAILABLE", "Project lifecycle is unavailable")
+		return
+	}
+	found, err := handlers.options.Projects.Get(request.Context(), request.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
+		return
+	}
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read project")
+		return
+	}
+	if err := handlers.options.Lifecycle.ForceDelete(request.Context(), found, action, input.Confirmation); err != nil {
+		writeError(response, http.StatusUnprocessableEntity, "DELETE_FAILED", err.Error())
+		return
+	}
+	response.WriteHeader(http.StatusNoContent)
 }
 
 func (handlers projectHandlers) queueLifecycle(response http.ResponseWriter, request *http.Request, action lifecycle.Action, confirmation string) {

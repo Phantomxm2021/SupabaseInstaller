@@ -75,6 +75,24 @@ func TestLifecycleEndpointReturnsDurableOperation(t *testing.T) {
 	}
 }
 
+func TestDeleteEndpointForceDeletesSynchronously(t *testing.T) {
+	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	defer database.Close()
+	projects := project.NewService(database, func() string { return "project-1" }, time.Now)
+	created, _ := projects.Create(context.Background(), projectDraftFixture())
+	lifecycleManager := &fakeLifecycle{}
+	mux := http.NewServeMux()
+	RegisterProjectRoutes(mux, ProjectOptions{Projects: projects, Installer: &fakeInstaller{}, Lifecycle: lifecycleManager})
+	request := httptest.NewRequest(http.MethodDelete, "/api/projects/"+created.ID, strings.NewReader(`{"mode":"data","confirmation":"Bee"}`))
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent || !lifecycleManager.forceDelete || lifecycleManager.action != "" {
+		t.Fatalf("status=%d body=%s forceDelete=%v queuedAction=%s", response.Code, response.Body.String(), lifecycleManager.forceDelete, lifecycleManager.action)
+	}
+}
+
 func TestRetryEndpointCreatesNewInstallationOperation(t *testing.T) {
 	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	defer database.Close()
@@ -106,7 +124,10 @@ func (fake *fakeInstaller) CreateOperation(_ context.Context, projectID string) 
 	return operation.Operation{ID: "operation-1", Status: operation.Queued}, nil
 }
 
-type fakeLifecycle struct{ action lifecycle.Action }
+type fakeLifecycle struct {
+	action      lifecycle.Action
+	forceDelete bool
+}
 
 func (fake *fakeLifecycle) Queue(_ context.Context, _ contracts.Project, action lifecycle.Action, _ string) (operation.Operation, error) {
 	fake.action = action
@@ -114,6 +135,10 @@ func (fake *fakeLifecycle) Queue(_ context.Context, _ contracts.Project, action 
 }
 func (*fakeLifecycle) Run(context.Context, contracts.Project, lifecycle.Action, operation.Operation) (operation.Operation, error) {
 	return operation.Operation{ID: "lifecycle-op-1", Status: operation.Succeeded}, nil
+}
+func (fake *fakeLifecycle) ForceDelete(context.Context, contracts.Project, lifecycle.Action, string) error {
+	fake.forceDelete = true
+	return nil
 }
 func (*fakeInstaller) Run(context.Context, contracts.Project, operation.Operation) (operation.Operation, error) {
 	return operation.Operation{ID: "operation-1", Status: operation.Succeeded}, nil
