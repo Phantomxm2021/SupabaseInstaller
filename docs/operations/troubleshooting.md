@@ -40,6 +40,33 @@ docker compose --file "$PROJECT_ROOT/PROJECT_SLUG/docker-compose.yml" \
 
 `PROJECT_ROOT` must be an absolute host path mounted into Provisioner at the identical absolute path. This is required because Docker Desktop resolves project bind mounts on the host daemon.
 
+### `check host port ...: provisioner returned 404 Not Found`
+
+Manager checks the Docker host's published ports through the private
+Provisioner endpoint before allocating a project port. A `404` on
+`/internal/v1/host/ports/<port>` means the Manager and Provisioner images were
+built from different revisions (typically only `manager` was rebuilt). It does
+not mean that the configured port was changed or that port `8000` is invalid.
+
+After updating the repository, rebuild and recreate both control-plane
+services together; keep `PORT_RANGE_START` and `PORT_RANGE_END` unchanged:
+
+```sh
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env build manager provisioner
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --force-recreate --wait manager provisioner
+```
+
+The private endpoint can be checked from the Manager container (Provisioner is
+intentionally not published on a host port):
+
+```sh
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T manager \
+  sh -lc 'wget -qO- --header="Authorization: Bearer ${PROVISIONER_TOKEN}" \
+  http://provisioner:9090/internal/v1/host/ports/8000'
+```
+
+Expected output is JSON containing `"port":8000` and an `"available"` boolean.
+
 ## Safe log collection
 
 Control-plane logs avoid rendering request bodies and generated credentials:
