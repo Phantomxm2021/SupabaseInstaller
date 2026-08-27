@@ -503,6 +503,50 @@ func TestRenderAuthSignupAndEmailChangeTruthTables(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("official email security settings", func(t *testing.T) {
+		cfg := testConfiguration()
+		cfg.Auth.ManualLinking = true
+		cfg.Auth.Email.SecurePasswordChange = true
+		cfg.Auth.Email.RequireCurrentPassword = true
+		cfg.Auth.Email.PreventLeakedPasswords = true
+		cfg.Auth.Email.MinimumPasswordLength = 12
+		cfg.Auth.Email.PasswordRequirements = "lowercase:uppercase:number"
+		cfg.Auth.Email.EmailOTPExpiration = 7200
+		cfg.Auth.Email.EmailOTPLength = 10
+		out, err := Project(Input{Slug: "auth-email-official", APIPort: 18001, Configuration: cfg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"MANUAL_LINKING_ENABLED=true",
+			"SECURE_PASSWORD_CHANGE_ENABLED=true",
+			"REQUIRE_CURRENT_PASSWORD=true",
+			"PREVENT_LEAKED_PASSWORDS=true",
+			"PASSWORD_MIN_LENGTH=12",
+			"PASSWORD_REQUIRED_CHARACTERS=lowercase:uppercase:number",
+			"MAILER_OTP_EXP=7200",
+			"MAILER_OTP_LENGTH=10",
+		} {
+			if !strings.Contains(out.Env, want) {
+				t.Errorf(".env missing %q", want)
+			}
+		}
+		for _, want := range []string{
+			"GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: ${MANUAL_LINKING_ENABLED}",
+			"GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: ${SECURE_PASSWORD_CHANGE_ENABLED}",
+			"GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD: ${REQUIRE_CURRENT_PASSWORD}",
+			"GOTRUE_PASSWORD_HIBP_ENABLED: ${PREVENT_LEAKED_PASSWORDS}",
+			"GOTRUE_PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH}",
+			"GOTRUE_PASSWORD_REQUIRED_CHARACTERS: ${PASSWORD_REQUIRED_CHARACTERS}",
+			"GOTRUE_MAILER_OTP_EXP: ${MAILER_OTP_EXP}",
+			"GOTRUE_MAILER_OTP_LENGTH: ${MAILER_OTP_LENGTH}",
+		} {
+			if !strings.Contains(out.Compose, want) {
+				t.Errorf("Compose missing %q", want)
+			}
+		}
+	})
 }
 
 func TestRenderRejectsUnicodeControlInjection(t *testing.T) {
@@ -612,6 +656,7 @@ func TestRenderAllOAuthProvidersAndSpecialFields(t *testing.T) {
 		cfg.Auth.OAuth[name] = contracts.OAuthProviderConfig{Enabled: true, ClientID: name + "-client", SecretSet: true}
 		runtime["oauth."+name+".secret"] = name + "-secret"
 	}
+	cfg.Auth.OAuth["google"] = contracts.OAuthProviderConfig{Enabled: true, ClientID: "google-client", SecretSet: true, Fields: map[string]string{"skipNonceChecks": "true", "allowUsersWithoutEmail": "true"}}
 	cfg.Auth.OAuth["azure"] = contracts.OAuthProviderConfig{Enabled: true, ClientID: "azure-client", SecretSet: true, Fields: map[string]string{"tenantUrl": "https://login.microsoftonline.com/tenant"}}
 	cfg.Auth.OAuth["github"] = contracts.OAuthProviderConfig{Enabled: true, ClientID: "github-client", SecretSet: true, Fields: map[string]string{"enterpriseUrl": "https://github.example.com"}}
 	cfg.Auth.OAuth["gitlab"] = contracts.OAuthProviderConfig{Enabled: true, ClientID: "gitlab-client", SecretSet: true, Fields: map[string]string{"selfHostedUrl": "https://gitlab.example.com"}}
@@ -630,6 +675,14 @@ func TestRenderAllOAuthProvidersAndSpecialFields(t *testing.T) {
 		if !strings.Contains(out.Compose, key) {
 			t.Errorf("special provider key missing: %s", key)
 		}
+	}
+	for _, key := range []string{"GOTRUE_EXTERNAL_GOOGLE_SKIP_NONCE_CHECK", "GOTRUE_EXTERNAL_GOOGLE_EMAIL_OPTIONAL"} {
+		if !strings.Contains(out.Compose, key) {
+			t.Errorf("common provider key missing: %s", key)
+		}
+	}
+	if strings.Contains(out.Compose, "GOTRUE_EXTERNAL_GOOGLE_SKIPNONCECHECKS") || strings.Contains(out.Compose, "GOTRUE_EXTERNAL_GOOGLE_ALLOWUSERSWITHOUTEMAIL") {
+		t.Error("common provider fields were emitted with invalid environment names")
 	}
 }
 

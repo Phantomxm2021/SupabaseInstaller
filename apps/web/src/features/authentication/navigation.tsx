@@ -1,21 +1,20 @@
-import { ExternalLink, PanelLeft } from 'lucide-react'
+import { PanelLeft } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 
-type AuthenticationItem = readonly [path: string, label: string, options?: { beta?: boolean; external?: boolean }]
+type AuthenticationItem = readonly [path: string, label: string]
 type AuthenticationGroup = { label: string; items: readonly AuthenticationItem[] }
 
 export const authenticationGroups: readonly AuthenticationGroup[] = [
-  { label: 'Manage', items: [['users', 'Users'], ['oauth-apps', 'OAuth Apps']] },
   { label: 'Notifications', items: [['emails', 'Emails']] },
-  { label: 'Configuration', items: [['policies', 'Policies', { external: true }], ['sign-in-providers', 'Sign In / Providers'], ['passkeys', 'Passkeys', { beta: true }], ['oauth-server', 'OAuth Server', { beta: true }], ['sessions', 'Sessions'], ['rate-limits', 'Rate Limits'], ['multi-factor', 'Multi-Factor'], ['url-configuration', 'URL Configuration'], ['attack-protection', 'Attack Protection'], ['auth-hooks', 'Auth Hooks', { beta: true }], ['audit-logs', 'Audit Logs'], ['performance', 'Performance']] },
+  { label: 'Configuration', items: [['sign-in-providers', 'Sign In / Providers'], ['rate-limits', 'Rate Limits'], ['multi-factor', 'Multi-Factor'], ['url-configuration', 'URL Configuration']] },
 ] as const
 
-export const unsupportedAuthenticationRoutes = authenticationGroups.flatMap((group) => group.items).filter(([path]) => !['users', 'oauth-apps', 'emails', 'sign-in-providers', 'rate-limits', 'multi-factor', 'url-configuration'].includes(path))
+export const unsupportedAuthenticationRoutes: readonly (readonly [path: string, label: string])[] = []
 
-const compactBreakpoint = 900
+const compactBreakpoint = 768
 
 function useCompactAuthenticationNavigation() {
   const [isCompact, setIsCompact] = useState(() => typeof window !== 'undefined' && window.innerWidth <= compactBreakpoint)
@@ -60,8 +59,8 @@ function AuthenticationNavigationContent({ projectId, onNavigate }: { projectId:
     {authenticationGroups.map((group) => <section className="authentication-navigation-group" key={group.label} aria-labelledby={`authentication-${group.label.toLowerCase()}`}>
       <h2 id={`authentication-${group.label.toLowerCase()}`} className="authentication-navigation-label">{group.label.toUpperCase()}</h2>
       <ul className="authentication-navigation-list">
-        {group.items.map(([path, label, options]) => <li key={path}>
-          <NavLink to={`/projects/${projectId}/authentication/${path}`} className="authentication-navigation-link" data-external={options?.external || undefined} onClick={onNavigate}><span>{label}</span>{options?.beta && <span className="authentication-navigation-beta">BETA</span>}{options?.external && <ExternalLink aria-hidden="true" />}</NavLink>
+        {group.items.map(([path, label]) => <li key={path}>
+          <NavLink to={`/projects/${projectId}/authentication/${path}`} className="authentication-navigation-link" onClick={onNavigate}><span>{label}</span></NavLink>
         </li>)}
       </ul>
     </section>)}

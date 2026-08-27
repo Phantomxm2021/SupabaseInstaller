@@ -1,8 +1,36 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { OverviewPage } from './OverviewPage'
+
+it('opens the project public origin in Supabase Studio when Studio is healthy', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+    id: 'bee', name: 'Bee', slug: 'bee', domain: 'bee.example.com', siteUrl: 'https://example.com', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'self-hosted/v0.8.0', preset: 'LIGHTWEIGHT',
+    services: { database: true, gateway: true, auth: true, rest: true, studio: true, postgresMeta: true },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/overview']}><Routes><Route path="/projects/:projectId/overview" element={<OverviewPage />} /></Routes></MemoryRouter></QueryClientProvider>)
+
+  const studio = await screen.findByRole('link', { name: 'Open Supabase Studio' })
+  expect(studio).toHaveAttribute('href', 'https://bee.example.com')
+  expect(studio).toHaveAttribute('target', '_blank')
+})
+
+it('uses the Supabase-style overview hierarchy while keeping local project data', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+    id: 'bee', name: 'Bee', slug: 'bee', domain: 'bee.example.com', siteUrl: 'https://example.com', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'self-hosted/v0.8.0', preset: 'LIGHTWEIGHT', configurationRevision: 4,
+    services: { database: true, gateway: true, auth: true, rest: true, studio: true, postgresMeta: true, realtime: false, storage: false, imgproxy: false, functions: false, supavisor: false, logs: false, vector: false, directDb: false },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/overview']}><Routes><Route path="/projects/:projectId/overview" element={<OverviewPage />} /></Routes></MemoryRouter></QueryClientProvider>)
+
+  const hero = await screen.findByTestId('project-overview-hero')
+  expect(hero).toBeVisible()
+  expect(within(hero).getByText('Status')).toBeVisible()
+  expect(within(hero).getByText('Compute')).toBeVisible()
+  expect(within(hero).getByText('Primary Database')).toBeVisible()
+  expect(within(hero).getByText('6 active services')).toBeVisible()
+  expect(screen.getByTestId('overview-services-card')).toBeVisible()
+})
 
 it('starts a stopped project through a durable operation', async () => {
   let mutationPath = ''

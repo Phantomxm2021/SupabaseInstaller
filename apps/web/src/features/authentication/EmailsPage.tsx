@@ -132,7 +132,7 @@ export function EmailsPage({
     setTab(next);
   };
   return (
-    <main className="page auth-page auth-emails-page space-y-8">
+    <main className="page auth-page auth-emails-page">
       <header className="page-heading">
         <div>
           <h1>Emails</h1>

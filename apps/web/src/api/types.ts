@@ -61,6 +61,13 @@ export interface EmailAuthConfig {
   confirmEmail: boolean;
   secureEmailChange: boolean;
   doubleConfirmChanges: boolean;
+  securePasswordChange?: boolean;
+  requireCurrentPassword?: boolean;
+  preventLeakedPasswords?: boolean;
+  minimumPasswordLength?: number;
+  passwordRequirements?: string;
+  emailOtpExpiration?: number;
+  emailOtpLength?: number;
 }
 export interface PhoneAuthConfig {
   enabled: boolean;
@@ -136,6 +143,7 @@ export interface AuthConfig {
   email: EmailAuthConfig;
   phone: PhoneAuthConfig;
   anonymousSignIn: boolean;
+  manualLinking?: boolean;
   redirectUrls: string[];
   oauth: Record<string, OAuthProviderConfig>;
   smtp: SMTPConfig;
@@ -243,6 +251,7 @@ export interface RedactedAuthConfig {
   email: EmailAuthConfig;
   phone: RedactedPhoneAuthConfig;
   anonymousSignIn: boolean;
+  manualLinking?: boolean;
   redirectUrls?: string[];
   oauth?: Record<string, RedactedOAuthProviderConfig>;
   smtp: RedactedSMTPConfig;

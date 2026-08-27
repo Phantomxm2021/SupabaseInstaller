@@ -12,12 +12,13 @@ const auth = { ...defaultConfiguration().auth, email: { ...defaultConfiguration(
 const context = { projectId: 'bee', revision: 2, auth, general: { domain: 'bee.example.test', siteUrl: 'https://bee.example.test', supabaseVersion: '2.0.0' }, services: { auth: true } as Services, requestSave: vi.fn() } as AuthenticationWorkspaceContext
 
 describe('MultiFactorPage', () => {
-  it('renders TOTP and phone MFA controls with informative descriptions', () => {
+  it('renders the source-style MFA factor controls', () => {
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><MultiFactorPage context={context} /></MemoryRouter></QueryClientProvider>)
     expect(screen.getByRole('heading', { level: 1, name: 'Multi-Factor Authentication (MFA)' })).toBeVisible()
-    expect(screen.getByRole('switch', { name: 'TOTP (App Authenticator) enrollment' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByLabelText('TOTP (App Authenticator)')).toHaveValue('enabled')
     expect(screen.getByLabelText('Maximum number of per-user MFA factors')).toHaveValue(10)
     expect(screen.getByText('SMS MFA')).toBeVisible()
+    expect(screen.getByLabelText('Phone')).toHaveValue('disabled')
     expect(screen.getByLabelText('Phone OTP length')).toHaveValue(6)
   })
 

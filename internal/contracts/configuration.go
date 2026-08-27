@@ -42,11 +42,18 @@ type GeneralConfig struct {
 }
 
 type EmailAuthConfig struct {
-	Enabled              bool `json:"enabled"`
-	AllowSignup          bool `json:"allowSignup"`
-	ConfirmEmail         bool `json:"confirmEmail"`
-	SecureEmailChange    bool `json:"secureEmailChange"`
-	DoubleConfirmChanges bool `json:"doubleConfirmChanges"`
+	Enabled                bool   `json:"enabled"`
+	AllowSignup            bool   `json:"allowSignup"`
+	ConfirmEmail           bool   `json:"confirmEmail"`
+	SecureEmailChange      bool   `json:"secureEmailChange"`
+	DoubleConfirmChanges   bool   `json:"doubleConfirmChanges"`
+	SecurePasswordChange   bool   `json:"securePasswordChange"`
+	RequireCurrentPassword bool   `json:"requireCurrentPassword"`
+	PreventLeakedPasswords bool   `json:"preventLeakedPasswords"`
+	MinimumPasswordLength  int    `json:"minimumPasswordLength"`
+	PasswordRequirements   string `json:"passwordRequirements"`
+	EmailOTPExpiration     int    `json:"emailOtpExpiration"`
+	EmailOTPLength         int    `json:"emailOtpLength"`
 }
 
 type PhoneAuthConfig struct {
@@ -141,6 +148,7 @@ type AuthConfig struct {
 	Email           EmailAuthConfig                `json:"email"`
 	Phone           PhoneAuthConfig                `json:"phone"`
 	AnonymousSignIn bool                           `json:"anonymousSignIn"`
+	ManualLinking   bool                           `json:"manualLinking"`
 	RedirectURLs    []string                       `json:"redirectUrls,omitempty"`
 	OAuth           map[string]OAuthProviderConfig `json:"oauth,omitempty"`
 	SMTP            SMTPConfig                     `json:"smtp"`

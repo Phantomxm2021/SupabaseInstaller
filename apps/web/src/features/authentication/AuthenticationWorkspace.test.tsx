@@ -33,7 +33,7 @@ it('renders sign-in providers in the authentication workspace without configurat
   router.dispose()
 })
 
-it('keeps project navigation and highlights the active Authentication item', async () => {
+it('keeps only the requested Authentication configuration links', async () => {
   stubWorkspaceFetch()
   window.history.pushState({}, '', '/projects/bee/authentication/emails')
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -41,12 +41,33 @@ it('keeps project navigation and highlights the active Authentication item', asy
 
   render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>)
 
-  expect(await screen.findByRole('link', { name: 'Overview' })).toBeVisible()
+  expect(await screen.findByRole('link', { name: 'Project Overview' })).toBeVisible()
   expect(await screen.findByRole('link', { name: 'Emails' })).toHaveAttribute('aria-current', 'page')
   expect(screen.getByRole('heading', { name: 'Authentication', level: 1 })).toBeVisible()
   expect(screen.getByText('NOTIFICATIONS')).toBeVisible()
-  expect(screen.getAllByText('BETA')).toHaveLength(3)
-  expect(screen.getByRole('link', { name: /Policies/i })).toHaveAttribute('data-external', 'true')
+  expect(screen.getByRole('link', { name: 'Sign In / Providers' })).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Rate Limits' })).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Multi-Factor' })).toBeVisible()
+  expect(screen.getByRole('link', { name: 'URL Configuration' })).toBeVisible()
+  expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: 'OAuth Apps' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: /Passkeys/i })).not.toBeInTheDocument()
+  router.dispose()
+})
+
+it('renders URL Configuration with the official site and redirect URL copy', async () => {
+  stubWorkspaceFetch()
+  window.history.pushState({}, '', '/projects/bee/authentication/url-configuration')
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createAppRouter(queryClient)
+
+  render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>)
+
+  expect(await screen.findByRole('heading', { name: 'URL Configuration' })).toBeVisible()
+  expect(screen.getByText(/doesn't match one from the allow list/)).toBeVisible()
+  expect(screen.getByText(/Wildcards cannot be used here/)).toBeVisible()
+  expect(screen.getByText(/URLs that auth providers are permitted to redirect to post authentication/)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Add URL' })).toBeVisible()
   router.dispose()
 })
 

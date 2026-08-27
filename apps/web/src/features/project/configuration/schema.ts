@@ -38,6 +38,13 @@ const emailAuthSchema = z.object({
   confirmEmail: z.boolean(),
   secureEmailChange: z.boolean(),
   doubleConfirmChanges: z.boolean(),
+  securePasswordChange: z.boolean().optional().default(false),
+  requireCurrentPassword: z.boolean().optional().default(false),
+  preventLeakedPasswords: z.boolean().optional().default(false),
+  minimumPasswordLength: z.number().int().min(6).max(72).optional().default(6),
+  passwordRequirements: z.string().optional().default(''),
+  emailOtpExpiration: z.number().int().min(60).max(86400).optional().default(3600),
+  emailOtpLength: z.number().int().min(6).max(10).optional().default(8),
 });
 const phoneUpdateSchema = z
   .object({
@@ -96,6 +103,7 @@ const providerUpdateSchema = z.object({
   secret: secretAction,
   fields: z.record(z.string(), z.string()),
 });
+const oauthCommonFields = ['skipNonceChecks', 'allowUsersWithoutEmail'] as const;
 const smtpUpdateSchema = z
   .object({
     enabled: z.boolean(),
@@ -260,6 +268,7 @@ export const authSchema = z
     email: emailAuthSchema,
     phone: phoneUpdateSchema,
     anonymousSignIn: z.boolean(),
+    manualLinking: z.boolean().optional().default(false),
     redirectUrls: z.array(httpURL),
     oauth: z.record(z.string(), providerUpdateSchema),
     smtp: smtpUpdateSchema,
@@ -300,12 +309,20 @@ export const authSchema = z
           message: "Unsupported OAuth provider",
         });
       const field = specialFields[provider];
+      const allowedFields = field ? [field, ...oauthCommonFields] : [...oauthCommonFields];
       if (item.enabled && field && !item.fields[field]?.trim())
         context.addIssue({
           code: "custom",
           path: ["oauth", provider, "fields", field],
           message: "Required for this provider",
         });
+      for (const key of Object.keys(item.fields))
+        if (!allowedFields.includes(key))
+          context.addIssue({
+            code: "custom",
+            path: ["oauth", provider, "fields", key],
+            message: "Unsupported provider field",
+          });
       if (
         field &&
         item.fields[field] &&

@@ -55,24 +55,32 @@ func renderEnvironment(input Input) (string, string, error) {
 		"ENABLE_EMAIL_SIGNUP":      boolString(cfg.Auth.Email.Enabled),
 		"ENABLE_EMAIL_AUTOCONFIRM": boolString(!cfg.Auth.Email.ConfirmEmail),
 		"ENABLE_ANONYMOUS_USERS":   boolString(cfg.Auth.AnonymousSignIn),
+		"MANUAL_LINKING_ENABLED":   boolString(cfg.Auth.ManualLinking),
 		"ENABLE_PHONE_SIGNUP":      boolString(cfg.Auth.Phone.Enabled), "ENABLE_PHONE_AUTOCONFIRM": "false",
 		"SMTP_ADMIN_EMAIL": cfg.Auth.SMTP.SenderEmail, "SMTP_HOST": cfg.Auth.SMTP.Host,
 		"SMTP_PORT": strconv.Itoa(cfg.Auth.SMTP.Port), "SMTP_USER": cfg.Auth.SMTP.Username,
 		"SMTP_PASS": "", "SMTP_SENDER_NAME": cfg.Auth.SMTP.SenderName,
-		"SECURE_EMAIL_CHANGE_ENABLED": boolString(cfg.Auth.Email.SecureEmailChange),
-		"RATE_LIMIT_EMAIL_SENT":       strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.EmailSent, 30)),
-		"RATE_LIMIT_SMS_SENT":         strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.SMSSent, 30)),
-		"RATE_LIMIT_TOKEN_REFRESH":    strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.TokenRefresh, 150)),
-		"RATE_LIMIT_VERIFY":           strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.TokenVerification, 30)),
-		"RATE_LIMIT_ANONYMOUS_USERS":  strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.AnonymousUsers, 30)),
-		"RATE_LIMIT_OTP":              strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.SignupsAndSignins, 30)),
-		"MFA_TOTP_ENROLL_ENABLED":     boolString(cfg.Auth.MFA.TOTPEnrollEnabled),
-		"MFA_TOTP_VERIFY_ENABLED":     boolString(cfg.Auth.MFA.TOTPVerifyEnabled),
-		"MFA_PHONE_ENROLL_ENABLED":    boolString(cfg.Auth.MFA.PhoneEnrollEnabled),
-		"MFA_PHONE_VERIFY_ENABLED":    boolString(cfg.Auth.MFA.PhoneVerifyEnabled),
-		"MFA_MAX_ENROLLED_FACTORS":    strconv.Itoa(rateLimitOrDefault(cfg.Auth.MFA.MaxEnrolledFactors, 10)),
-		"MFA_PHONE_OTP_LENGTH":        strconv.Itoa(rateLimitOrDefault(cfg.Auth.MFA.PhoneOTPLength, 6)),
-		"STORAGE_BACKEND":             storageBackend(cfg.Storage.Backend), "GLOBAL_S3_BUCKET": cfg.Storage.Bucket,
+		"SECURE_EMAIL_CHANGE_ENABLED":    boolString(cfg.Auth.Email.SecureEmailChange),
+		"SECURE_PASSWORD_CHANGE_ENABLED": boolString(cfg.Auth.Email.SecurePasswordChange),
+		"REQUIRE_CURRENT_PASSWORD":       boolString(cfg.Auth.Email.RequireCurrentPassword),
+		"PREVENT_LEAKED_PASSWORDS":       boolString(cfg.Auth.Email.PreventLeakedPasswords),
+		"PASSWORD_MIN_LENGTH":            strconv.Itoa(emailIntOrDefault(cfg.Auth.Email.MinimumPasswordLength, 6)),
+		"PASSWORD_REQUIRED_CHARACTERS":   cfg.Auth.Email.PasswordRequirements,
+		"MAILER_OTP_EXP":                 strconv.Itoa(emailIntOrDefault(cfg.Auth.Email.EmailOTPExpiration, 3600)),
+		"MAILER_OTP_LENGTH":              strconv.Itoa(emailIntOrDefault(cfg.Auth.Email.EmailOTPLength, 8)),
+		"RATE_LIMIT_EMAIL_SENT":          strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.EmailSent, 30)),
+		"RATE_LIMIT_SMS_SENT":            strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.SMSSent, 30)),
+		"RATE_LIMIT_TOKEN_REFRESH":       strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.TokenRefresh, 150)),
+		"RATE_LIMIT_VERIFY":              strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.TokenVerification, 30)),
+		"RATE_LIMIT_ANONYMOUS_USERS":     strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.AnonymousUsers, 30)),
+		"RATE_LIMIT_OTP":                 strconv.Itoa(rateLimitOrDefault(cfg.Auth.RateLimits.SignupsAndSignins, 30)),
+		"MFA_TOTP_ENROLL_ENABLED":        boolString(cfg.Auth.MFA.TOTPEnrollEnabled),
+		"MFA_TOTP_VERIFY_ENABLED":        boolString(cfg.Auth.MFA.TOTPVerifyEnabled),
+		"MFA_PHONE_ENROLL_ENABLED":       boolString(cfg.Auth.MFA.PhoneEnrollEnabled),
+		"MFA_PHONE_VERIFY_ENABLED":       boolString(cfg.Auth.MFA.PhoneVerifyEnabled),
+		"MFA_MAX_ENROLLED_FACTORS":       strconv.Itoa(rateLimitOrDefault(cfg.Auth.MFA.MaxEnrolledFactors, 10)),
+		"MFA_PHONE_OTP_LENGTH":           strconv.Itoa(rateLimitOrDefault(cfg.Auth.MFA.PhoneOTPLength, 6)),
+		"STORAGE_BACKEND":                storageBackend(cfg.Storage.Backend), "GLOBAL_S3_BUCKET": cfg.Storage.Bucket,
 		"GLOBAL_S3_ENDPOINT": cfg.Storage.Endpoint, "GLOBAL_S3_FORCE_PATH_STYLE": boolString(cfg.Storage.ForcePathStyle),
 		"GLOBAL_S3_PROTOCOL": storageProtocol(cfg.Storage.Endpoint),
 		"AWS_ACCESS_KEY_ID":  "", "AWS_SECRET_ACCESS_KEY": "",
@@ -141,7 +149,18 @@ func renderEnvironment(input Input) (string, string, error) {
 				values[envKey] = value
 			}
 		}
+		for field, envKey := range provider.Fields {
+			if value, ok := entry.Fields[field]; ok {
+				values[envKey] = value
+			}
+		}
 		for field, value := range entry.Fields {
+			if _, mapped := provider.Special[field]; mapped {
+				continue
+			}
+			if _, mapped := provider.Fields[field]; mapped {
+				continue
+			}
 			key := provider.Name + "_" + strings.ToUpper(sanitizeName(field))
 			if _, exists := values[key]; !exists {
 				values[key] = value
@@ -222,6 +241,13 @@ func mailerTemplateFiles(mailer contracts.MailerConfig) map[string][]byte {
 }
 
 func rateLimitOrDefault(value, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+func emailIntOrDefault(value, fallback int) int {
 	if value == 0 {
 		return fallback
 	}
@@ -400,7 +426,15 @@ func injectAuthEnvironment(raw any, input Input) error {
 	}
 	set := func(key, value string) { env[key] = "${" + value + "}" }
 	set("GOTRUE_DISABLE_SIGNUP", "DISABLE_SIGNUP")
+	set("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED", "MANUAL_LINKING_ENABLED")
 	set("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED", "SECURE_EMAIL_CHANGE_ENABLED")
+	set("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION", "SECURE_PASSWORD_CHANGE_ENABLED")
+	set("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD", "REQUIRE_CURRENT_PASSWORD")
+	set("GOTRUE_PASSWORD_HIBP_ENABLED", "PREVENT_LEAKED_PASSWORDS")
+	set("GOTRUE_PASSWORD_MIN_LENGTH", "PASSWORD_MIN_LENGTH")
+	set("GOTRUE_PASSWORD_REQUIRED_CHARACTERS", "PASSWORD_REQUIRED_CHARACTERS")
+	set("GOTRUE_MAILER_OTP_EXP", "MAILER_OTP_EXP")
+	set("GOTRUE_MAILER_OTP_LENGTH", "MAILER_OTP_LENGTH")
 	for gotrueKey, envKey := range map[string]string{
 		"GOTRUE_RATE_LIMIT_EMAIL_SENT": "RATE_LIMIT_EMAIL_SENT", "GOTRUE_RATE_LIMIT_SMS_SENT": "RATE_LIMIT_SMS_SENT",
 		"GOTRUE_RATE_LIMIT_TOKEN_REFRESH": "RATE_LIMIT_TOKEN_REFRESH", "GOTRUE_RATE_LIMIT_VERIFY": "RATE_LIMIT_VERIFY",
@@ -449,6 +483,9 @@ func injectAuthEnvironment(raw any, input Input) error {
 		set("GOTRUE_EXTERNAL_"+provider.Name+"_SECRET", provider.Name+"_SECRET")
 		env["GOTRUE_EXTERNAL_"+provider.Name+"_REDIRECT_URI"] = "${API_EXTERNAL_URL}/callback"
 		for _, envKey := range provider.Special {
+			set("GOTRUE_EXTERNAL_"+provider.Name+"_"+strings.TrimPrefix(envKey, provider.Name+"_"), envKey)
+		}
+		for _, envKey := range provider.Fields {
 			set("GOTRUE_EXTERNAL_"+provider.Name+"_"+strings.TrimPrefix(envKey, provider.Name+"_"), envKey)
 		}
 	}

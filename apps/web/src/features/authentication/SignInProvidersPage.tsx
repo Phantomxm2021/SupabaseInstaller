@@ -32,6 +32,7 @@ export function SignInProvidersPage() {
           <h2>User Signups</h2>
           <section className="auth-settings-card">
             <SettingsToggleRow><Toggle className="auth-setting-toggle" id="allow-signup" label="Allow new users to sign up" description="If this is disabled, new users will not be able to sign up to your application." checked={policy.email.allowSignup} onChange={(value) => { form.setValue('email.allowSignup', value, { shouldDirty: true, shouldValidate: true }); form.setValue('disableSignup', !value, { shouldDirty: true, shouldValidate: true }) }} /></SettingsToggleRow>
+            <SettingsToggleRow><Toggle className="auth-setting-toggle" id="manual-linking" label="Allow manual linking" description="Enable manual linking APIs for your project." checked={Boolean(policy.manualLinking)} onChange={(value) => form.setValue('manualLinking', value, { shouldDirty: true, shouldValidate: true })} /></SettingsToggleRow>
             <SettingsToggleRow><Toggle className="auth-setting-toggle" id="anonymous-sign-in" label="Allow anonymous sign-ins" description="Allow users to sign in without providing an email address or phone number." checked={policy.anonymousSignIn} onChange={(value) => form.setValue('anonymousSignIn', value, { shouldDirty: true, shouldValidate: true })} /></SettingsToggleRow>
             <SettingsToggleRow><Toggle className="auth-setting-toggle" id="confirm-email" label="Confirm email" description="Users must confirm their email address before signing in for the first time." checked={policy.email.confirmEmail} onChange={(value) => form.setValue('email.confirmEmail', value, { shouldDirty: true, shouldValidate: true })} /></SettingsToggleRow>
             <SectionSaveButton label="changes" disabled={!form.formState.isDirty} />
@@ -48,7 +49,7 @@ export function SignInProvidersPage() {
         <h2>Third-Party Auth</h2><p className="muted">This Manager version currently exposes the GoTrue providers in Supabase Auth. No separate third-party provider configuration is available.</p>
       </TabsContent>
     </Tabs>
-    <ProviderSheet provider={provider} auth={auth} revision={revision} general={general} onClose={() => setProvider(undefined)} onSave={requestSave} />
+    <ProviderSheet key={provider ?? 'closed'} provider={provider} auth={auth} revision={revision} general={general} onClose={() => setProvider(undefined)} onSave={requestSave} />
   </main>
 }
 
