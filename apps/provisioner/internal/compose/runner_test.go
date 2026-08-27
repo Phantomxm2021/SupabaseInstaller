@@ -140,6 +140,24 @@ func TestRunnerKeepsComposeFailureOutputTail(t *testing.T) {
 	}
 }
 
+func TestUpDatabaseIncludesDatabaseLogsBeforeRollback(t *testing.T) {
+	executor := &sequenceExecutor{results: []executorResult{
+		{output: []byte("container db is unhealthy"), err: errors.New("exit status 1")},
+		{output: []byte("postgres startup fatal: incompatible data directory")},
+	}}
+	err := NewRunner(executor).UpDatabase(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"})
+	if err == nil || !strings.Contains(err.Error(), "postgres startup fatal: incompatible data directory") {
+		t.Fatalf("error = %v, want database startup log", err)
+	}
+	if len(executor.calls) != 2 {
+		t.Fatalf("calls = %#v, want database up and logs", executor.calls)
+	}
+	want := []string{"compose", "--file", "/projects/bee/docker-compose.yml", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "logs", "--no-color", "--tail", "120", "db"}
+	if !reflect.DeepEqual(executor.calls[1], want) {
+		t.Fatalf("database log args = %#v, want %#v", executor.calls[1], want)
+	}
+}
+
 func TestRunnerUsesStableProjectDirAndCurrentConfig(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)

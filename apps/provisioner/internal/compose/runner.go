@@ -85,7 +85,20 @@ func (r *Runner) Pull(ctx context.Context, project ProjectRef) error {
 }
 
 func (r *Runner) UpDatabase(ctx context.Context, project ProjectRef) error {
-	return r.run(ctx, project, "up", "-d", "--wait", "db")
+	if err := r.run(ctx, project, "up", "-d", "--wait", "db"); err != nil {
+		// A failed `up --wait db` leaves the database container available just
+		// long enough to inspect it. Reconcile removes that candidate during
+		// rollback, so preserve its redacted tail in the durable operation error.
+		logs, logErr := r.Logs(ctx, project, "db", 120)
+		if logErr != nil {
+			return err
+		}
+		if detail := boundedComposeDetail(logs); detail != "" {
+			return fmt.Errorf("%w; db logs=%s", err, detail)
+		}
+		return err
+	}
+	return nil
 }
 
 func (r *Runner) UpServices(ctx context.Context, project ProjectRef, services ...string) error {
@@ -173,19 +186,24 @@ func (r *Runner) run(ctx context.Context, project ProjectRef, action ...string) 
 	args := append(r.baseArgs(project), action...)
 	output, err := r.executor.Run(ctx, "docker", args, nil)
 	if err != nil {
-		detail := redact.New(nil).String(strings.TrimSpace(string(output)))
-		if len(detail) > 4096 {
-			// Compose prints image pull progress before its actionable error. Keep
-			// the tail so the registry, manifest, or daemon failure survives the
-			// bounded operation error and reaches the Manager audit log.
-			detail = "…" + detail[len(detail)-4096:]
-		}
+		detail := boundedComposeDetail(output)
 		if detail != "" {
 			return fmt.Errorf("compose action failed: %w; output=%s", err, detail)
 		}
 		return fmt.Errorf("compose action failed: %w", err)
 	}
 	return nil
+}
+
+func boundedComposeDetail(output []byte) string {
+	detail := redact.New(nil).String(strings.TrimSpace(string(output)))
+	if len(detail) > 4096 {
+		// Compose prints image pull progress before its actionable error. Keep
+		// the tail so the registry, manifest, or daemon failure survives the
+		// bounded operation error and reaches the Manager audit log.
+		return "…" + detail[len(detail)-4096:]
+	}
+	return detail
 }
 
 func (r *Runner) removeProjectResources(ctx context.Context, project ProjectRef) error {
