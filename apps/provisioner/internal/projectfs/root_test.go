@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"supabase-manager/internal/templates"
 )
 
 func TestProjectPathRejectsTraversalAndAbsoluteInput(t *testing.T) {
@@ -193,6 +195,10 @@ func TestResetInitialDatabaseRemovesOnlyDatabaseDataDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(data, "sentinel"), []byte("partial database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	roles := filepath.Join(project, "volumes", "db", "roles.sql")
+	if err := os.WriteFile(roles, []byte("stale database bootstrap"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := root.ResetInitialDatabase("bee"); err != nil {
 		t.Fatal(err)
@@ -206,6 +212,13 @@ func TestResetInitialDatabaseRemovesOnlyDatabaseDataDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(project, "volumes", "db", "_supabase.sql")); err != nil {
 		t.Fatalf("template migration was moved with database data: %v", err)
+	}
+	wantRoles, err := templates.Files().ReadFile("self-hosted-v0.8.0/volumes/db/roles.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, roles); string(got) != string(wantRoles) {
+		t.Fatalf("roles.sql was not restored from the pinned bootstrap template")
 	}
 }
 

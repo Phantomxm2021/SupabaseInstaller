@@ -110,11 +110,13 @@ func (r *Root) RuntimePath(slug string) (string, error) {
 	return r.ProjectPath(slug)
 }
 
-// ResetInitialDatabase removes the database data directory for an installation
-// that has not yet published a runtime revision. PostgreSQL executes its
-// official initialization exactly once, therefore a failed first bootstrap
-// must never be reused by a retry. Callers are responsible for restricting
-// this operation to revision zero; successful project data is not eligible.
+// ResetInitialDatabase replaces the complete database bootstrap directory for
+// an installation that has not yet published a runtime revision. PostgreSQL
+// executes its official initialization exactly once, and its mounted SQL files
+// are part of that initialization contract; a retry must not reuse either
+// partial PGDATA or stale database bootstrap scripts. Callers are responsible
+// for restricting this operation to revision zero; successful project data is
+// not eligible.
 func (r *Root) ResetInitialDatabase(slug string) error {
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
@@ -123,22 +125,25 @@ func (r *Root) ResetInitialDatabase(slug string) error {
 		return err
 	}
 	dbDirectory := filepath.Join(projectPath, "volumes", "db")
-	dataDirectory := filepath.Join(dbDirectory, "data")
-	dataInfo, err := os.Lstat(dataDirectory)
+	dbInfo, err := os.Lstat(dbDirectory)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return copyEmbeddedDatabaseTemplate(projectPath)
+	} else if err != nil {
+		return fmt.Errorf("inspect initial database bootstrap directory: %w", err)
+	} else if dbInfo.Mode()&os.ModeSymlink != 0 || !dbInfo.IsDir() {
+		return errors.New("initial database bootstrap path must be a directory, not a symlink")
 	}
-	if err != nil {
-		return fmt.Errorf("inspect initial database directory: %w", err)
+	if err := os.RemoveAll(dbDirectory); err != nil {
+		return fmt.Errorf("reset initial database bootstrap: %w", err)
 	}
-	if dataInfo.Mode()&os.ModeSymlink != 0 || !dataInfo.IsDir() {
-		return errors.New("initial database data path must be a directory, not a symlink")
-	}
-	if err := os.RemoveAll(dataDirectory); err != nil {
-		return fmt.Errorf("reset initial database data: %w", err)
+	if err := copyEmbeddedDatabaseTemplate(projectPath); err != nil {
+		return err
 	}
 	if err := syncDirectory(dbDirectory); err != nil {
 		return fmt.Errorf("sync initial database reset: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(dbDirectory)); err != nil {
+		return fmt.Errorf("sync initial database volume root: %w", err)
 	}
 	return nil
 }
@@ -579,6 +584,48 @@ func copyEmbeddedTemplate(destination string) error {
 		}
 		if err := os.WriteFile(target, data, mode); err != nil {
 			return fmt.Errorf("write template file %s: %w", relative, err)
+		}
+		return nil
+	})
+}
+
+// copyEmbeddedDatabaseTemplate restores only the pinned database bootstrap
+// assets. The directory has already been removed by ResetInitialDatabase, so
+// no old project file can shadow a current migration or role definition.
+func copyEmbeddedDatabaseTemplate(destination string) error {
+	templateFS := templates.Files()
+	const sourceRoot = "self-hosted-v0.8.0/volumes/db"
+	return fs.WalkDir(templateFS, sourceRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative := strings.TrimPrefix(path, sourceRoot)
+		relative = strings.TrimPrefix(relative, "/")
+		targetRoot := filepath.Join(destination, "volumes", "db")
+		if relative == "" {
+			return os.MkdirAll(targetRoot, 0o700)
+		}
+		target := filepath.Join(targetRoot, filepath.FromSlash(relative))
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		data, err := templateFS.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read embedded database bootstrap file %s: %w", path, err)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("read embedded database bootstrap mode %s: %w", path, err)
+		}
+		mode := fs.FileMode(0o600)
+		if info.Mode()&0o111 != 0 {
+			mode = 0o700
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return fmt.Errorf("create database bootstrap directory %s: %w", relative, err)
+		}
+		if err := writeAtomic(filepath.Dir(target), filepath.Base(target), data, mode); err != nil {
+			return fmt.Errorf("write database bootstrap file %s: %w", relative, err)
 		}
 		return nil
 	})
