@@ -148,9 +148,9 @@ func (noopRecoveryProvisioner) Reconcile(context.Context, contracts.ReconcilePro
 }
 
 func TestEnabledServicesUsesAuthoritativeSupavisorName(t *testing.T) {
-	cfg := contracts.ProjectConfiguration{Services: contracts.Services{Database: true, Gateway: true, Supavisor: true, Logs: true, Vector: true}}
+	cfg := contracts.ProjectConfiguration{Services: contracts.Services{Database: true, Gateway: true, Auth: true, Supavisor: true, Logs: true, Vector: true}}
 	got := enabledServices(cfg)
-	for _, want := range []string{"db", "api-gw", "supavisor", "analytics", "vector"} {
+	for _, want := range []string{"db", "api-gw", "auth", "auth-templates", "supavisor", "analytics", "vector"} {
 		found := false
 		for _, item := range got {
 			if item == want {

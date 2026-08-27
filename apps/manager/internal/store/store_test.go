@@ -104,6 +104,39 @@ func TestAdmitConfigurationReservesPortsAcrossKindsAndPendingCandidates(t *testi
 	}
 }
 
+func TestAdmitConfigurationReplacesFailedSameProjectReservations(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	failedCandidate := configurationFixture()
+	failedCandidate.General.Domain = "candidate.example.com"
+	failed := contracts.Operation{ID: "op-failed", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	if _, lease, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: failed, ProjectID: project.ID, Owner: failed.ID, ExpectedRevision: 1, Configuration: failedCandidate, OperationKind: "UPDATE_CONFIG", Now: now}); err != nil {
+		t.Fatal(err)
+	} else if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, failed.ID, lease.Fence); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a post-reconcile verification failure: the desired revision and
+	// its own reservations remain, but no active lease owns the candidate.
+	rateLimitCandidate := failedCandidate
+	rateLimitCandidate.Auth.RateLimits.EmailSent = 42
+	next := contracts.Operation{ID: "op-rate-limit", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now.Add(time.Second)}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: next, ProjectID: project.ID, Owner: next.ID, ExpectedRevision: 2, Configuration: rateLimitCandidate, OperationKind: "UPDATE_CONFIG", Now: now.Add(time.Second)}); err != nil {
+		t.Fatalf("same-project recovery admission = %v, want success", err)
+	}
+	var reservationOwner string
+	if err := s.DB().QueryRow(`SELECT operation_id FROM configuration_reservations WHERE resource_kind='domain' AND resource_key=?`, failedCandidate.General.Domain).Scan(&reservationOwner); err != nil {
+		t.Fatal(err)
+	}
+	if reservationOwner != next.ID {
+		t.Fatalf("domain reservation owner = %q, want %q", reservationOwner, next.ID)
+	}
+}
+
 func TestRestoreConfigurationStateOwnedDoesNotEraseSuccessor(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()

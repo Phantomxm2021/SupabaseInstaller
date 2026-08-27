@@ -872,6 +872,10 @@ func enabledServices(cfg contracts.ProjectConfiguration) []string {
 	add("db", cfg.Services.Database)
 	add("api-gw", cfg.Services.Gateway)
 	add("auth", cfg.Services.Auth)
+	// The Provisioner creates auth-templates alongside auth so GoTrue can serve
+	// managed mail templates. It is part of the rendered Compose service set and
+	// therefore must be included in Manager's authoritative verification set.
+	add("auth-templates", cfg.Services.Auth)
 	add("rest", cfg.Services.REST)
 	add("meta", cfg.Services.PostgresMeta)
 	add("studio", cfg.Services.Studio)

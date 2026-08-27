@@ -160,6 +160,15 @@ func (s *Store) AdmitConfiguration(ctx context.Context, input ConfigurationAdmis
 		if err := appendOperationEvent(ctx, tx, input.Operation.ID, "OPERATION_QUEUED", json.RawMessage(`{"status":"QUEUED"}`), input.Operation.CreatedAt); err != nil {
 			return err
 		}
+		// A prior configuration command for this same project can have reached a
+		// terminal verification failure after its candidate was durably written.
+		// Its reservation rows no longer have an active lease, but their unique
+		// keys would otherwise make every later update look like a cross-project
+		// conflict. The new lease above serializes this replacement; reservations
+		// belonging to other projects were already checked and remain protected.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=?`, input.ProjectID); err != nil {
+			return fmt.Errorf("replace prior project configuration reservations: %w", err)
+		}
 		for kind, key := range resources {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO configuration_reservations(resource_kind,resource_key,project_id,operation_id,revision,created_at) VALUES(?,?,?,?,?,?)`, kind, key, input.ProjectID, input.Operation.ID, input.ExpectedRevision+1, formatTime(input.Now)); err != nil {
 				if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "primary key") {
