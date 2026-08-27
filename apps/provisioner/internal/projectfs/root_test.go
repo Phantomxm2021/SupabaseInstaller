@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
 )
 
 func TestProjectPathRejectsTraversalAndAbsoluteInput(t *testing.T) {
@@ -219,6 +218,40 @@ func TestResetInitialDatabaseAllowsMissingOrEmptyDatabaseDirectory(t *testing.T)
 	}
 	if err := root.ResetInitialDatabase("bee"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestResetInitialDatabaseMakesBootstrapAssetsReadableToPostgres(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.ResetInitialDatabase("bee"); err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	databaseRoot := filepath.Join(project, "volumes", "db")
+	for _, name := range []string{"jwt.sql", "_supabase.sql", "logs.sql", "pooler.sql", "realtime.sql", "webhooks.sql"} {
+		info, err := os.Stat(filepath.Join(databaseRoot, name))
+		if err != nil {
+			t.Fatalf("stat bootstrap asset %s: %v", name, err)
+		}
+		if got := info.Mode().Perm(); got != 0o644 {
+			t.Errorf("bootstrap asset %s mode = %04o, want 0644", name, got)
+		}
+	}
+	info, err := os.Stat(filepath.Join(databaseRoot, "init", "data.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("bootstrap SQL data.sql mode = %04o, want 0644", got)
 	}
 }
 

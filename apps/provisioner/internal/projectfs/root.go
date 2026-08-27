@@ -603,25 +603,23 @@ func copyEmbeddedDatabaseTemplate(destination string) error {
 		relative = strings.TrimPrefix(relative, "/")
 		targetRoot := filepath.Join(destination, "volumes", "db")
 		if relative == "" {
-			return os.MkdirAll(targetRoot, 0o700)
+			return os.MkdirAll(targetRoot, 0o755)
 		}
 		target := filepath.Join(targetRoot, filepath.FromSlash(relative))
 		if entry.IsDir() {
-			return os.MkdirAll(target, 0o700)
+			return os.MkdirAll(target, 0o755)
 		}
 		data, err := templateFS.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read embedded database bootstrap file %s: %w", path, err)
 		}
-		info, err := entry.Info()
-		if err != nil {
-			return fmt.Errorf("read embedded database bootstrap mode %s: %w", path, err)
-		}
-		mode := fs.FileMode(0o600)
-		if info.Mode()&0o111 != 0 {
-			mode = 0o700
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		// These assets are bind-mounted into the official PostgreSQL image,
+		// whose migration process runs as its postgres user rather than the
+		// provisioner user that writes this project directory. They are static
+		// bootstrap SQL (JWT values are resolved from the container environment),
+		// so they must be readable by that user. Runtime .env files remain 0600.
+		mode := fs.FileMode(0o644)
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return fmt.Errorf("create database bootstrap directory %s: %w", relative, err)
 		}
 		if err := writeAtomic(filepath.Dir(target), filepath.Base(target), data, mode); err != nil {
