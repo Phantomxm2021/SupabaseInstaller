@@ -158,6 +158,28 @@ func TestUpDatabaseIncludesDatabaseLogsBeforeRollback(t *testing.T) {
 	}
 }
 
+func TestResetDatabaseConfigRemovesOnlyScopedVolume(t *testing.T) {
+	executor := &sequenceExecutor{results: []executorResult{
+		{output: []byte("supabase-manager-bee_db-config\n")},
+		{},
+	}}
+	runner := NewRunner(executor)
+	if err := runner.ResetDatabaseConfig(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"}); err != nil {
+		t.Fatalf("ResetDatabaseConfig() error = %v", err)
+	}
+	if len(executor.calls) != 2 {
+		t.Fatalf("calls = %#v, want scoped lookup and removal", executor.calls)
+	}
+	wantLookup := []string{"volume", "ls", "-q", "--filter", "label=com.docker.compose.project=supabase-manager-bee", "--filter", "label=com.docker.compose.volume=db-config"}
+	if !reflect.DeepEqual(executor.calls[0], wantLookup) {
+		t.Fatalf("volume lookup args = %#v, want %#v", executor.calls[0], wantLookup)
+	}
+	wantRemove := []string{"volume", "rm", "supabase-manager-bee_db-config"}
+	if !reflect.DeepEqual(executor.calls[1], wantRemove) {
+		t.Fatalf("volume removal args = %#v, want %#v", executor.calls[1], wantRemove)
+	}
+}
+
 func TestRunnerUsesStableProjectDirAndCurrentConfig(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)

@@ -114,6 +114,11 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				if resetErr := backend.projectFS.ResetInitialDatabase(request.Slug); resetErr != nil {
 					cleanupErr = errors.Join(cleanupErr, resetErr)
 				}
+				if resetErr := action(func(actionCtx context.Context) error {
+					return backend.runner.ResetDatabaseConfig(actionCtx, currentProject)
+				}); resetErr != nil {
+					cleanupErr = errors.Join(cleanupErr, resetErr)
+				}
 			} else if published && len(added) > 0 {
 				// The current candidate is still selected while newly added
 				// containers are removed; this leaves volumes intact before restoring
@@ -175,6 +180,9 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				return fail(rollback(err))
 			}
 			if err := backend.projectFS.ResetInitialDatabase(request.Slug); err != nil {
+				return fail(rollback(err))
+			}
+			if err := backend.runner.ResetDatabaseConfig(ctx, currentProject); err != nil {
 				return fail(rollback(err))
 			}
 			if err := backend.runner.UpDatabase(ctx, currentProject); err != nil {

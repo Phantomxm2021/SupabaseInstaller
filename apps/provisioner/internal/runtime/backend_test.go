@@ -110,6 +110,10 @@ func (runner *recordingRunner) UpDatabase(context.Context, compose.ProjectRef) e
 	runner.calls = append(runner.calls, "db")
 	return nil
 }
+func (runner *recordingRunner) ResetDatabaseConfig(context.Context, compose.ProjectRef) error {
+	runner.calls = append(runner.calls, "reset-db-config")
+	return nil
+}
 func (runner *recordingRunner) UpServices(_ context.Context, _ compose.ProjectRef, services ...string) error {
 	runner.calls = append(runner.calls, "services:"+strings.Join(services, "|"))
 	return nil

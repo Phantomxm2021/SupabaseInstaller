@@ -280,8 +280,8 @@ func TestInitialReconcileStartsDatabaseBeforeDependents(t *testing.T) {
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
 		t.Fatalf("initial reconcile: %v", err)
 	}
-	if !equalStrings(runner.calls, []string{"down", "db", "selected"}) {
-		t.Fatalf("runtime calls = %#v, want clean database start before dependents", runner.calls)
+	if !equalStrings(runner.calls, []string{"down", "reset-db-config", "db", "selected"}) {
+		t.Fatalf("runtime calls = %#v, want clean database configuration and start before dependents", runner.calls)
 	}
 }
 
@@ -314,8 +314,8 @@ func TestInitialRetryRemovesPartialDatabaseBeforeBootstrap(t *testing.T) {
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
 		t.Fatalf("initial retry reconcile: %v", err)
 	}
-	if !equalStrings(runner.calls, []string{"down", "db", "selected"}) {
-		t.Fatalf("runtime calls = %#v, want stop/reset bootstrap before db", runner.calls)
+	if !equalStrings(runner.calls, []string{"down", "reset-db-config", "db", "selected"}) {
+		t.Fatalf("runtime calls = %#v, want stop/reset bootstrap and database configuration before db", runner.calls)
 	}
 	if _, err := os.Lstat(dataDirectory); !os.IsNotExist(err) {
 		t.Fatalf("incomplete live data remains: %v", err)
@@ -684,6 +684,10 @@ func (r *fakeReconcileRunner) UpDatabase(context.Context, compose.ProjectRef) er
 	if r.onUpDatabase != nil {
 		return r.onUpDatabase()
 	}
+	return nil
+}
+func (r *fakeReconcileRunner) ResetDatabaseConfig(context.Context, compose.ProjectRef) error {
+	r.calls = append(r.calls, "reset-db-config")
 	return nil
 }
 func (r *fakeReconcileRunner) UpServices(_ context.Context, _ compose.ProjectRef, services ...string) error {

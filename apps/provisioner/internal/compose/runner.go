@@ -101,6 +101,31 @@ func (r *Runner) UpDatabase(ctx context.Context, project ProjectRef) error {
 	return nil
 }
 
+// ResetDatabaseConfig removes only the Compose-managed configuration volume
+// before a revision-zero bootstrap. Postgres 15 and 17 store incompatible
+// generated configuration in this volume, so resetting only PGDATA is not
+// sufficient after a failed PG15-to-PG17 first installation.
+func (r *Runner) ResetDatabaseConfig(ctx context.Context, project ProjectRef) error {
+	projectName := "supabase-manager-" + project.Slug
+	filters := []string{
+		"volume", "ls", "-q",
+		"--filter", "label=com.docker.compose.project=" + projectName,
+		"--filter", "label=com.docker.compose.volume=db-config",
+	}
+	output, err := r.executor.Run(ctx, "docker", filters, nil)
+	if err != nil {
+		return fmt.Errorf("list project database configuration volume: %w", err)
+	}
+	volumes := strings.Fields(string(output))
+	if len(volumes) == 0 {
+		return nil
+	}
+	if _, err := r.executor.Run(ctx, "docker", append([]string{"volume", "rm"}, volumes...), nil); err != nil {
+		return fmt.Errorf("remove project database configuration volume: %w", err)
+	}
+	return nil
+}
+
 func (r *Runner) UpServices(ctx context.Context, project ProjectRef, services ...string) error {
 	args := append([]string{"up", "-d", "--wait"}, services...)
 	return r.run(ctx, project, args...)
