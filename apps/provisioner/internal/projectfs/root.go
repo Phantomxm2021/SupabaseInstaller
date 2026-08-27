@@ -110,54 +110,37 @@ func (r *Root) RuntimePath(slug string) (string, error) {
 	return r.ProjectPath(slug)
 }
 
-// ArchiveIncompleteDatabase moves an initialized PostgreSQL data directory out
-// of the live Compose bind mount. It is intended only for a failed first
-// bootstrap: PostgreSQL runs its official init scripts exactly once, so a
-// retry must start with an empty data directory rather than reuse a partial
-// cluster. The archive stays inside the same project volume for diagnostics.
-func (r *Root) ArchiveIncompleteDatabase(slug string) (bool, error) {
+// ResetInitialDatabase removes the database data directory for an installation
+// that has not yet published a runtime revision. PostgreSQL executes its
+// official initialization exactly once, therefore a failed first bootstrap
+// must never be reused by a retry. Callers are responsible for restricting
+// this operation to revision zero; successful project data is not eligible.
+func (r *Root) ResetInitialDatabase(slug string) error {
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
 	projectPath, err := r.ProjectPath(slug)
 	if err != nil {
-		return false, err
+		return err
 	}
 	dbDirectory := filepath.Join(projectPath, "volumes", "db")
 	dataDirectory := filepath.Join(dbDirectory, "data")
 	dataInfo, err := os.Lstat(dataDirectory)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("inspect incomplete database directory: %w", err)
+		return fmt.Errorf("inspect initial database directory: %w", err)
 	}
 	if dataInfo.Mode()&os.ModeSymlink != 0 || !dataInfo.IsDir() {
-		return false, errors.New("database data path must be a directory, not a symlink")
+		return errors.New("initial database data path must be a directory, not a symlink")
 	}
-	versionPath := filepath.Join(dataDirectory, "PG_VERSION")
-	versionInfo, err := os.Lstat(versionPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect database initialization marker: %w", err)
-	}
-	if versionInfo.Mode()&os.ModeSymlink != 0 || !versionInfo.Mode().IsRegular() {
-		return false, errors.New("database initialization marker must be a regular file")
-	}
-	archiveDirectory := filepath.Join(dbDirectory, "data.failed-bootstrap-"+time.Now().UTC().Format("20060102T150405.000000000Z"))
-	if _, err := os.Lstat(archiveDirectory); err == nil {
-		return false, errors.New("database bootstrap archive destination already exists")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("inspect database bootstrap archive destination: %w", err)
-	}
-	if err := os.Rename(dataDirectory, archiveDirectory); err != nil {
-		return false, fmt.Errorf("archive incomplete database bootstrap: %w", err)
+	if err := os.RemoveAll(dataDirectory); err != nil {
+		return fmt.Errorf("reset initial database data: %w", err)
 	}
 	if err := syncDirectory(dbDirectory); err != nil {
-		return false, fmt.Errorf("sync database bootstrap archive: %w", err)
+		return fmt.Errorf("sync initial database reset: %w", err)
 	}
-	return true, nil
+	return nil
 }
 
 func (r *Root) CurrentRuntimeFiles(slug string) (RuntimeRef, error) {

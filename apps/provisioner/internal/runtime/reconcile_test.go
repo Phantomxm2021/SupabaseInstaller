@@ -227,6 +227,32 @@ func TestInitialReconcileFailureRemovesRuntimeBeforeClearingGeneration(t *testin
 	}
 }
 
+func TestInitialReconcileFailureResetsDatabaseData(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{onUpDatabase: func() error {
+		data := filepath.Join(project, "volumes", "db", "data")
+		if err := os.MkdirAll(data, 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(data, "PG_VERSION"), []byte("17"), 0o600)
+	}}
+	backend := NewBackend(root, runner, &sequenceInspector{reports: []health.Report{{Health: contracts.HealthUnhealthy}}})
+
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err == nil {
+		t.Fatal("initial reconcile unexpectedly succeeded")
+	}
+	if _, err := os.Lstat(filepath.Join(project, "volumes", "db", "data")); !os.IsNotExist(err) {
+		t.Fatalf("initial database data remains after failed reconcile: %v", err)
+	}
+}
+
 func TestInitialReconcileStartsDatabaseBeforeDependents(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
@@ -242,7 +268,7 @@ func TestInitialReconcileStartsDatabaseBeforeDependents(t *testing.T) {
 	}
 }
 
-func TestInitialRetryArchivesPartialDatabaseBeforeBootstrap(t *testing.T) {
+func TestInitialRetryRemovesPartialDatabaseBeforeBootstrap(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -272,14 +298,14 @@ func TestInitialRetryArchivesPartialDatabaseBeforeBootstrap(t *testing.T) {
 		t.Fatalf("initial retry reconcile: %v", err)
 	}
 	if !equalStrings(runner.calls, []string{"down", "db", "selected"}) {
-		t.Fatalf("runtime calls = %#v, want stop/archive bootstrap before db", runner.calls)
+		t.Fatalf("runtime calls = %#v, want stop/reset bootstrap before db", runner.calls)
 	}
 	if _, err := os.Lstat(dataDirectory); !os.IsNotExist(err) {
 		t.Fatalf("incomplete live data remains: %v", err)
 	}
 	backups, err := filepath.Glob(filepath.Join(project, "volumes", "db", "data.failed-bootstrap-*"))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("database backups = %v, err=%v; want one", backups, err)
+	if err != nil || len(backups) != 0 {
+		t.Fatalf("database backups = %v, err=%v; want none", backups, err)
 	}
 }
 
@@ -606,6 +632,7 @@ type fakeReconcileRunner struct {
 	recreateError    error
 	down             []string
 	calls            []string
+	onUpDatabase     func() error
 }
 
 type captureComposeExecutor struct{ calls [][]string }
@@ -637,6 +664,9 @@ func (s *sequencedContainerSource) Containers(context.Context, string) ([]health
 
 func (r *fakeReconcileRunner) UpDatabase(context.Context, compose.ProjectRef) error {
 	r.calls = append(r.calls, "db")
+	if r.onUpDatabase != nil {
+		return r.onUpDatabase()
+	}
 	return nil
 }
 func (r *fakeReconcileRunner) UpServices(_ context.Context, _ compose.ProjectRef, services ...string) error {

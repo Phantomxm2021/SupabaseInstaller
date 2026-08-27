@@ -171,7 +171,7 @@ func TestStageRuntimeFilesHydratesMetadataOnlyFreshProject(t *testing.T) {
 	}
 }
 
-func TestArchiveIncompleteDatabaseMovesOnlyInitializedDataDirectory(t *testing.T) {
+func TestResetInitialDatabaseRemovesOnlyDatabaseDataDirectory(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -194,29 +194,22 @@ func TestArchiveIncompleteDatabaseMovesOnlyInitializedDataDirectory(t *testing.T
 		t.Fatal(err)
 	}
 
-	archived, err := root.ArchiveIncompleteDatabase("bee")
-	if err != nil {
+	if err := root.ResetInitialDatabase("bee"); err != nil {
 		t.Fatal(err)
-	}
-	if !archived {
-		t.Fatal("ArchiveIncompleteDatabase() = false, want archive")
 	}
 	if _, err := os.Lstat(data); !os.IsNotExist(err) {
 		t.Fatalf("live database directory remains: %v", err)
 	}
 	backups, err := filepath.Glob(filepath.Join(project, "volumes", "db", "data.failed-bootstrap-*"))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("bootstrap backups = %v, err=%v; want one", backups, err)
-	}
-	if got := string(mustRead(t, filepath.Join(backups[0], "sentinel"))); got != "partial database" {
-		t.Fatalf("archived data = %q, want partial database", got)
+	if err != nil || len(backups) != 0 {
+		t.Fatalf("bootstrap backups = %v, err=%v; want none", backups, err)
 	}
 	if _, err := os.Stat(filepath.Join(project, "volumes", "db", "_supabase.sql")); err != nil {
 		t.Fatalf("template migration was moved with database data: %v", err)
 	}
 }
 
-func TestArchiveIncompleteDatabaseSkipsEmptyOrUninitializedDirectory(t *testing.T) {
+func TestResetInitialDatabaseAllowsMissingOrEmptyDatabaseDirectory(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -224,12 +217,8 @@ func TestArchiveIncompleteDatabaseSkipsEmptyOrUninitializedDirectory(t *testing.
 	if _, _, err := root.StageRuntimeFiles("bee", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")}); err != nil {
 		t.Fatal(err)
 	}
-	archived, err := root.ArchiveIncompleteDatabase("bee")
-	if err != nil {
+	if err := root.ResetInitialDatabase("bee"); err != nil {
 		t.Fatal(err)
-	}
-	if archived {
-		t.Fatal("ArchiveIncompleteDatabase() = true without PG_VERSION")
 	}
 }
 

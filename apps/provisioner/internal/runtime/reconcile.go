@@ -105,12 +105,15 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			var cleanupErr error
 			if published && len(previousServices) == 0 {
 				// A first reconcile has no prior generation to restore. Remove the
-				// entire scoped Compose runtime while the candidate env/compose files
-				// are still selected; otherwise running containers survive rollback
-				// and become orphaned after the current generation is cleared.
+				// entire scoped Compose runtime and its uncommitted database state
+				// while the candidate env/compose files are still selected. A retry
+				// must run PostgreSQL's official initialization from an empty PGDATA.
 				cleanupErr = action(func(actionCtx context.Context) error {
 					return backend.runner.DownRuntime(actionCtx, currentProject)
 				})
+				if resetErr := backend.projectFS.ResetInitialDatabase(request.Slug); resetErr != nil {
+					cleanupErr = errors.Join(cleanupErr, resetErr)
+				}
 			} else if published && len(added) > 0 {
 				// The current candidate is still selected while newly added
 				// containers are removed; this leaves volumes intact before restoring
@@ -166,12 +169,12 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		}
 		if metadata.Revision == 0 && len(previousServices) == 0 {
 			// A project with no published revision has never completed its first
-			// bootstrap. Stop any orphaned attempt, archive its partial PGDATA,
+			// bootstrap. Stop any orphaned attempt, remove its partial PGDATA,
 			// and let the pinned Postgres image run its full official init path.
 			if err := backend.runner.DownRuntime(ctx, currentProject); err != nil {
 				return fail(rollback(err))
 			}
-			if _, err := backend.projectFS.ArchiveIncompleteDatabase(request.Slug); err != nil {
+			if err := backend.projectFS.ResetInitialDatabase(request.Slug); err != nil {
 				return fail(rollback(err))
 			}
 			if err := backend.runner.UpDatabase(ctx, currentProject); err != nil {
