@@ -44,6 +44,13 @@ func (s *ConfigurationService) ResetLegacyAuthConfigurations(ctx context.Context
 	return s.store.ResetLegacyAuthConfigurations(ctx, DefaultConfiguration(contracts.PresetLightweight).Auth)
 }
 
+// MigrateFailedPostgreSQL15Configurations replaces stale failed-draft
+// configuration with the current PostgreSQL 17-only runtime. It is a one-time
+// data migration; healthy PostgreSQL 15 projects are deliberately untouched.
+func (s *ConfigurationService) MigrateFailedPostgreSQL15Configurations(ctx context.Context) (int, error) {
+	return s.store.MigrateFailedPostgreSQL15Configurations(ctx)
+}
+
 // GetDesired returns the latest aggregate, including an unapplied revision.
 // It is the correct merge base for durable operations queued behind runtime
 // reconciliation.

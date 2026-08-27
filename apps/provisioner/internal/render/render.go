@@ -284,15 +284,13 @@ func loadOfficialCompose(config contracts.ProjectConfiguration) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	overlays := []string{}
-	version := config.Database.Version
-	if version == "15" {
-		overlays = append(overlays, "docker-compose.pg15.yml")
-	} else if version == "17" || version == "" {
-		overlays = append(overlays, "docker-compose.pg17.yml")
-	} else {
-		return nil, fmt.Errorf("database.version: unsupported pinned PostgreSQL version %q", version)
+	if config.Database.Version != "17" {
+		return nil, fmt.Errorf("database.version: PostgreSQL 17 is the only supported pinned runtime")
 	}
+	// PostgreSQL 17 is the only pinned database runtime. Keep its explicit
+	// official overlay so generated Compose stays canonical with the upstream
+	// self-hosted template, but never retain a PostgreSQL 15 fallback.
+	overlays := []string{"docker-compose.pg17.yml"}
 	if config.Network.Gateway == contracts.GatewayKong {
 		overlays = append(overlays, "docker-compose.kong.yml")
 	} else if config.Network.Gateway != "" && config.Network.Gateway != contracts.GatewayEnvoy {

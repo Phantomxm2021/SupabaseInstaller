@@ -137,6 +137,48 @@ func TestConfigurationServiceResetsLegacyAuthConfiguration(t *testing.T) {
 	}
 }
 
+func TestConfigurationServiceMigratesOnlyFailedPostgreSQL15Projects(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	create := func(id, slug string, status contracts.ProjectStatus) contracts.Project {
+		cfg := DefaultConfiguration(contracts.PresetLightweight)
+		cfg.General = contracts.GeneralConfig{Domain: slug + ".example.com", SiteURL: "https://" + slug + ".example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+		project := contracts.Project{ID: id, Name: slug, Slug: slug, Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, Status: status, Health: contracts.HealthUnknown, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+		if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+			t.Fatal(err)
+		}
+		legacy := cfg
+		legacy.Database.Version = "15"
+		payload, err := json.Marshal(legacy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.DB().Exec(`UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=1`, string(payload), project.ID); err != nil {
+			t.Fatal(err)
+		}
+		return project
+	}
+	failed := create("project-failed-pg15", "failed-pg15", contracts.ProjectStatusFailed)
+	running := create("project-running-pg15", "running-pg15", contracts.ProjectStatusRunning)
+
+	service := NewConfigurationService(database, nil, time.Now)
+	count, err := service.MigrateFailedPostgreSQL15Configurations(context.Background())
+	if err != nil || count != 1 {
+		t.Fatalf("MigrateFailedPostgreSQL15Configurations() = %d, %v; want 1, nil", count, err)
+	}
+	failedConfig, err := database.GetDesiredConfiguration(context.Background(), failed.ID)
+	if err != nil || failedConfig.Configuration.Database.Version != "17" {
+		t.Fatalf("failed configuration = %#v, %v; want PostgreSQL 17", failedConfig.Configuration.Database, err)
+	}
+	runningConfig, err := database.GetDesiredConfiguration(context.Background(), running.ID)
+	if err != nil || runningConfig.Configuration.Database.Version != "15" {
+		t.Fatalf("running configuration = %#v, %v; must remain untouched", runningConfig.Configuration.Database, err)
+	}
+}
+
 func TestConfigurationServicePersistsMailerTemplatePatch(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {

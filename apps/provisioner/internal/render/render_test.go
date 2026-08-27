@@ -149,6 +149,7 @@ func testConfiguration() contracts.ProjectConfiguration {
 		General:   contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"},
 		Services:  contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true},
 		Auth:      contracts.AuthConfig{Enabled: true, JWTExpiry: 3600, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}},
+		Database:  contracts.DatabaseConfig{Version: "17"},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true},
 		Pooler:    contracts.PoolerConfig{SessionPort: 6544, TransactionPort: 6543, PoolSize: 20, MaxClientConnections: 100},
 	}
@@ -736,26 +737,22 @@ func TestRenderS3ProtocolCanBeEnabledIndependently(t *testing.T) {
 	}
 }
 
-func TestRenderDatabaseVersionsAndGatewayChoices(t *testing.T) {
+func TestRenderUsesOnlyPostgreSQL17AndGatewayChoices(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Database.Version = "15"
 	cfg.Network.Gateway = contracts.GatewayKong
-	out, err := Project(Input{Slug: "pg15-kong", APIPort: 18002, Configuration: cfg})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.Compose, "supabase/postgres:15.8.1.085") || !strings.Contains(out.Compose, "kong/kong:3.9.3") || !strings.Contains(out.Compose, "127.0.0.1:18002:8000") {
-		t.Fatal("Postgres 15/Kong selection incorrect")
+	if _, err := Project(Input{Slug: "legacy-pg15", APIPort: 18002, Configuration: cfg}); err == nil || !strings.Contains(err.Error(), "database.version") {
+		t.Fatalf("Project() error = %v, want legacy database.version rejection", err)
 	}
 	cfg.Database.Version = "17"
 	cfg.Network.Gateway = contracts.GatewayEnvoy
 	cfg.Network.HTTPSMode = contracts.HTTPSModeCaddy
-	out, err = Project(Input{Slug: "pg17-caddy", APIPort: 18003, Configuration: cfg})
+	out, err := Project(Input{Slug: "pg17-caddy", APIPort: 18003, Configuration: cfg})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.Compose, "caddy:2.9.1") || !strings.Contains(out.Compose, "  caddy:") {
-		t.Fatal("Caddy selection incorrect")
+	if !strings.Contains(out.Compose, "supabase/postgres:17.6.1.136") || !strings.Contains(out.Compose, "caddy:2.9.1") || !strings.Contains(out.Compose, "  caddy:") {
+		t.Fatal("PostgreSQL 17/Caddy selection incorrect")
 	}
 }
 

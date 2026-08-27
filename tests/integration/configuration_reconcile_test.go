@@ -188,12 +188,12 @@ func createCustomSMTPFunctionsProject(t *testing.T, client *http.Client, baseURL
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	cfg := contracts.ProjectConfiguration{
 		General:   contracts.GeneralConfig{SupabaseVersion: "self-hosted/v0.8.0"},
-		Services:  contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true, Functions: true},
+		Services:  contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true, Realtime: true, Storage: true, Functions: true, Supavisor: true},
 		Auth:      contracts.AuthConfig{Enabled: true, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}, SMTP: contracts.SMTPConfig{Port: 587}, Mailer: acceptanceMailerConfig(), RateLimits: contracts.RateLimitConfig{EmailSent: 30, SMSSent: 30, TokenRefresh: 150, TokenVerification: 30, AnonymousUsers: 30, SignupsAndSignins: 30}, MFA: contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6}},
 		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true, Directory: "./functions"},
-		Database:  contracts.DatabaseConfig{Version: "15", MaxConnections: 100},
+		Database:  contracts.DatabaseConfig{Version: "17", MaxConnections: 100},
 		Pooler:    contracts.PoolerConfig{PoolSize: 20, MaxClientConnections: 100},
 		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},
 	}
@@ -206,7 +206,7 @@ func createCustomSMTPFunctionsProject(t *testing.T, client *http.Client, baseURL
 	cfg.Auth.SMTP.Password = contracts.SecretInput{Action: "replace", Value: acceptanceValue()}
 	cfg.Auth.SMTP.SenderEmail = "acceptance@example.test"
 	cfg.Auth.SMTP.SenderName = "Task10 Acceptance"
-	draft := contracts.ProjectDraft{Name: "Task10 Acceptance " + suffix, Slug: "task10-" + suffix, Preset: contracts.PresetCustom, Configuration: cfg}
+	draft := contracts.ProjectDraft{Name: "Task10 Acceptance " + suffix, Slug: "task10-" + suffix, Preset: contracts.PresetStandard, Configuration: cfg}
 	raw, err := json.Marshal(draft)
 	if err != nil {
 		t.Fatal(err)

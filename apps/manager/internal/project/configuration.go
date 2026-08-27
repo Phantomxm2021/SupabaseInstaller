@@ -58,7 +58,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true, Directory: "./functions"},
-		Database:  contracts.DatabaseConfig{Version: "15", MaxConnections: 100},
+		Database:  contracts.DatabaseConfig{Version: "17", MaxConnections: 100},
 		Pooler:    contracts.PoolerConfig{PoolSize: 20, MaxClientConnections: 100},
 		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},
 	}
@@ -558,6 +558,9 @@ func validateFunctions(functions contracts.FunctionsConfig, validation *Validati
 }
 
 func validateDatabase(database contracts.DatabaseConfig, validation *ValidationError) {
+	if database.Version != "17" {
+		validation.add("database.version", "must be 17; PostgreSQL 15 is no longer supported by this runtime")
+	}
 	if database.MaxConnections < 1 || database.MaxConnections > 100000 {
 		validation.add("database.maxConnections", "must be between 1 and 100000")
 	}

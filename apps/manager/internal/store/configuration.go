@@ -417,6 +417,73 @@ func (s *Store) ResetLegacyAuthConfigurations(ctx context.Context, defaults cont
 	return updated, nil
 }
 
+// MigrateFailedPostgreSQL15Configurations permanently advances only failed
+// project drafts to the single PostgreSQL 17 runtime. A project that is still
+// running is intentionally never rewritten: moving an existing PostgreSQL 15
+// data directory to PostgreSQL 17 requires the official upgrade workflow, not
+// a Manager configuration mutation.
+func (s *Store) MigrateFailedPostgreSQL15Configurations(ctx context.Context) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT p.id, p.config_revision, c.config_json
+FROM projects AS p
+JOIN project_configs AS c
+  ON c.project_id=p.id AND c.section='aggregate' AND c.revision=p.config_revision
+WHERE p.status=?`, contracts.ProjectStatusFailed)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	type candidate struct {
+		id       string
+		revision int64
+		config   contracts.ProjectConfiguration
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var item candidate
+		var raw string
+		if err := rows.Scan(&item.id, &item.revision, &raw); err != nil {
+			return 0, err
+		}
+		if err := json.Unmarshal([]byte(raw), &item.config); err != nil {
+			return 0, fmt.Errorf("decode failed PostgreSQL configuration %s: %w", item.id, err)
+		}
+		if item.config.Database.Version == "15" {
+			candidates = append(candidates, item)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	updated := 0
+	for _, item := range candidates {
+		item.config.Database.Version = "17"
+		item.config.Revision = item.revision
+		payload, err := json.Marshal(redactConfiguration(item.config))
+		if err != nil {
+			return updated, err
+		}
+		if err := s.InTx(ctx, func(tx *sql.Tx) error {
+			result, err := tx.ExecContext(ctx, `UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=?`, string(payload), item.id, item.revision)
+			if err != nil {
+				return err
+			}
+			count, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if count != 1 {
+				return ErrNotFound
+			}
+			return updateCanonicalProjectionTx(ctx, tx, item.id, item.config, time.Now())
+		}); err != nil {
+			return updated, err
+		}
+		updated++
+	}
+	return updated, nil
+}
+
 func hasMailerTemplateBodies(mailer contracts.MailerConfig) bool {
 	templates := []contracts.EmailTemplateConfig{
 		mailer.Templates.Confirmation, mailer.Templates.Invite, mailer.Templates.MagicLink,

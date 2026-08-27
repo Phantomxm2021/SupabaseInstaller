@@ -969,7 +969,7 @@ export function defaultConfiguration(
       variables: [],
     },
     database: {
-      version: "15",
+      version: "17",
       directPort: false,
       directPortNumber: 0,
       maxConnections: 100,

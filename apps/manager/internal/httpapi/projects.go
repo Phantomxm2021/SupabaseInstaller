@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -74,7 +75,12 @@ func (handlers projectHandlers) retry(response http.ResponseWriter, request *htt
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 		defer cancel()
-		_, _ = handlers.options.Installer.Run(ctx, found, retryOperation)
+		if _, runErr := handlers.options.Installer.Run(ctx, found, retryOperation); runErr != nil {
+			// The durable operation remains the source of truth for the UI, but
+			// a structured record is essential when a retry fails before an
+			// operator can open its detail panel.
+			slog.Error("project retry failed", "project_id", found.ID, "operation_id", retryOperation.ID, "error", runErr)
+		}
 	}()
 	writeJSON(response, http.StatusAccepted, map[string]string{"projectId": found.ID, "operationId": retryOperation.ID})
 }

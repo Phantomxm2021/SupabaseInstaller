@@ -11,6 +11,9 @@ import (
 
 func TestDefaultConfiguration(t *testing.T) {
 	got := DefaultConfiguration(contracts.PresetLightweight)
+	if got.Database.Version != "17" {
+		t.Fatalf("database version = %q, want the single supported PostgreSQL 17 runtime", got.Database.Version)
+	}
 	if got.Pooler.TransactionPort != 0 || got.Pooler.SessionPort != 0 {
 		t.Fatalf("manager-owned pooler ports = %d/%d, want zero create defaults", got.Pooler.TransactionPort, got.Pooler.SessionPort)
 	}
@@ -25,6 +28,16 @@ func TestDefaultConfiguration(t *testing.T) {
 	}
 	if got.Auth.MFA != (contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6}) {
 		t.Fatalf("unexpected Auth MFA defaults: %#v", got.Auth.MFA)
+	}
+}
+
+func TestConfigurationRejectsLegacyPostgreSQL15(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Database.Version = "15"
+	err := ValidateConfiguration(cfg)
+	var validation *ValidationError
+	if !errors.As(err, &validation) || validation.Fields["database.version"] == "" {
+		t.Fatalf("ValidateConfiguration() error = %v, want database.version validation error", err)
 	}
 }
 

@@ -63,6 +63,11 @@ func main() {
 	} else if count > 0 {
 		slog.Info("reset legacy authentication configuration", "projects", count)
 	}
+	if count, err := configurationService.MigrateFailedPostgreSQL15Configurations(context.Background()); err != nil {
+		slog.Error("migrate failed PostgreSQL 15 configurations", "error", err)
+	} else if count > 0 {
+		slog.Info("migrated failed PostgreSQL 15 configurations", "projects", count)
+	}
 	if err := configurationManager.Resume(context.Background(), projects.Get); err != nil {
 		slog.Error("resume configuration operations failed", "error", err)
 	}

@@ -726,7 +726,7 @@ func baseConfig() contracts.ProjectConfiguration {
 		Services: contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true, Storage: true, Functions: true},
 		Auth:     contracts.AuthConfig{Enabled: true, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}},
 		Storage:  contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
-		Database: contracts.DatabaseConfig{Version: "15", MaxConnections: 100},
+		Database: contracts.DatabaseConfig{Version: "17", MaxConnections: 100},
 		Network:  contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal, APIPort: 18001},
 	}
 }
