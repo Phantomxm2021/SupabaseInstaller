@@ -34,6 +34,13 @@ it('does not render a sidebar on the projects landing page', () => {
   expect(screen.queryByRole('button', { name: /sidebar/i })).not.toBeInTheDocument()
 })
 
+it.each(['/projects/new', '/projects/bee/configuration'])('does not render a sidebar during %s', (path) => {
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><AppShell /></MemoryRouter></QueryClientProvider>)
+
+  expect(document.querySelector('[data-slot="sidebar"]')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /sidebar/i })).not.toBeInTheDocument()
+})
+
 it('provides a focusable sidebar trigger for narrow screens', () => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
@@ -64,7 +71,7 @@ it('keeps Sidebar and SidebarInset as direct provider children', () => {
 it('renders project navigation in the single global Sidebar on project routes', () => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
-  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/configuration?section=services']}><AppShell /></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/overview']}><AppShell /></MemoryRouter></QueryClientProvider>)
   const sidebar = document.querySelector('[data-slot="sidebar"][data-state]')
   expect(document.querySelectorAll('[data-slot="sidebar"]')).toHaveLength(1)
   expect(sidebar).toHaveAttribute('data-state', 'collapsed')
@@ -78,7 +85,7 @@ it('renders project navigation in the single global Sidebar on project routes', 
   expect(within(projectNavigation).getAllByRole('link')).toHaveLength(expectedLinks.length)
   for (const [name, href] of expectedLinks) expect(within(projectNavigation).getByRole('link', { name })).toHaveAttribute('href', href)
   expect(within(projectNavigation).getByRole('link', { name: 'Project Overview' })).toHaveClass('primary-sidebar-menu-button')
-  expect(within(projectNavigation).getByRole('link', { name: 'Project Settings' })).toHaveAttribute('aria-current', 'page')
+  expect(within(projectNavigation).getByRole('link', { name: 'Project Overview' })).toHaveAttribute('aria-current', 'page')
   expect(new Set(Array.from(within(projectNavigation).getAllByRole('link')).map((link) => link.getAttribute('href'))).size).toBe(expectedLinks.length)
 })
 
@@ -152,7 +159,6 @@ it('opens the header branch menu with the current local main branch selected', a
 
 it.each([
   ['/projects/bee/overview', 'Project Overview'],
-  ['/projects/bee/configuration', 'Project Settings'],
   ['/projects/bee/authentication/emails', 'Authentication'],
 ] as const)('marks only the canonical active link for %s', (path, activeLabel) => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
@@ -172,10 +178,8 @@ it.each(['/projects', '/projects/new', '/settings'])('does not render project na
 })
 
 it.each([
-  ['/projects/bee/configuration', 'Project Settings'],
-  ['/projects/bee/configuration?section=unknown', 'Project Settings'],
   ['/projects/bee/authentication/sign-in-providers', 'Authentication'],
-] as const)('highlights the canonical configuration section for %s', (path, activeLabel) => {
+] as const)('highlights the canonical project section for %s', (path, activeLabel) => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><AppShell /></MemoryRouter></QueryClientProvider>)

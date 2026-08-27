@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { OperationPanel } from './OperationPanel'
 
@@ -14,6 +15,26 @@ it('shows the failed step and offers recovery actions', async () => {
   expect(screen.getByRole('button', { name: 'Rollback' })).toBeEnabled()
   expect(screen.getByRole('progressbar')).toHaveAttribute('data-slot', 'progress')
   expect(screen.getByRole('status')).toHaveTextContent('Start Auth')
+})
+
+it('deletes a failed installation with its data and returns to projects without a confirmation dialog', async () => {
+  const requests: Array<{ path: string; method: string; body?: string }> = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input)
+    requests.push({ path, method: init?.method ?? 'GET', body: init?.body as string | undefined })
+    if (init?.method === 'DELETE') return new Response(null, { status: 204 })
+    return new Response(JSON.stringify({ id: 'op-delete', projectId: 'bee', type: 'CREATE', status: 'FAILED', currentStep: 'START_AUTH', progress: 70, errorMessage: 'Auth unhealthy' }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }))
+  vi.stubGlobal('EventSource', class { close() {} addEventListener() {} } as unknown as typeof EventSource)
+  function Location() { return <output data-testid="location">{useLocation().pathname}</output> }
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/new']}><Routes><Route path="*" element={<><Location /><OperationPanel operationId="op-delete" projectId="bee" projectName="Bee" /></>} /></Routes></MemoryRouter></QueryClientProvider>)
+
+  await screen.findByText('Auth unhealthy')
+  await user.click(screen.getByRole('button', { name: 'Delete project' }))
+  await waitFor(() => expect(requests).toContainEqual({ path: '/api/projects/bee', method: 'DELETE', body: JSON.stringify({ mode: 'data', confirmation: 'Bee' }) }))
+  await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/projects'))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
 it('awaits project invalidation and navigates exactly once with the operation project id', async () => {

@@ -35,6 +35,9 @@ export function AppShell() {
   const projectId = projectMatch?.[1]
   const isProjectRoute = Boolean(projectId) && projectId !== 'new'
   const isProjectsLanding = location.pathname === '/projects'
+  const isProjectCreation = location.pathname === '/projects/new'
+  const isProjectConfiguration = isProjectRoute && location.pathname.endsWith('/configuration')
+  const showSidebar = !isProjectsLanding && !isProjectCreation && !isProjectConfiguration
   const projects = useQuery({
     queryKey: ['projects'],
     queryFn: () => apiFetch<{ projects: Project[] }>('/api/projects'),
@@ -54,7 +57,7 @@ export function AppShell() {
   })
   return (
       <SidebarProvider defaultOpen={false}>
-      {!isProjectsLanding && <Sidebar collapsible="icon" className="primary-sidebar">
+      {showSidebar && <Sidebar collapsible="icon" className="primary-sidebar">
           <SidebarContent>
             {!isProjectRoute && <nav aria-label="Main navigation">
               <SidebarMenu>
@@ -90,7 +93,7 @@ export function AppShell() {
       </Sidebar>}
       <SidebarInset>
         <header className="topbar" aria-label="Dashboard header">
-          {!isProjectsLanding && <ResponsiveSidebarTrigger />}
+          {showSidebar && <ResponsiveSidebarTrigger />}
           <div className="topbar-left">
             <span className="topbar-logo" aria-hidden="true"><Database size={18} /></span>
             {isProjectRoute && <><span className="topbar-slash" aria-hidden="true" /><DropdownMenu onOpenChange={(open) => { if (!open) setProjectSearch('') }}><DropdownMenuTrigger className="topbar-project-trigger" aria-label="Show projects"><Database /><span>{activeProject?.name ?? projectId}</span><ChevronsUpDown /></DropdownMenuTrigger><DropdownMenuContent className="topbar-menu topbar-project-menu" sideOffset={8} align="start"><label className="topbar-project-search"><Search /><input aria-label="Find project" autoFocus value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Find project..." /></label>{visibleProjects.map((project) => <DropdownMenuItem key={project.id} render={<Link to={`/projects/${project.id}/overview`} />} className="topbar-menu-item" data-current={project.id === projectId || undefined}><span>{project.name}</span>{project.id === projectId && <span className="topbar-menu-current">✓</span>}</DropdownMenuItem>)}<DropdownMenuSeparator /><DropdownMenuItem render={<Link to="/projects/new" />} className="topbar-menu-item topbar-menu-create"><Plus /><span>New project</span></DropdownMenuItem></DropdownMenuContent></DropdownMenu><span className="topbar-slash" aria-hidden="true" /><DropdownMenu><DropdownMenuTrigger className="topbar-project-trigger topbar-branch-trigger" aria-label="Show branches"><span>main</span><Badge variant="outline">Local</Badge><ChevronsUpDown /></DropdownMenuTrigger><DropdownMenuContent className="topbar-menu topbar-branch-menu" sideOffset={8} align="start"><DropdownMenuRadioGroup value="main"><DropdownMenuRadioItem value="main" className="topbar-menu-item"><span>main</span><Badge variant="outline">Local</Badge></DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent></DropdownMenu></>}
