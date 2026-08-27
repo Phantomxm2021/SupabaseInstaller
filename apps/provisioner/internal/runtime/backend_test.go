@@ -22,7 +22,7 @@ func TestStartRunsDatabaseBeforeDependentServices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lifecycle() error = %v", err)
 	}
-	if strings.Join(runner.calls, ",") != "db,services:auth|rest|meta|studio|api-gw" {
+	if strings.Join(runner.calls, ",") != "db,sync-db-roles,services:auth|rest|meta|studio|api-gw" {
 		t.Fatalf("lifecycle calls = %#v", runner.calls)
 	}
 }
@@ -108,6 +108,10 @@ type recordingRunner struct{ calls []string }
 
 func (runner *recordingRunner) UpDatabase(context.Context, compose.ProjectRef) error {
 	runner.calls = append(runner.calls, "db")
+	return nil
+}
+func (runner *recordingRunner) SynchronizeDatabaseRolePasswords(context.Context, compose.ProjectRef) error {
+	runner.calls = append(runner.calls, "sync-db-roles")
 	return nil
 }
 func (runner *recordingRunner) ResetDatabaseConfig(context.Context, compose.ProjectRef) error {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"supabase-manager/apps/provisioner/internal/redact"
@@ -50,22 +51,96 @@ type Runner struct {
 	executor Executor
 }
 
-// RotateDatabasePassword changes the postgres role using fixed argv and psql
-// variables. Neither password is interpolated into a shell command or output.
+var internalDatabaseRoles = []string{
+	"authenticator",
+	"pgbouncer",
+	"supabase_auth_admin",
+	"supabase_functions_admin",
+	"supabase_storage_admin",
+}
+
+// RotateDatabasePassword changes the database credential for every internal
+// service role, not only postgres. Auth, Storage, REST and Supavisor all use
+// POSTGRES_PASSWORD, so leaving their roles on the old credential makes a
+// seemingly successful rotation break the runtime on its next restart.
 func (r *Runner) RotateDatabasePassword(ctx context.Context, project ProjectRef, oldPassword, newPassword string) error {
 	if oldPassword == "" || newPassword == "" {
 		return fmt.Errorf("database password values are required")
 	}
 	_ = oldPassword // local postgres socket authentication is used; never put secrets in argv
-	args := append(r.baseArgs(project), "exec", "-T", "db", "psql", "-U", "postgres", "-d", "postgres")
+	return r.setInternalDatabaseRolePasswords(ctx, project, newPassword)
+}
+
+// SynchronizeDatabaseRolePasswords makes database startup deterministic. The
+// upstream PostgreSQL image creates internal roles during its own bootstrap,
+// but an init-script-only password change can be skipped by a partial or
+// previously failed bootstrap. Once db is healthy, set every service role from
+// the rendered runtime environment before any dependent service is started.
+func (r *Runner) SynchronizeDatabaseRolePasswords(ctx context.Context, project ProjectRef) error {
+	password, err := requiredDotEnvValue(project.EnvFile, "POSTGRES_PASSWORD")
+	if err != nil {
+		return err
+	}
+	return r.setInternalDatabaseRolePasswords(ctx, project, password)
+}
+
+func (r *Runner) setInternalDatabaseRolePasswords(ctx context.Context, project ProjectRef, password string) error {
+	if password == "" {
+		return fmt.Errorf("database password is required")
+	}
+	// In the official PG17 image `postgres` intentionally is not a superuser.
+	// The protected Supabase service roles can only be changed by
+	// `supabase_admin` over the local container socket.
+	args := append(r.baseArgs(project), "exec", "-T", "db", "psql", "-v", "ON_ERROR_STOP=1", "-U", "supabase_admin", "-d", "postgres")
 	if inputRunner, ok := r.executor.(InputExecutor); ok {
-		statement := "ALTER ROLE postgres PASSWORD '" + strings.ReplaceAll(newPassword, "'", "''") + "';\n"
+		statement := internalRolePasswordStatement(password)
 		if output, err := inputRunner.RunInput(ctx, "docker", args, nil, []byte(statement)); err != nil {
-			return fmt.Errorf("database password update failed; output length=%d", len(output))
+			return fmt.Errorf("database role password synchronization failed; output length=%d", len(output))
 		}
 		return nil
 	}
 	return errors.New("secure database password input is unavailable")
+}
+
+func internalRolePasswordStatement(password string) string {
+	quotedPassword := "'" + strings.ReplaceAll(password, "'", "''") + "'"
+	roles := make([]string, 0, len(internalDatabaseRoles))
+	for _, role := range internalDatabaseRoles {
+		roles = append(roles, "'"+strings.ReplaceAll(role, "'", "''")+"'")
+	}
+	return "SELECT format('ALTER ROLE %I WITH PASSWORD %L;', rolname, " + quotedPassword + ")\n" +
+		"FROM pg_roles\n" +
+		"WHERE rolname IN (" + strings.Join(roles, ", ") + ")\n" +
+		"\\gexec\n"
+}
+
+func requiredDotEnvValue(path, key string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("runtime environment file is required to synchronize database roles")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read runtime environment for database role synchronization: %w", err)
+	}
+	for _, line := range strings.Split(string(contents), "\n") {
+		name, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(name) != key {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if strings.HasPrefix(value, "\"") {
+			unquoted, unquoteErr := strconv.Unquote(value)
+			if unquoteErr != nil {
+				return "", fmt.Errorf("parse %s in runtime environment: %w", key, unquoteErr)
+			}
+			value = unquoted
+		}
+		if value == "" {
+			return "", fmt.Errorf("%s is empty in runtime environment", key)
+		}
+		return value, nil
+	}
+	return "", fmt.Errorf("%s is missing from runtime environment", key)
 }
 
 // composeServices is the closed set emitted by the pinned renderer. Reconcile

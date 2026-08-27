@@ -3,6 +3,8 @@ package compose
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -34,14 +36,54 @@ func TestRotateDatabasePasswordKeepsSecretsOutOfArgv(t *testing.T) {
 			t.Fatalf("secret leaked into argv: %v", executor.args)
 		}
 	}
+	if !containsArgument(executor.args, "supabase_admin") {
+		t.Fatalf("role synchronization must use the official superuser: %v", executor.args)
+	}
 	if !strings.Contains(string(executor.input), "new-sentinel") {
 		t.Fatal("new password was not supplied through controlled SQL input")
 	}
 }
 
+func containsArgument(arguments []string, expected string) bool {
+	for _, argument := range arguments {
+		if argument == expected {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRotateDatabasePasswordRequiresControlledInputExecutor(t *testing.T) {
 	if err := NewRunner(&fakeExecutor{}).RotateDatabasePassword(context.Background(), ProjectRef{Slug: "bee", Dir: "/tmp/project"}, "old", "new"); err == nil || !strings.Contains(err.Error(), "secure database password input") {
 		t.Fatalf("rotation without controlled input error = %v", err)
+	}
+}
+
+func TestSynchronizeDatabaseRolePasswordsUsesRenderedDatabasePassword(t *testing.T) {
+	directory := t.TempDir()
+	envFile := filepath.Join(directory, ".env")
+	if err := os.WriteFile(envFile, []byte("POSTGRES_PASSWORD=runtime-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	executor := &inputCaptureExecutor{}
+	runner := NewRunner(executor)
+	project := ProjectRef{Slug: "bee", Dir: directory, ComposeFile: filepath.Join(directory, "docker-compose.yml"), EnvFile: envFile}
+	if err := runner.SynchronizeDatabaseRolePasswords(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range executor.args {
+		if strings.Contains(arg, "runtime-secret") {
+			t.Fatalf("secret leaked into argv: %v", executor.args)
+		}
+	}
+	input := string(executor.input)
+	for _, role := range []string{"authenticator", "pgbouncer", "supabase_auth_admin", "supabase_functions_admin", "supabase_storage_admin"} {
+		if !strings.Contains(input, role) {
+			t.Fatalf("password synchronization omitted role %q: %s", role, input)
+		}
+	}
+	if !strings.Contains(input, "runtime-secret") {
+		t.Fatal("rendered database password was not supplied through controlled SQL input")
 	}
 }
 
