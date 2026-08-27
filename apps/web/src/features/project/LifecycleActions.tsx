@@ -36,6 +36,15 @@ export function LifecycleActions({ project }: { project: Project }) {
     onMutate: (action) => setMessage(actionLabels[action]),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project', project.id] }),
   })
+  const retry = useMutation({
+    mutationFn: () => apiFetch<{ projectId: string; operationId: string }>(`/api/projects/${project.id}/retry`, { method: 'POST' }),
+    onMutate: () => setMessage('Retrying project…'),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['project', project.id] })
+      await queryClient.invalidateQueries({ queryKey: ['projects'] })
+      setMessage('Retry queued')
+    },
+  })
   const remove = useMutation({
     mutationFn: ({ mode, confirmation }: { mode: 'runtime' | 'data'; confirmation: string }) => apiFetch(`/api/projects/${project.id}`, { method: 'DELETE', body: JSON.stringify({ mode, confirmation }) }),
     onSuccess: async () => {
@@ -49,6 +58,7 @@ export function LifecycleActions({ project }: { project: Project }) {
   return (
     <div className="lifecycle-wrap">
       <div className="lifecycle-actions">
+        {project.status === 'FAILED' && <Button variant="secondary" aria-label="Retry project" disabled={retry.isPending} onClick={() => retry.mutate()}><RotateCw className="size-4" /> {retry.isPending ? 'Retrying…' : 'Retry project'}</Button>}
         {project.status === 'STOPPED' && <Button disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('start')}><Play className="size-4" /> {lifecycle.isPending ? 'Starting…' : 'Start project'}</Button>}
         {['RUNNING', 'DEGRADED'].includes(project.status) && <>
           <Button variant="secondary" disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('stop')}><Pause className="size-4" /> Stop</Button>
@@ -57,7 +67,7 @@ export function LifecycleActions({ project }: { project: Project }) {
         <Button variant="destructive" type="button" onClick={() => setDeleteOpen(true)}><Trash2 className="size-4" /> Delete</Button>
       </div>
       {message && <span className="action-status" role="status">{message}</span>}
-      {(lifecycle.error || remove.error) && <Alert variant="destructive">{(lifecycle.error ?? remove.error)?.message}</Alert>}
+      {(lifecycle.error || retry.error || remove.error) && <Alert variant="destructive">{(lifecycle.error ?? retry.error ?? remove.error)?.message}</Alert>}
       <DeleteProjectDialog project={project} open={deleteOpen} busy={remove.isPending} onClose={() => setDeleteOpen(false)} onDelete={(mode, confirmation) => remove.mutate({ mode, confirmation })} />
     </div>
   )

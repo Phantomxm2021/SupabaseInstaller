@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { ProjectsPage } from './ProjectsPage'
 
@@ -46,4 +47,22 @@ it('renders host CPU, memory, and disk metrics from the resources endpoint', asy
   expect(await screen.findByText('31%')).toBeVisible()
   expect(screen.getByText(/6\.2 GB \/ 15\.5 GB/)).toBeVisible()
   expect(screen.getByText(/84\.0 GB \/ 200\.0 GB/)).toBeVisible()
+})
+
+it('retries a failed project from the project list', async () => {
+  const requests: Array<{ path: string; method?: string }> = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input)
+    requests.push({ path, method: init?.method })
+    if (init?.method === 'POST') return new Response(JSON.stringify({ projectId: 'bee', operationId: 'retry-1' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+    if (path.endsWith('/api/host/resources')) return new Response(JSON.stringify({ cpuPercent: 0, cpuCores: 4, memoryUsedBytes: 1, memoryTotalBytes: 2, diskUsedBytes: 1, diskTotalBytes: 2 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ projects: [{ id: 'bee', name: 'Bee', domain: 'bee.example.com', status: 'FAILED', health: 'UNKNOWN', supabaseVersion: 'self-hosted/v0.8.0' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter><ProjectsPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.click(await screen.findByRole('button', { name: 'Retry Bee' }))
+
+  await waitFor(() => expect(requests).toContainEqual({ path: '/api/projects/bee/retry', method: 'POST' }))
+  expect(await screen.findByRole('status')).toHaveTextContent('Retry queued')
 })
