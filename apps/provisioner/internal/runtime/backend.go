@@ -101,3 +101,15 @@ func (backend *Backend) Inspect(ctx context.Context, request contracts.InspectPr
 	}
 	return contracts.InspectProjectResponse{ProjectID: request.ProjectID, Health: report.Health, Services: report.Services, CheckedAt: report.CheckedAt}, nil
 }
+
+// HostResources exposes only capacity/usage metrics needed by the Manager
+// landing page. No project secrets or rendered files are returned.
+func (backend *Backend) HostResources(ctx context.Context) (contracts.HostResources, error) {
+	inspector, ok := backend.inspector.(interface {
+		HostResources(context.Context, string) (contracts.HostResources, error)
+	})
+	if !ok {
+		return contracts.HostResources{}, fmt.Errorf("host resource inspection is unavailable")
+	}
+	return inspector.HostResources(ctx, backend.projectFS.BasePath())
+}

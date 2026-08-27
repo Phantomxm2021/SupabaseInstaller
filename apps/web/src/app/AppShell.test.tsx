@@ -12,7 +12,7 @@ it('signs out through the API', async () => {
     return new Response(null, { status: 204 })
   }))
   const user = userEvent.setup()
-  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/settings']}><AppShell /></MemoryRouter></QueryClientProvider>)
 
   await user.click(screen.getByRole('button', { name: /account/i }))
   await user.click(await screen.findByRole('menuitem', { name: /sign out/i }))
@@ -20,18 +20,18 @@ it('signs out through the API', async () => {
   expect(method).toBe('DELETE')
 })
 
-it('shows Projects in global navigation without a duplicate New Project action', async () => {
+it('keeps the projects landing page free of a duplicate sidebar action', async () => {
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
 
-  const navigation = screen.getByRole('navigation', { name: /main navigation/i })
-  expect(navigation).toBeInTheDocument()
-  const projects = screen.getByRole('link', { name: /projects/i })
-  expect(projects).toBeInTheDocument()
-  expect(projects).toHaveAttribute('aria-current', 'page')
-  expect(projects).toHaveAttribute('data-active', '')
+  expect(screen.queryByRole('navigation', { name: /main navigation/i })).not.toBeInTheDocument()
   expect(screen.queryByRole('link', { name: /new project/i })).not.toBeInTheDocument()
-  await userEvent.setup().click(screen.getByRole('button', { name: /account/i }))
-  expect(await screen.findByRole('menuitem', { name: /manager settings/i })).toHaveAttribute('href', '/settings')
+})
+
+it('does not render a sidebar on the projects landing page', () => {
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
+
+  expect(document.querySelector('[data-slot="sidebar"]')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /sidebar/i })).not.toBeInTheDocument()
 })
 
 it('provides a focusable sidebar trigger for narrow screens', () => {
@@ -54,7 +54,7 @@ it('opens the mobile Sheet and exposes the named navigation landmark', async () 
 })
 
 it('keeps Sidebar and SidebarInset as direct provider children', () => {
-  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><AppShell /></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/overview']}><AppShell /></MemoryRouter></QueryClientProvider>)
   const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]')
   expect(wrapper?.children).toHaveLength(2)
   expect(wrapper?.children[0]).toHaveAttribute('data-slot', 'sidebar')
@@ -99,7 +99,7 @@ it('uses the same global Sidebar Sheet for project navigation on mobile', async 
 it('starts the desktop sidebar collapsed so it can expand as an overlay on hover', () => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
-  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/overview']}><AppShell /></MemoryRouter></QueryClientProvider>)
   expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument()
 })
 
@@ -151,7 +151,6 @@ it('opens the header branch menu with the current local main branch selected', a
 })
 
 it.each([
-  ['/projects', 'Projects'],
   ['/projects/bee/overview', 'Project Overview'],
   ['/projects/bee/configuration', 'Project Settings'],
   ['/projects/bee/authentication/emails', 'Authentication'],

@@ -68,6 +68,14 @@ func (c *Client) Inspect(ctx context.Context, input contracts.InspectProjectRequ
 	return output, nil
 }
 
+func (c *Client) HostResources(ctx context.Context) (contracts.HostResources, error) {
+	var output contracts.HostResources
+	if err := c.get(ctx, "/internal/v1/host/resources", &output); err != nil {
+		return contracts.HostResources{}, err
+	}
+	return output, nil
+}
+
 func (c *Client) Reconcile(ctx context.Context, input contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
 	var output contracts.ReconcileProjectResponse
 	if err := c.post(ctx, "/internal/v1/projects/reconcile", input, &output); err != nil {
@@ -167,6 +175,26 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 			}
 			return fmt.Errorf("decode provisioner response: %w", err)
 		}
+	}
+	return nil
+}
+
+func (c *Client) get(ctx context.Context, path string, output any) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return fmt.Errorf("create provisioner request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	response, err := c.http.Do(request)
+	if err != nil {
+		return fmt.Errorf("call provisioner: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("provisioner returned %s", response.Status)
+	}
+	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
+		return fmt.Errorf("decode provisioner response: %w", err)
 	}
 	return nil
 }

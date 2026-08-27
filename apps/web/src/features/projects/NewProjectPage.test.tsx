@@ -4,6 +4,18 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { NewProjectPage } from './NewProjectPage'
 
+it('does not render the setup tab navigation while creating a project', () => {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}>
+      <MemoryRouter><NewProjectPage /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+
+  expect(screen.queryByRole('tab', { name: /1\. Basic/ })).not.toBeInTheDocument()
+  expect(screen.getByText('Step 1 of 6 · Basic')).toBeVisible()
+  expect(screen.getByRole('button', { name: /Continue/ })).toBeVisible()
+})
+
 it('installs Lightweight after name, domain, and site URL', async () => {
   let createBody: Record<string, unknown> = {}
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

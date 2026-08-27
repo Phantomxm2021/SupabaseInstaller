@@ -18,6 +18,10 @@ type Backend interface {
 	Reconcile(ctx context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error)
 }
 
+type hostResourcesBackend interface {
+	HostResources(context.Context) (contracts.HostResources, error)
+}
+
 type Options struct {
 	ManagerToken string
 	ProjectFS    *projectfs.Root
@@ -38,10 +42,25 @@ func New(options Options) http.Handler {
 	private.HandleFunc("POST /internal/v1/projects/rotate-database-password", service.rotateDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/rollback-database-password", service.rollbackDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/confirm-database-password-rotation", service.confirmDatabasePasswordRotation)
+	private.HandleFunc("GET /internal/v1/host/resources", service.hostResources)
 	root := http.NewServeMux()
 	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
 	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
 	return root
+}
+
+func (s *server) hostResources(response http.ResponseWriter, request *http.Request) {
+	backend, ok := s.backend.(hostResourcesBackend)
+	if !ok {
+		writeError(response, http.StatusServiceUnavailable, "BACKEND_UNAVAILABLE", "Host resource inspection is unavailable")
+		return
+	}
+	resources, err := backend.HostResources(request.Context())
+	if err != nil {
+		writeError(response, http.StatusServiceUnavailable, "HOST_RESOURCES_UNAVAILABLE", "Host resource inspection failed")
+		return
+	}
+	writeJSON(response, http.StatusOK, resources)
 }
 
 func (s *server) lifecycle(response http.ResponseWriter, request *http.Request) {

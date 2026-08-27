@@ -38,6 +38,18 @@ type Inspector struct {
 	now    func() time.Time
 }
 
+// HostResources delegates the read-only host snapshot to the Docker-backed
+// source while keeping the existing project health interface unchanged.
+func (i *Inspector) HostResources(ctx context.Context, projectRoot string) (contracts.HostResources, error) {
+	source, ok := i.source.(interface {
+		HostResources(context.Context, string) (contracts.HostResources, error)
+	})
+	if !ok {
+		return contracts.HostResources{}, fmt.Errorf("host resource inspection is unavailable")
+	}
+	return source.HostResources(ctx, projectRoot)
+}
+
 const projectProbeTimeout = 10 * time.Second
 
 func NewInspector(source Source) *Inspector {

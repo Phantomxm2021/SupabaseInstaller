@@ -147,6 +147,19 @@ type InspectProjectResponse struct {
 	CheckedAt time.Time      `json:"checkedAt"`
 }
 
+// HostResources is a redacted, read-only snapshot used by the projects
+// landing page. It contains capacity/usage values only; no runtime secrets or
+// rendered project configuration crosses the provisioner boundary.
+type HostResources struct {
+	CPUPercent       float64   `json:"cpuPercent"`
+	CPUCores         int       `json:"cpuCores"`
+	MemoryUsedBytes  uint64    `json:"memoryUsedBytes"`
+	MemoryTotalBytes uint64    `json:"memoryTotalBytes"`
+	DiskUsedBytes    uint64    `json:"diskUsedBytes"`
+	DiskTotalBytes   uint64    `json:"diskTotalBytes"`
+	CollectedAt      time.Time `json:"collectedAt"`
+}
+
 type ErrorEnvelope struct {
 	Error APIError `json:"error"`
 }

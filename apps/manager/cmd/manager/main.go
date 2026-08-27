@@ -81,6 +81,7 @@ func main() {
 	api := httpapi.NewRouter(httpapi.RouterOptions{
 		Auth:          httpapi.AuthOptions{Service: adminAuth, PublicOrigin: cfg.PublicOrigin, SecureCookies: cfg.SecureCookies},
 		Projects:      httpapi.ProjectOptions{Projects: projects, AuthAdmin: authAdmin, Installer: installer, Lifecycle: lifecycleManager},
+		HostResources: provisionerClient,
 		Operations:    operations,
 		Configuration: configurationManager,
 	})

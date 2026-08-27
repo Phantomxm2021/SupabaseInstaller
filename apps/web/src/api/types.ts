@@ -364,6 +364,16 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface HostResources {
+  cpuPercent: number;
+  cpuCores: number;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+  collectedAt: string;
+}
+
 export interface Operation {
   id: string;
   projectId: string;

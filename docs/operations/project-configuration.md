@@ -112,8 +112,9 @@ rollback remain auditable.
 
 ## Reverse proxy expectations
 
-Proxy only the single Manager URL. Use the exact external origin in
-`PUBLIC_ORIGIN`, enable secure cookies for HTTPS, preserve forwarding headers,
-and keep Provisioner on the internal Compose network. Runtime service ports are
-host-bound according to the Network section and should not be independently
-published by a proxy.
+The Manager control plane and each project Supabase host use separate proxy
+entries. Set `PUBLIC_ORIGIN` to the Manager URL, keep Provisioner private, and
+route each project's public domain to its loopback-bound Studio and API Gateway
+ports. Runtime service ports must not be independently published. See the
+[project host Nginx and Cloudflare guide](project-host-nginx.md) for the exact
+path routing, WebSocket headers, TLS, DNS, and validation procedure.

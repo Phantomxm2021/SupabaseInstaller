@@ -36,6 +36,12 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 
 Open `PUBLIC_ORIGIN` (by default `http://localhost:8080`). The first visit creates the administrator and displays one-time recovery codes.
 
+For a public project host behind a host-level Nginx and Cloudflare, configure
+the Manager hostname separately from each project's `General.Domain`. The
+project host requires Studio/API path routing to its allocated loopback ports;
+`PUBLIC_ORIGIN` alone does not publish project runtimes. See
+[Project Supabase host behind Nginx and Cloudflare](project-host-nginx.md).
+
 To run the disposable HTTP acceptance against an isolated Compose project,
 provide administrator credentials through the environment and run
 `SUPABASE_MANAGER_E2E_USERNAME=... SUPABASE_MANAGER_E2E_PASSWORD=... scripts/run-acceptance.sh`.

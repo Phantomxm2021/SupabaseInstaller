@@ -894,6 +894,10 @@ type Root struct {
 	hooks      runtimeHooks
 }
 
+// BasePath returns the host-mounted root that stores managed project data.
+// It is used only for read-only capacity metrics.
+func (r *Root) BasePath() string { return r.base }
+
 // runtimeHooks are intentionally private test seams for exercising crash and
 // filesystem-failure state transitions without relying on host-specific faults.
 // Production Roots leave all hooks nil and use the operating-system calls.

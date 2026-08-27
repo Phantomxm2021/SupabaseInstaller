@@ -102,6 +102,22 @@ func TestReconcileEndpointInvokesProductionBackend(t *testing.T) {
 	}
 }
 
+func TestHostResourcesEndpointReturnsReadOnlySnapshot(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &hostResourcesStub{resources: contracts.HostResources{CPUPercent: 31, CPUCores: 10, MemoryTotalBytes: 1024, DiskTotalBytes: 2048}}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/host/resources", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"cpuPercent":31`) || !strings.Contains(response.Body.String(), `"cpuCores":10`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 type serverCaptureExecutor struct{ calls [][]string }
 
 func (e *serverCaptureExecutor) Run(_ context.Context, _ string, args, _ []string) ([]byte, error) {
@@ -126,6 +142,19 @@ func (source *serverSequenceSource) Containers(context.Context, string) ([]healt
 }
 
 type reconcileStub struct{ err error }
+
+type hostResourcesStub struct{ resources contracts.HostResources }
+
+func (*hostResourcesStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
+func (*hostResourcesStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
+	return contracts.InspectProjectResponse{}, nil
+}
+func (*hostResourcesStub) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
+}
+func (stub *hostResourcesStub) HostResources(context.Context) (contracts.HostResources, error) {
+	return stub.resources, nil
+}
 
 func (s *reconcileStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
 func (s *reconcileStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
