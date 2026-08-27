@@ -219,15 +219,15 @@ func TestInitialReconcileFailureRemovesRuntimeBeforeClearingGeneration(t *testin
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err == nil {
 		t.Fatal("initial reconcile unexpectedly succeeded")
 	}
-	if len(runner.down) != 1 {
-		t.Fatalf("down calls = %d, want 1", len(runner.down))
+	if len(runner.down) != 2 {
+		t.Fatalf("down calls = %d, want startup cleanup and rollback", len(runner.down))
 	}
 	if len(runner.removed) != 0 {
 		t.Fatalf("remove-stopped calls = %#v, want none for initial failure", runner.removed)
 	}
 }
 
-func TestInitialReconcileRepairsDatabaseBeforeStartingDependents(t *testing.T) {
+func TestInitialReconcileStartsDatabaseBeforeDependents(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -237,8 +237,49 @@ func TestInitialReconcileRepairsDatabaseBeforeStartingDependents(t *testing.T) {
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
 		t.Fatalf("initial reconcile: %v", err)
 	}
-	if !equalStrings(runner.calls, []string{"db", "repair", "selected"}) {
-		t.Fatalf("runtime calls = %#v, want database repair before dependents", runner.calls)
+	if !equalStrings(runner.calls, []string{"down", "db", "selected"}) {
+		t.Fatalf("runtime calls = %#v, want clean database start before dependents", runner.calls)
+	}
+}
+
+func TestInitialRetryArchivesPartialDatabaseBeforeBootstrap(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commit, err := root.StageRuntimeFiles("bee", projectfs.RuntimeFiles{Compose: []byte("previous"), Env: []byte("previous"), FunctionsEnv: []byte("previous")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataDirectory := filepath.Join(project, "volumes", "db", "data")
+	if err := os.MkdirAll(dataDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDirectory, "PG_VERSION"), []byte("15"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial retry reconcile: %v", err)
+	}
+	if !equalStrings(runner.calls, []string{"down", "db", "selected"}) {
+		t.Fatalf("runtime calls = %#v, want stop/archive bootstrap before db", runner.calls)
+	}
+	if _, err := os.Lstat(dataDirectory); !os.IsNotExist(err) {
+		t.Fatalf("incomplete live data remains: %v", err)
+	}
+	backups, err := filepath.Glob(filepath.Join(project, "volumes", "db", "data.failed-bootstrap-*"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("database backups = %v, err=%v; want one", backups, err)
 	}
 }
 
@@ -598,10 +639,6 @@ func (r *fakeReconcileRunner) UpDatabase(context.Context, compose.ProjectRef) er
 	r.calls = append(r.calls, "db")
 	return nil
 }
-func (r *fakeReconcileRunner) RepairDatabase(context.Context, compose.ProjectRef) error {
-	r.calls = append(r.calls, "repair")
-	return nil
-}
 func (r *fakeReconcileRunner) UpServices(_ context.Context, _ compose.ProjectRef, services ...string) error {
 	r.up = append(r.up, append([]string(nil), services...))
 	return nil
@@ -612,6 +649,7 @@ func (r *fakeReconcileRunner) Restart(context.Context, compose.ProjectRef, ...st
 }
 func (r *fakeReconcileRunner) DownRuntime(_ context.Context, project compose.ProjectRef) error {
 	r.down = append(r.down, project.ComposeFile)
+	r.calls = append(r.calls, "down")
 	return r.downError
 }
 func (r *fakeReconcileRunner) Validate(_ context.Context, project compose.ProjectRef) error {

@@ -165,10 +165,16 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			return fail(rollback(err))
 		}
 		if metadata.Revision == 0 && len(previousServices) == 0 {
-			if err := backend.runner.UpDatabase(ctx, currentProject); err != nil {
+			// A project with no published revision has never completed its first
+			// bootstrap. Stop any orphaned attempt, archive its partial PGDATA,
+			// and let the pinned Postgres image run its full official init path.
+			if err := backend.runner.DownRuntime(ctx, currentProject); err != nil {
 				return fail(rollback(err))
 			}
-			if err := backend.runner.RepairDatabase(ctx, currentProject); err != nil {
+			if _, err := backend.projectFS.ArchiveIncompleteDatabase(request.Slug); err != nil {
+				return fail(rollback(err))
+			}
+			if err := backend.runner.UpDatabase(ctx, currentProject); err != nil {
 				return fail(rollback(err))
 			}
 			dependent := without(newServices, "db")

@@ -15,7 +15,6 @@ import (
 
 type LifecycleRunner interface {
 	UpDatabase(ctx context.Context, project compose.ProjectRef) error
-	RepairDatabase(ctx context.Context, project compose.ProjectRef) error
 	UpServices(ctx context.Context, project compose.ProjectRef, services ...string) error
 	Stop(ctx context.Context, project compose.ProjectRef) error
 	Restart(ctx context.Context, project compose.ProjectRef, services ...string) error
