@@ -71,11 +71,20 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 	}
 	apiPort := configuration.Network.APIPort
 
-	generated, err := orchestrator.generator.Generate()
+	generated, persisted, err := orchestrator.loadPersistedSecrets(ctx, project.ID)
 	if err != nil {
-		return orchestrator.rollback(ctx, project, current.ID, "GENERATE_SECRETS", err)
+		return orchestrator.rollback(ctx, project, current.ID, "LOAD_SECRETS", err)
+	}
+	if !persisted {
+		generated, err = orchestrator.generator.Generate()
+		if err != nil {
+			return orchestrator.rollback(ctx, project, current.ID, "GENERATE_SECRETS", err)
+		}
 	}
 	if err := orchestrator.step(ctx, current.ID, "GENERATE_SECRETS", 15, func() error {
+		if persisted {
+			return nil
+		}
 		return orchestrator.persistSecrets(ctx, project.ID, generated)
 	}); err != nil {
 		return orchestrator.rollback(ctx, project, current.ID, "GENERATE_SECRETS", err)
@@ -267,6 +276,54 @@ func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID 
 		}
 	}
 	return nil
+}
+
+// loadPersistedSecrets returns the stable project credentials created during
+// the first installation. Reconcile/retry must reuse these credentials because
+// PostgreSQL stores role passwords in its persistent data volume; generating a
+// new POSTGRES_PASSWORD on every retry makes auth, rest, and storage unable to
+// authenticate against an existing database.
+func (orchestrator *Orchestrator) loadPersistedSecrets(ctx context.Context, projectID string) (contracts.ProjectSecrets, bool, error) {
+	type secretSpec struct {
+		kind string
+		set  func(*contracts.ProjectSecrets, string)
+	}
+	specs := []secretSpec{
+		{"database-password", func(secrets *contracts.ProjectSecrets, value string) { secrets.DatabasePassword = value }},
+		{"jwt-secret", func(secrets *contracts.ProjectSecrets, value string) { secrets.JWTSecret = value }},
+		{"anon-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.AnonKey = value }},
+		{"service-role-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.ServiceRoleKey = value }},
+		{"dashboard-password", func(secrets *contracts.ProjectSecrets, value string) { secrets.DashboardPassword = value }},
+		{"secret-key-base", func(secrets *contracts.ProjectSecrets, value string) { secrets.SecretKeyBase = value }},
+		{"vault-encryption-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.VaultEncryptionKey = value }},
+		{"realtime-db-encryption-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.RealtimeDBEncryptionKey = value }},
+		{"logflare-public-access-token", func(secrets *contracts.ProjectSecrets, value string) { secrets.LogflarePublicAccessToken = value }},
+		{"logflare-private-access-token", func(secrets *contracts.ProjectSecrets, value string) { secrets.LogflarePrivateAccessToken = value }},
+		{"s3-protocol-access-key-id", func(secrets *contracts.ProjectSecrets, value string) { secrets.S3ProtocolAccessKeyID = value }},
+		{"s3-protocol-access-key-secret", func(secrets *contracts.ProjectSecrets, value string) { secrets.S3ProtocolAccessKeySecret = value }},
+		{"pooler-tenant-id", func(secrets *contracts.ProjectSecrets, value string) { secrets.PoolerTenantID = value }},
+	}
+	var result contracts.ProjectSecrets
+	found := false
+	for _, spec := range specs {
+		envelope, err := orchestrator.store.GetSecret(ctx, projectID, spec.kind)
+		if errors.Is(err, store.ErrNotFound) {
+			if found {
+				return contracts.ProjectSecrets{}, true, fmt.Errorf("persisted secret %q is unavailable", spec.kind)
+			}
+			continue
+		}
+		if err != nil {
+			return contracts.ProjectSecrets{}, false, err
+		}
+		found = true
+		plain, err := orchestrator.cipher.Decrypt(projectID, spec.kind, envelope)
+		if err != nil {
+			return contracts.ProjectSecrets{}, true, fmt.Errorf("decrypt persisted secret %q: %w", spec.kind, err)
+		}
+		spec.set(&result, string(plain))
+	}
+	return result, found, nil
 }
 
 func enabledComposeServices(services contracts.Services) []string {

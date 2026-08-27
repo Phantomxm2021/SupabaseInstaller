@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,6 +44,32 @@ func TestInstallPersistsEncryptedUniqueSecretsBeforePrepare(t *testing.T) {
 	stored, err := orchestrator.store.GetSecret(context.Background(), project.ID, "database-password")
 	if err != nil || bytes.Contains(stored.Ciphertext, []byte(provisioner.reconcile.Secrets.DatabasePassword)) {
 		t.Fatalf("stored database secret is not encrypted: %v", err)
+	}
+}
+
+func TestInstallRetryReusesPersistedDatabaseSecrets(t *testing.T) {
+	orchestrator, provisioner, project := newTestOrchestrator(t)
+	generator := &changingGenerator{}
+	orchestrator.generator = generator
+	sequence := 0
+	orchestrator.operations = operation.NewService(orchestrator.store, func() string {
+		sequence++
+		return fmt.Sprintf("operation-%d", sequence)
+	}, time.Now)
+
+	if _, err := orchestrator.Install(context.Background(), project); err != nil {
+		t.Fatalf("initial Install() error = %v", err)
+	}
+	initialPassword := provisioner.reconcile.Secrets.DatabasePassword
+
+	if _, err := orchestrator.Install(context.Background(), project); err != nil {
+		t.Fatalf("retry Install() error = %v", err)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("secret generator calls = %d, want 1", generator.calls)
+	}
+	if got := provisioner.reconcile.Secrets.DatabasePassword; got != initialPassword {
+		t.Fatalf("retry database password = %q, want persisted %q", got, initialPassword)
 	}
 }
 
@@ -212,4 +239,17 @@ type deterministicGenerator struct{}
 
 func (deterministicGenerator) Generate() (contracts.ProjectSecrets, error) {
 	return contracts.ProjectSecrets{DatabasePassword: "database-secret-value", JWTSecret: "jwt-secret-value-which-is-long-enough", AnonKey: "anon-key", ServiceRoleKey: "service-role-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}, nil
+}
+
+type changingGenerator struct{ calls int }
+
+func (generator *changingGenerator) Generate() (contracts.ProjectSecrets, error) {
+	generator.calls++
+	return contracts.ProjectSecrets{
+		DatabasePassword: fmt.Sprintf("database-secret-%d", generator.calls),
+		JWTSecret:        "jwt-secret-value-which-is-long-enough",
+		AnonKey:          "anon-key", ServiceRoleKey: "service-role-key",
+		DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base",
+		VaultEncryptionKey: "vault-key",
+	}, nil
 }
