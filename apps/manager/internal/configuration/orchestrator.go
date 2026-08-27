@@ -736,7 +736,7 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 				rolledBack = false
 			}
 		}
-		return o.fail(ctx, queued, "RECONCILE_SERVICES", errors.New("runtime reconciliation failed"), rolledBack)
+		return o.fail(ctx, queued, "RECONCILE_SERVICES", fmt.Errorf("runtime reconciliation failed: %w", reconcileErr), rolledBack)
 	}
 	if err := o.operations.CompleteStep(ctx, queued.ID, "RECONCILE_SERVICES", 70); err != nil {
 		return queued, err
@@ -745,10 +745,10 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 		return queued, err
 	}
 	if result.ProjectID != "" && result.ProjectID != currentProject.ID {
-		return o.fail(ctx, queued, "VERIFY_SERVICES", errors.New("runtime verification failed"), false)
+		return o.fail(ctx, queued, "VERIFY_SERVICES", runtimeVerificationError(result, queued.ID, currentProject.ID, snapshot.Revision, snapshot.Configuration), false)
 	}
 	if result.OperationID != queued.ID || result.ProjectID != currentProject.ID || result.Revision != snapshot.Revision || !sameServices(result.EnabledServices, enabledServices(snapshot.Configuration)) {
-		return o.fail(ctx, queued, "VERIFY_SERVICES", errors.New("runtime verification failed"), false)
+		return o.fail(ctx, queued, "VERIFY_SERVICES", runtimeVerificationError(result, queued.ID, currentProject.ID, snapshot.Revision, snapshot.Configuration), false)
 	}
 	if err := o.operations.CompleteStep(ctx, queued.ID, "VERIFY_SERVICES", 85); err != nil {
 		return queued, err
@@ -872,10 +872,6 @@ func enabledServices(cfg contracts.ProjectConfiguration) []string {
 	add("db", cfg.Services.Database)
 	add("api-gw", cfg.Services.Gateway)
 	add("auth", cfg.Services.Auth)
-	// The Provisioner creates auth-templates alongside auth so GoTrue can serve
-	// managed mail templates. It is part of the rendered Compose service set and
-	// therefore must be included in Manager's authoritative verification set.
-	add("auth-templates", cfg.Services.Auth)
 	add("rest", cfg.Services.REST)
 	add("meta", cfg.Services.PostgresMeta)
 	add("studio", cfg.Services.Studio)
@@ -903,6 +899,9 @@ func canonicalServices(values []string) []string {
 	result := make([]string, 0, len(values))
 	gateway := false
 	for _, value := range values {
+		if isRendererHelperService(value) {
+			continue
+		}
 		if value == "api-gw" || value == "envoy" || value == "kong" || value == "caddy" {
 			gateway = true
 		} else {
@@ -915,12 +914,45 @@ func canonicalServices(values []string) []string {
 	return result
 }
 
-func (o *Orchestrator) fail(ctx context.Context, queued operation.Operation, step string, cause error, rollback bool) (operation.Operation, error) {
-	if !errors.Is(cause, contracts.ErrStaleConfigRevision) && cause.Error() != "runtime reconciliation failed" {
-		_ = o.operations.Fail(ctx, queued.ID, step, cause)
-	} else {
-		_ = o.operations.Fail(ctx, queued.ID, step, errors.New("runtime reconciliation failed"))
+// Renderer helper services are Compose implementation details rather than
+// project capabilities. They are created as dependencies of Auth, Functions,
+// Supavisor, and Logs, so they must not make the Manager reject an otherwise
+// healthy configuration revision.
+func isRendererHelperService(name string) bool {
+	switch name {
+	case "auth-templates", "deno-cache", "db-config", "logflare":
+		return true
+	default:
+		return false
 	}
+}
+
+func runtimeVerificationError(result contracts.ReconcileProjectResponse, operationID, projectID string, revision int64, cfg contracts.ProjectConfiguration) error {
+	mismatches := make([]string, 0, 4)
+	if result.OperationID != operationID {
+		mismatches = append(mismatches, fmt.Sprintf("operation ID received=%q expected=%q", result.OperationID, operationID))
+	}
+	if result.ProjectID != projectID {
+		mismatches = append(mismatches, fmt.Sprintf("project ID received=%q expected=%q", result.ProjectID, projectID))
+	}
+	if result.Revision != revision {
+		mismatches = append(mismatches, fmt.Sprintf("revision received=%d expected=%d", result.Revision, revision))
+	}
+	expected := enabledServices(cfg)
+	if !sameServices(result.EnabledServices, expected) {
+		actual := canonicalServices(result.EnabledServices)
+		sort.Strings(actual)
+		sort.Strings(expected)
+		mismatches = append(mismatches, fmt.Sprintf("enabled services mismatch: received=%v expected=%v", actual, expected))
+	}
+	if len(mismatches) == 0 {
+		return errors.New("runtime verification failed: provisioner returned an inconsistent result")
+	}
+	return fmt.Errorf("runtime verification failed: %s", strings.Join(mismatches, "; "))
+}
+
+func (o *Orchestrator) fail(ctx context.Context, queued operation.Operation, step string, cause error, rollback bool) (operation.Operation, error) {
+	_ = o.operations.Fail(ctx, queued.ID, step, cause)
 	if rollback {
 		if o.operations.BeginRollback(ctx, queued.ID) == nil {
 			_ = o.operations.CompleteRollback(ctx, queued.ID)

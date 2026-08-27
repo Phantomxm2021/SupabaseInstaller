@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,7 +151,7 @@ func (noopRecoveryProvisioner) Reconcile(context.Context, contracts.ReconcilePro
 func TestEnabledServicesUsesAuthoritativeSupavisorName(t *testing.T) {
 	cfg := contracts.ProjectConfiguration{Services: contracts.Services{Database: true, Gateway: true, Auth: true, Supavisor: true, Logs: true, Vector: true}}
 	got := enabledServices(cfg)
-	for _, want := range []string{"db", "api-gw", "auth", "auth-templates", "supavisor", "analytics", "vector"} {
+	for _, want := range []string{"db", "api-gw", "auth", "supavisor", "analytics", "vector"} {
 		found := false
 		for _, item := range got {
 			if item == want {
@@ -172,6 +173,55 @@ func TestSameServicesAcceptsConcreteGatewayProjection(t *testing.T) {
 	if !sameServices([]string{"db", "envoy"}, []string{"db", "api-gw"}) {
 		t.Fatal("gateway implementation should normalize to api-gw")
 	}
+}
+
+func TestSameServicesIgnoresRendererHelperServices(t *testing.T) {
+	expected := []string{"db", "api-gw", "auth", "rest", "meta", "studio", "realtime", "storage", "imgproxy", "functions", "supavisor"}
+	actual := append(append([]string(nil), expected...), "auth-templates", "deno-cache", "db-config")
+	if !sameServices(actual, expected) {
+		t.Fatalf("renderer helper services must not make runtime verification fail: actual=%v expected=%v", actual, expected)
+	}
+}
+
+func TestEnabledServicesExcludesRendererHelperServices(t *testing.T) {
+	cfg := contracts.ProjectConfiguration{Services: contracts.Services{Database: true, Gateway: true, Auth: true, Functions: true, Supavisor: true, Logs: true}}
+	for _, service := range enabledServices(cfg) {
+		if service == "auth-templates" || service == "deno-cache" || service == "db-config" || service == "logflare" {
+			t.Fatalf("manager verification must not treat renderer helper %q as a configurable service: %v", service, enabledServices(cfg))
+		}
+	}
+}
+
+func TestRunPersistsConcreteRuntimeVerificationMismatch(t *testing.T) {
+	orchestrator, _, operations, currentProject, snapshot, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
+	orchestrator.provisioner = staticResponseProvisioner{response: contracts.ReconcileProjectResponse{
+		OperationID: op.ID,
+		ProjectID:   currentProject.ID,
+		Revision:    snapshot.Revision,
+		EnabledServices: []string{
+			"db",
+		},
+	}}
+
+	_, err := orchestrator.Run(context.Background(), currentProject, op, snapshot)
+	if err == nil || !strings.Contains(err.Error(), "enabled services mismatch") {
+		t.Fatalf("Run() error = %v, want concrete enabled service mismatch", err)
+	}
+	stored, err := operations.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stored.ErrorMessage, "enabled services mismatch") {
+		t.Fatalf("stored error = %q, want concrete verification diagnostic", stored.ErrorMessage)
+	}
+}
+
+type staticResponseProvisioner struct {
+	response contracts.ReconcileProjectResponse
+}
+
+func (s staticResponseProvisioner) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return s.response, nil
 }
 
 func TestPreRuntimeFailureRestoresAdmittedConfigurationState(t *testing.T) {

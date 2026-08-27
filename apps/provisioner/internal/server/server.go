@@ -154,8 +154,18 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 	if err != nil {
 		s.logReconcileFailure(input, err)
 		var failure *contracts.ReconcileFailure
-		if errors.As(err, &failure) && failure.Response.Error != nil {
-			writeJSON(response, http.StatusUnprocessableEntity, failure.Response)
+		if errors.As(err, &failure) {
+			result := failure.Response
+			if result.OperationID == "" {
+				result.OperationID = input.OperationID
+			}
+			if result.ProjectID == "" {
+				result.ProjectID = input.ProjectID
+			}
+			if result.Error == nil {
+				result.Error = &contracts.APIError{Code: "RECONCILE_FAILED", Message: redactedReconcileDiagnostic(input, failure.Cause)}
+			}
+			writeJSON(response, http.StatusUnprocessableEntity, result)
 			return
 		}
 		// Runtime errors are deliberately generic: rendered environment files
@@ -172,7 +182,25 @@ func (s *server) logReconcileFailure(input contracts.ReconcileProjectRequest, er
 	if errors.As(err, &failure) && failure.Cause != nil {
 		logErr = failure.Cause
 	}
-	s.logger.Error("project runtime reconciliation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", redact.New(nil).String(logErr.Error()))
+	s.logger.Error("project runtime reconciliation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", redactedReconcileDiagnostic(input, logErr))
+}
+
+func redactedReconcileDiagnostic(input contracts.ReconcileProjectRequest, cause error) string {
+	if cause == nil {
+		return "Project runtime reconciliation failed"
+	}
+	secrets := input.Secrets
+	values := []string{
+		secrets.DatabasePassword, secrets.JWTSecret, secrets.AnonKey, secrets.ServiceRoleKey,
+		secrets.DashboardPassword, secrets.SecretKeyBase, secrets.VaultEncryptionKey,
+		secrets.RealtimeDBEncryptionKey, secrets.LogflarePublicAccessToken,
+		secrets.LogflarePrivateAccessToken, secrets.S3ProtocolAccessKeyID,
+		secrets.S3ProtocolAccessKeySecret, secrets.PoolerTenantID,
+	}
+	for _, value := range input.RuntimeSecrets {
+		values = append(values, value)
+	}
+	return redact.New(values).String(cause.Error())
 }
 
 type passwordRotationBackend interface {

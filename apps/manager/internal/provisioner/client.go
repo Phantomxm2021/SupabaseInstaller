@@ -153,18 +153,17 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 				runtimeStateChanged = rotation.RuntimeChanged
 			}
 		}
-		if envelope.Error.Code == "" {
-			if rotation.Error != nil {
-				envelope.Error = *rotation.Error
-			} else {
-				var reconcile contracts.ReconcileProjectResponse
-				if path == "/internal/v1/projects/reconcile" && explicitOutcome() && json.Unmarshal(payload, &reconcile) == nil && reconcile.Error != nil {
-					envelope.Error = *reconcile.Error
-					rollbackComplete = reconcile.RolledBack
-					runtimeStateKnown = true
-					runtimeStateChanged = reconcile.RuntimeChanged
-				}
+		var reconcile contracts.ReconcileProjectResponse
+		if path == "/internal/v1/projects/reconcile" && explicitOutcome() && json.Unmarshal(payload, &reconcile) == nil && reconcile.Error != nil {
+			rollbackComplete = reconcile.RolledBack
+			runtimeStateKnown = true
+			runtimeStateChanged = reconcile.RuntimeChanged
+			if envelope.Error.Code == "" {
+				envelope.Error = *reconcile.Error
 			}
+		}
+		if envelope.Error.Code == "" && rotation.Error != nil {
+			envelope.Error = *rotation.Error
 		}
 		code, message := envelope.Error.Code, envelope.Error.Message
 		allowed := map[string]string{"STALE_CONFIG_REVISION": "Project configuration revision is stale", "INVALID_CONFIG_REVISION": "Project configuration revision is invalid", "RECONCILE_FAILED": "Project runtime reconciliation failed", "ROTATE_DATABASE_PASSWORD_FAILED": "Database password rotation failed", "INVALID_REQUEST": "Provisioner request is invalid", "LIFECYCLE_FAILED": "Project lifecycle operation failed", "INSPECT_FAILED": "Project inspection failed"}
@@ -172,7 +171,13 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 		if !ok {
 			code, local = "PROVISIONER_ERROR", "Provisioner request failed"
 		}
-		message = local
+		// The Provisioner serializes reconciliation diagnostics only after
+		// redacting every request secret. Preserve that actionable message so
+		// the durable Manager operation can tell an operator which service or
+		// health check failed. Other endpoint messages remain canonical here.
+		if code != "RECONCILE_FAILED" || strings.TrimSpace(message) == "" {
+			message = local
+		}
 		return &ClientError{Code: code, Message: message, Status: response.StatusCode, RollbackComplete: rollbackComplete, RuntimeStateKnown: runtimeStateKnown, RuntimeStateChanged: runtimeStateChanged}
 	}
 	if output != nil && response.StatusCode != http.StatusNoContent {

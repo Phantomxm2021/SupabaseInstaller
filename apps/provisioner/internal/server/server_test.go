@@ -153,6 +153,19 @@ func TestReconcileEndpointLogsSafeFailureDetails(t *testing.T) {
 	}
 }
 
+func TestReconcileEndpointReturnsRedactedFailureDiagnostic(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	backend := &reconcileStub{err: &contracts.ReconcileFailure{Cause: errors.New("compose action failed: POSTGRES_PASSWORD=secret-value missing env file")}}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", contracts.ReconcileProjectRequest{OperationID: "op-1", IdempotencyKey: "key-1", ProjectID: "project-1", Slug: "bee"})
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "compose action failed") || strings.Contains(response.Body.String(), "secret-value") {
+		t.Fatalf("response must include a redacted diagnostic: %s", response.Body.String())
+	}
+}
+
 func TestHostResourcesEndpointReturnsReadOnlySnapshot(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {

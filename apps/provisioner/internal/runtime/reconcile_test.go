@@ -593,6 +593,9 @@ func TestReconcileFailureIsTypedCachedAndReplayedWithoutDocker(t *testing.T) {
 	if err == nil || !result.RolledBack || result.Error == nil {
 		t.Fatalf("first failure result=%#v err=%v", result, err)
 	}
+	if !strings.Contains(result.Error.Message, "runtime health is") {
+		t.Fatalf("failure diagnostic = %q, want the concrete health reason", result.Error.Message)
+	}
 	after := runner.validated + len(runner.recreated) + len(runner.removed)
 	if _, replayErr := backend.Reconcile(context.Background(), request); replayErr == nil {
 		t.Fatal("failure replay returned success")

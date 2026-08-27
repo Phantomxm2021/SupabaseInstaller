@@ -63,6 +63,23 @@ func TestClientDoesNotInferRuntimeOutcomeFromGenericErrorEnvelope(t *testing.T) 
 	}
 }
 
+func TestClientPreservesRedactedReconcileDiagnostic(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body, _ := json.Marshal(contracts.ReconcileProjectResponse{RuntimeChanged: true, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "runtime health is unhealthy; services: auth (restarting, unhealthy)"}})
+		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+
+	_, err := client.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+	if err == nil || !strings.Contains(err.Error(), "services: auth") {
+		t.Fatalf("Reconcile() error = %v, want provisioner diagnostic", err)
+	}
+	var clientErr *ClientError
+	if !errors.As(err, &clientErr) || !clientErr.RuntimeOutcomeKnown() || !clientErr.RuntimeChanged() {
+		t.Fatalf("Reconcile() error = %#v, want known changed runtime outcome", err)
+	}
+}
+
 func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
 	const sentinel = "new-password-sentinel"
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {

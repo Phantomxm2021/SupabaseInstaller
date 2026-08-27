@@ -15,6 +15,7 @@ import (
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/apps/provisioner/internal/redact"
 	"supabase-manager/apps/provisioner/internal/render"
 	"supabase-manager/internal/contracts"
 )
@@ -61,7 +62,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				outcome = &contracts.ReconcileFailure{Cause: err}
 			}
 			outcome.RuntimeChanged = published
-			outcome.Response = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: metadata.Revision, RolledBack: outcome.RollbackSucceeded, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Project runtime reconciliation failed"}}
+			outcome.Response = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: metadata.Revision, RolledBack: outcome.RollbackSucceeded, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: redactedReconcileDiagnostic(request, outcome.Cause)}}
 			outcome.Response.RuntimeChanged = published
 			result = outcome.Response
 			encoded, _ := json.Marshal(result)
@@ -251,7 +252,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 	if err != nil {
 		if !errors.Is(err, contracts.ErrInvalidReconcileRevision) && !errors.Is(err, contracts.ErrStaleConfigRevision) && result.Error == nil {
 			runtimeChanged := runtimeRollback != nil
-			result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: runtimeRollbackSucceeded, RuntimeChanged: runtimeChanged, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Project runtime reconciliation failed"}}
+			result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: runtimeRollbackSucceeded, RuntimeChanged: runtimeChanged, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: redactedReconcileDiagnostic(request, err)}}
 			err = &contracts.ReconcileFailure{Cause: err, Response: result, RollbackSucceeded: runtimeRollbackSucceeded, RuntimeChanged: runtimeChanged}
 		}
 		return result, err
@@ -382,6 +383,28 @@ func reportHasTransientService(report health.Report) bool {
 
 func reconcileFailure(cause error, rolledBack bool) error {
 	return &contracts.ReconcileFailure{Cause: cause, RollbackSucceeded: rolledBack}
+}
+
+func redactedReconcileDiagnostic(request contracts.ReconcileProjectRequest, cause error) string {
+	if cause == nil {
+		return "Project runtime reconciliation failed"
+	}
+	var failure *contracts.ReconcileFailure
+	if errors.As(cause, &failure) && failure.Cause != nil {
+		cause = failure.Cause
+	}
+	secrets := request.Secrets
+	values := []string{
+		secrets.DatabasePassword, secrets.JWTSecret, secrets.AnonKey, secrets.ServiceRoleKey,
+		secrets.DashboardPassword, secrets.SecretKeyBase, secrets.VaultEncryptionKey,
+		secrets.RealtimeDBEncryptionKey, secrets.LogflarePublicAccessToken,
+		secrets.LogflarePrivateAccessToken, secrets.S3ProtocolAccessKeyID,
+		secrets.S3ProtocolAccessKeySecret, secrets.PoolerTenantID,
+	}
+	for _, value := range request.RuntimeSecrets {
+		values = append(values, value)
+	}
+	return redact.New(values).String(cause.Error())
 }
 
 func affectedServices(before, after contracts.ProjectConfiguration) []string {
