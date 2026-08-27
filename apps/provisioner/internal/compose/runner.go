@@ -175,7 +175,10 @@ func (r *Runner) run(ctx context.Context, project ProjectRef, action ...string) 
 	if err != nil {
 		detail := redact.New(nil).String(strings.TrimSpace(string(output)))
 		if len(detail) > 4096 {
-			detail = detail[:4096] + "…"
+			// Compose prints image pull progress before its actionable error. Keep
+			// the tail so the registry, manifest, or daemon failure survives the
+			// bounded operation error and reaches the Manager audit log.
+			detail = "…" + detail[len(detail)-4096:]
 		}
 		if detail != "" {
 			return fmt.Errorf("compose action failed: %w; output=%s", err, detail)

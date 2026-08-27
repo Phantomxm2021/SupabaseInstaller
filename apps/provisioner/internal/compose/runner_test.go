@@ -128,6 +128,18 @@ func TestRunnerIncludesRedactedComposeOutputInError(t *testing.T) {
 	}
 }
 
+func TestRunnerKeepsComposeFailureOutputTail(t *testing.T) {
+	output := strings.Repeat("pull progress\n", 500) + "final registry error: manifest unknown"
+	executor := &sequenceExecutor{results: []executorResult{{
+		output: []byte(output),
+		err:    errors.New("exit status 1"),
+	}}}
+	err := NewRunner(executor).Validate(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"})
+	if err == nil || !strings.Contains(err.Error(), "final registry error: manifest unknown") {
+		t.Fatalf("error = %v, want final Compose failure detail", err)
+	}
+}
+
 func TestRunnerUsesStableProjectDirAndCurrentConfig(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)
