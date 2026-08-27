@@ -127,6 +127,7 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if err != nil {
+		s.logReconcileFailure(input, err)
 		var failure *contracts.ReconcileFailure
 		if errors.As(err, &failure) && failure.Response.Error != nil {
 			writeJSON(response, http.StatusUnprocessableEntity, failure.Response)
@@ -138,6 +139,15 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
+}
+
+func (s *server) logReconcileFailure(input contracts.ReconcileProjectRequest, err error) {
+	logErr := err
+	var failure *contracts.ReconcileFailure
+	if errors.As(err, &failure) && failure.Cause != nil {
+		logErr = failure.Cause
+	}
+	s.logger.Error("project runtime reconciliation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", redact.New(nil).String(logErr.Error()))
 }
 
 type passwordRotationBackend interface {

@@ -119,6 +119,21 @@ func TestLifecycleEndpointLogsSafeFailureDetails(t *testing.T) {
 	}
 }
 
+func TestReconcileEndpointLogsSafeFailureDetails(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	backend := &reconcileStub{err: &contracts.ReconcileFailure{Cause: errors.New("compose action failed: POSTGRES_PASSWORD=secret-value missing env file")}}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", contracts.ReconcileProjectRequest{OperationID: "op-1", IdempotencyKey: "key-1", ProjectID: "project-1", Slug: "bee"})
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(logs.String(), "project runtime reconciliation failed") || !strings.Contains(logs.String(), "project-1") || strings.Contains(logs.String(), "secret-value") {
+		t.Fatalf("unsafe or missing reconcile log: %s", logs.String())
+	}
+}
+
 func TestHostResourcesEndpointReturnsReadOnlySnapshot(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
