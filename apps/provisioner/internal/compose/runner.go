@@ -137,7 +137,17 @@ WHERE n.nspname = 'auth'
 	}
 	if len(violations) > 0 {
 		sort.Strings(violations)
-		return fmt.Errorf("official PostgreSQL bootstrap is incomplete: %s", strings.Join(violations, "; "))
+		bootstrapErr := fmt.Errorf("official PostgreSQL bootstrap is incomplete: %s", strings.Join(violations, "; "))
+		// The database is still running at this point. Capture its initialization
+		// tail before Reconcile rolls back the failed revision-zero runtime; this
+		// preserves the precise official init-script failure rather than leaving
+		// operators with only its downstream missing-object symptoms.
+		if logs, logErr := r.Logs(ctx, project, "db", 240); logErr == nil {
+			if detail := boundedComposeDetail(logs); detail != "" {
+				return fmt.Errorf("%w; db logs=%s", bootstrapErr, detail)
+			}
+		}
+		return bootstrapErr
 	}
 	return nil
 }

@@ -89,15 +89,20 @@ func TestSynchronizeDatabaseRolePasswordsUsesRenderedDatabasePassword(t *testing
 
 func TestVerifyDatabaseBootstrapRejectsAnIncompleteOfficialBootstrap(t *testing.T) {
 	executor := &sequenceExecutor{results: []executorResult{{
-		output: []byte("schema:auth:supabase_admin\nfunction:email:supabase_auth_admin\nfunction:role:supabase_auth_admin\nfunction:uid:supabase_admin\n"),
+		output: []byte("schema:auth:supabase_admin\nfunction:auth.email:supabase_auth_admin\nfunction:auth.role:supabase_auth_admin\nfunction:auth.uid:supabase_admin\n"),
+	}, {
+		output: []byte("/docker-entrypoint-initdb.d/migrate.sh: migration sequence was not executed"),
 	}}}
 	err := NewRunner(executor).VerifyDatabaseBootstrap(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"})
-	if err == nil || !strings.Contains(err.Error(), "auth.uid") || !strings.Contains(err.Error(), "supabase_auth_admin") {
+	if err == nil || !strings.Contains(err.Error(), "auth.uid") || !strings.Contains(err.Error(), "supabase_auth_admin") || !strings.Contains(err.Error(), "migration sequence was not executed") {
 		t.Fatalf("VerifyDatabaseBootstrap() error = %v, want auth.uid ownership violation", err)
 	}
 	want := []string{"compose", "--file", "/projects/bee/docker-compose.yml", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "exec", "-T", "db", "psql", "-v", "ON_ERROR_STOP=1", "-U", "supabase_admin", "-d", "postgres", "-At", "-c"}
-	if len(executor.calls) != 1 || len(executor.calls[0]) != len(want)+1 || !reflect.DeepEqual(executor.calls[0][:len(want)], want) {
+	if len(executor.calls) != 2 || len(executor.calls[0]) != len(want)+1 || !reflect.DeepEqual(executor.calls[0][:len(want)], want) {
 		t.Fatalf("bootstrap verification args = %#v, want %#v", executor.calls, want)
+	}
+	if got := executor.calls[1]; !reflect.DeepEqual(got, []string{"compose", "--file", "/projects/bee/docker-compose.yml", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "logs", "--no-color", "--tail", "240", "db"}) {
+		t.Fatalf("bootstrap diagnostics args = %#v", got)
 	}
 }
 
