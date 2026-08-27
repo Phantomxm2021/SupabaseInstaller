@@ -176,6 +176,11 @@ func (e *serverCaptureExecutor) Run(_ context.Context, _ string, args, _ []strin
 	return nil, nil
 }
 
+func (e *serverCaptureExecutor) RunInput(_ context.Context, _ string, args, _ []string, _ []byte) ([]byte, error) {
+	e.calls = append(e.calls, append([]string(nil), args...))
+	return nil, nil
+}
+
 type serverSequenceSource struct{ calls int }
 
 func (source *serverSequenceSource) Containers(context.Context, string) ([]health.Container, error) {

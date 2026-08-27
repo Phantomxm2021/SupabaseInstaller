@@ -45,6 +45,28 @@ func TestRotateDatabasePasswordRequiresControlledInputExecutor(t *testing.T) {
 	}
 }
 
+func TestRepairDatabaseUsesControlledSQLInput(t *testing.T) {
+	executor := &inputCaptureExecutor{}
+	runner := NewRunner(executor)
+	if err := runner.RepairDatabase(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(executor.input), "supabase_storage_admin") || !strings.Contains(string(executor.input), "_supabase") {
+		t.Fatalf("repair SQL = %q, want role and database repair", executor.input)
+	}
+	for _, arg := range executor.args {
+		if strings.Contains(arg, "sentinel") || strings.Contains(arg, "super-secret") {
+			t.Fatalf("repair command leaked password through argv: %v", executor.args)
+		}
+	}
+	if !strings.Contains(strings.Join(executor.args, " "), "POSTGRES_PASSWORD") {
+		t.Fatalf("repair command does not source the container password environment: %v", executor.args)
+	}
+	if strings.Contains(strings.Join(executor.args, " "), "-U postgres") {
+		t.Fatalf("repair command uses the non-superuser postgres role: %v", executor.args)
+	}
+}
+
 func TestRunnerUsesArgumentVectorAndFixedProjectDirectory(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)

@@ -227,6 +227,21 @@ func TestInitialReconcileFailureRemovesRuntimeBeforeClearingGeneration(t *testin
 	}
 }
 
+func TestInitialReconcileRepairsDatabaseBeforeStartingDependents(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	if !equalStrings(runner.calls, []string{"db", "repair", "selected"}) {
+		t.Fatalf("runtime calls = %#v, want database repair before dependents", runner.calls)
+	}
+}
+
 func TestHealthTimeoutErrorNamesServicesStillStarting(t *testing.T) {
 	err := healthTimeoutError(health.Report{Services: []contracts.ServiceState{
 		{Name: "auth", Health: contracts.HealthStarting, Status: "running"},
@@ -549,11 +564,17 @@ type fakeReconcileRunner struct {
 	validateError    error
 	recreateError    error
 	down             []string
+	calls            []string
 }
 
 type captureComposeExecutor struct{ calls [][]string }
 
 func (e *captureComposeExecutor) Run(_ context.Context, _ string, args, _ []string) ([]byte, error) {
+	e.calls = append(e.calls, append([]string(nil), args...))
+	return nil, nil
+}
+
+func (e *captureComposeExecutor) RunInput(_ context.Context, _ string, args, _ []string, _ []byte) ([]byte, error) {
 	e.calls = append(e.calls, append([]string(nil), args...))
 	return nil, nil
 }
@@ -573,7 +594,14 @@ func (s *sequencedContainerSource) Containers(context.Context, string) ([]health
 	return containers, nil
 }
 
-func (r *fakeReconcileRunner) UpDatabase(context.Context, compose.ProjectRef) error { return nil }
+func (r *fakeReconcileRunner) UpDatabase(context.Context, compose.ProjectRef) error {
+	r.calls = append(r.calls, "db")
+	return nil
+}
+func (r *fakeReconcileRunner) RepairDatabase(context.Context, compose.ProjectRef) error {
+	r.calls = append(r.calls, "repair")
+	return nil
+}
 func (r *fakeReconcileRunner) UpServices(_ context.Context, _ compose.ProjectRef, services ...string) error {
 	r.up = append(r.up, append([]string(nil), services...))
 	return nil
@@ -592,6 +620,7 @@ func (r *fakeReconcileRunner) Validate(_ context.Context, project compose.Projec
 	return r.validateError
 }
 func (r *fakeReconcileRunner) UpSelected(_ context.Context, _ compose.ProjectRef, services ...string) error {
+	r.calls = append(r.calls, "selected")
 	r.up = append(r.up, append([]string(nil), services...))
 	return nil
 }
