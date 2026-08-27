@@ -33,6 +33,23 @@ func TestClientReturnsProvisionerErrorCode(t *testing.T) {
 	}
 }
 
+func TestClientChecksHostPortAvailability(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || request.URL.Path != "/internal/v1/host/ports/8001" {
+			t.Fatalf("request = %s %s, want host port check", request.Method, request.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"port":8001,"available":false}`)), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+	available, err := client.HostPortAvailable(context.Background(), 8001)
+	if err != nil {
+		t.Fatalf("HostPortAvailable() error = %v", err)
+	}
+	if available {
+		t.Fatal("HostPortAvailable() = true, want false")
+	}
+}
+
 func TestClientDoesNotInferRuntimeOutcomeFromGenericErrorEnvelope(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "RECONCILE_FAILED", Message: "failed"}})

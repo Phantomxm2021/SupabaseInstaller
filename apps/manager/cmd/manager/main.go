@@ -54,7 +54,7 @@ func main() {
 	authAdmin := authadmin.New(database, cipher, &http.Client{Timeout: 20 * time.Second}, authadmin.GatewayAtHost("host.docker.internal"))
 	provisionerHTTP := &http.Client{Timeout: provisioner.DefaultRequestTimeout}
 	provisionerClient := provisioner.NewClient(cfg.ProvisionerURL, cfg.ProvisionerToken, provisionerHTTP)
-	allocator := ports.NewAllocator(database, cfg.PortRangeStart, cfg.PortRangeEnd, ports.NetworkProbe{})
+	allocator := ports.NewAllocatorWithContextProbe(database, cfg.PortRangeStart, cfg.PortRangeEnd, ports.NetworkProbe{}, provisionerClient)
 	installer := install.NewOrchestrator(database, operations, allocator, cipher, provisionerClient, install.CryptoGenerator{Random: rand.Reader, Now: now}, now)
 	configurationManager := managerconfiguration.NewOrchestrator(database, operations, allocator, provisionerClient, cipher, now)
 	configurationService := project.NewConfigurationService(database, cipher, now)

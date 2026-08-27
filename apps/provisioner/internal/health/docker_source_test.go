@@ -35,6 +35,32 @@ func TestDockerSourceListsComposeServicesAndInspectsHealth(t *testing.T) {
 	}
 }
 
+func TestDockerSourceChecksPublishedHostPort(t *testing.T) {
+	client := &http.Client{Transport: dockerRoundTrip(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/v1.41/containers/json" || request.URL.RawQuery != "" {
+			t.Fatalf("unexpected Docker API request: %s?%s", request.URL.Path, request.URL.RawQuery)
+		}
+		body := `[{"Ports":[{"IP":"127.0.0.1","PrivatePort":3000,"PublicPort":8001,"Type":"tcp"},{"PrivatePort":5432,"Type":"tcp"}]}]`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	source := NewDockerSourceWithClient(client)
+
+	available, err := source.HostPortAvailable(context.Background(), 8001)
+	if err != nil {
+		t.Fatalf("HostPortAvailable(8001) error = %v", err)
+	}
+	if available {
+		t.Fatal("HostPortAvailable(8001) = true, want occupied")
+	}
+	available, err = source.HostPortAvailable(context.Background(), 8002)
+	if err != nil {
+		t.Fatalf("HostPortAvailable(8002) error = %v", err)
+	}
+	if !available {
+		t.Fatal("HostPortAvailable(8002) = false, want available")
+	}
+}
+
 type dockerRoundTrip func(*http.Request) (*http.Response, error)
 
 func (fn dockerRoundTrip) RoundTrip(request *http.Request) (*http.Response, error) {

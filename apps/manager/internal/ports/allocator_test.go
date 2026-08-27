@@ -28,6 +28,19 @@ func TestAllocatorNeverReturnsReservedOrListeningPort(t *testing.T) {
 	}
 }
 
+func TestAllocatorSkipsDockerPublishedHostPort(t *testing.T) {
+	database := openPortStore(t)
+	createPortProject(t, database, "bee")
+	allocator := NewAllocatorWithContextProbe(database, 18001, 18003, fakeProbe{}, fakeContextProbe{busy: map[int]bool{18001: true}})
+	allocated, err := allocator.ReserveMany(context.Background(), "bee", []Kind{KindAPI})
+	if err != nil {
+		t.Fatalf("ReserveMany() error = %v", err)
+	}
+	if allocated[KindAPI] != 18002 {
+		t.Fatalf("allocated API port = %d, want 18002", allocated[KindAPI])
+	}
+}
+
 func TestAllocatorReturnsExistingReservationForSameProjectAndKind(t *testing.T) {
 	database := openPortStore(t)
 	createPortProject(t, database, "bee")
@@ -101,6 +114,12 @@ func TestAllocatorCandidateManyDoesNotMutateCanonicalAllocations(t *testing.T) {
 type fakeProbe struct{ busy map[int]bool }
 
 func (probe fakeProbe) Available(port int) bool { return !probe.busy[port] }
+
+type fakeContextProbe struct{ busy map[int]bool }
+
+func (probe fakeContextProbe) AvailableContext(_ context.Context, port int) (bool, error) {
+	return !probe.busy[port], nil
+}
 
 func openPortStore(t *testing.T) *store.Store {
 	t.Helper()

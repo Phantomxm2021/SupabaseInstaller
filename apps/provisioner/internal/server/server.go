@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	provisionerauth "supabase-manager/apps/provisioner/internal/auth"
 	"supabase-manager/apps/provisioner/internal/projectfs"
@@ -22,6 +23,10 @@ type Backend interface {
 
 type hostResourcesBackend interface {
 	HostResources(context.Context) (contracts.HostResources, error)
+}
+
+type hostPortBackend interface {
+	HostPortAvailable(context.Context, int) (bool, error)
 }
 
 type Options struct {
@@ -51,6 +56,7 @@ func New(options Options) http.Handler {
 	private.HandleFunc("POST /internal/v1/projects/rollback-database-password", service.rollbackDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/confirm-database-password-rotation", service.confirmDatabasePasswordRotation)
 	private.HandleFunc("GET /internal/v1/host/resources", service.hostResources)
+	private.HandleFunc("GET /internal/v1/host/ports/{port}", service.hostPortAvailable)
 	root := http.NewServeMux()
 	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
 	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
@@ -69,6 +75,25 @@ func (s *server) hostResources(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	writeJSON(response, http.StatusOK, resources)
+}
+
+func (s *server) hostPortAvailable(response http.ResponseWriter, request *http.Request) {
+	backend, ok := s.backend.(hostPortBackend)
+	if !ok {
+		writeError(response, http.StatusServiceUnavailable, "BACKEND_UNAVAILABLE", "Host port inspection is unavailable")
+		return
+	}
+	port, err := strconv.Atoi(request.PathValue("port"))
+	if err != nil || port < 1 || port > 65535 {
+		writeError(response, http.StatusBadRequest, "INVALID_PORT", "A valid TCP port is required")
+		return
+	}
+	available, err := backend.HostPortAvailable(request.Context(), port)
+	if err != nil {
+		writeError(response, http.StatusServiceUnavailable, "HOST_PORT_UNAVAILABLE", "Host port inspection failed")
+		return
+	}
+	writeJSON(response, http.StatusOK, contracts.HostPortAvailability{Port: port, Available: available})
 }
 
 func (s *server) lifecycle(response http.ResponseWriter, request *http.Request) {

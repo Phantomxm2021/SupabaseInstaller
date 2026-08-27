@@ -189,7 +189,7 @@ func createCustomSMTPFunctionsProject(t *testing.T, client *http.Client, baseURL
 	cfg := contracts.ProjectConfiguration{
 		General:   contracts.GeneralConfig{SupabaseVersion: "self-hosted/v0.8.0"},
 		Services:  contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true, Functions: true},
-		Auth:      contracts.AuthConfig{Enabled: true, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}, SMTP: contracts.SMTPConfig{Port: 587}},
+		Auth:      contracts.AuthConfig{Enabled: true, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}, SMTP: contracts.SMTPConfig{Port: 587}, Mailer: acceptanceMailerConfig(), RateLimits: contracts.RateLimitConfig{EmailSent: 30, SMSSent: 30, TokenRefresh: 150, TokenVerification: 30, AnonymousUsers: 30, SignupsAndSignins: 30}, MFA: contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6}},
 		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true, Directory: "./functions"},
@@ -218,6 +218,23 @@ func createCustomSMTPFunctionsProject(t *testing.T, client *http.Client, baseURL
 	result := requestJSON(t, client, http.MethodPost, baseURL+"/api/projects", payload, cookie, csrf)
 	result["_runtimeProject"] = "supabase-manager-" + cfg.General.Domain[:strings.Index(cfg.General.Domain, ".")]
 	return result
+}
+
+func acceptanceMailerConfig() contracts.MailerConfig {
+	template := func(subject string) contracts.EmailTemplateConfig {
+		return contracts.EmailTemplateConfig{Subject: subject, Body: "<p>" + subject + "</p>"}
+	}
+	notification := func(subject string) contracts.EmailNotificationConfig {
+		return contracts.EmailNotificationConfig{Template: template(subject)}
+	}
+	return contracts.MailerConfig{
+		Templates: contracts.EmailTemplatesConfig{
+			Confirmation: template("Confirm your signup"), Invite: template("You have been invited"), MagicLink: template("Your magic link"), EmailChange: template("Confirm email change"), Recovery: template("Reset password"), Reauthentication: template("Confirm reauthentication"),
+		},
+		Notifications: contracts.EmailNotificationsConfig{
+			PasswordChanged: notification("Your password was changed"), EmailChanged: notification("Your email address was changed"), PhoneChanged: notification("Your phone number was changed"), IdentityLinked: notification("A sign-in method was linked"), IdentityUnlinked: notification("A sign-in method was removed"), MFAFactorEnrolled: notification("An MFA method was added"), MFAFactorUnenrolled: notification("An MFA method was removed"),
+		},
+	}
 }
 
 func inspectContainerIDs(t *testing.T, composeProject string) map[string]string {

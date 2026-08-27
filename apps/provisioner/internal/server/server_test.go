@@ -48,6 +48,25 @@ func TestReconcileEndpointReturnsTypedRedactedRollbackOutcome(t *testing.T) {
 	}
 }
 
+func TestHostPortEndpointReturnsDockerBindingAvailability(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: &hostResourcesStub{portAvailable: map[int]bool{8001: false, 8002: true}}})
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/host/ports/8001", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"available":false`) {
+		t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/internal/v1/host/ports/nope", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid port status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestReconcileEndpointInvokesProductionBackend(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
@@ -187,7 +206,10 @@ func (*lifecycleFailureStub) Reconcile(context.Context, contracts.ReconcileProje
 	return contracts.ReconcileProjectResponse{}, nil
 }
 
-type hostResourcesStub struct{ resources contracts.HostResources }
+type hostResourcesStub struct {
+	resources     contracts.HostResources
+	portAvailable map[int]bool
+}
 
 func (*hostResourcesStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
 func (*hostResourcesStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
@@ -198,6 +220,9 @@ func (*hostResourcesStub) Reconcile(context.Context, contracts.ReconcileProjectR
 }
 func (stub *hostResourcesStub) HostResources(context.Context) (contracts.HostResources, error) {
 	return stub.resources, nil
+}
+func (stub *hostResourcesStub) HostPortAvailable(_ context.Context, port int) (bool, error) {
+	return stub.portAvailable[port], nil
 }
 
 func (s *reconcileStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }

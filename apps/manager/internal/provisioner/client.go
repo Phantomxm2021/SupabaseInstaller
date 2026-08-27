@@ -76,6 +76,18 @@ func (c *Client) HostResources(ctx context.Context) (contracts.HostResources, er
 	return output, nil
 }
 
+func (c *Client) HostPortAvailable(ctx context.Context, port int) (bool, error) {
+	var output contracts.HostPortAvailability
+	if err := c.get(ctx, fmt.Sprintf("/internal/v1/host/ports/%d", port), &output); err != nil {
+		return false, err
+	}
+	return output.Available, nil
+}
+
+func (c *Client) AvailableContext(ctx context.Context, port int) (bool, error) {
+	return c.HostPortAvailable(ctx, port)
+}
+
 func (c *Client) Reconcile(ctx context.Context, input contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
 	var output contracts.ReconcileProjectResponse
 	if err := c.post(ctx, "/internal/v1/projects/reconcile", input, &output); err != nil {

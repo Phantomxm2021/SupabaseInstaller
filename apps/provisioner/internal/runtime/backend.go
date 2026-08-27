@@ -126,3 +126,15 @@ func (backend *Backend) HostResources(ctx context.Context) (contracts.HostResour
 	}
 	return inspector.HostResources(ctx, backend.projectFS.BasePath())
 }
+
+// HostPortAvailable checks Docker's host-side published ports through the
+// provisioner network namespace.
+func (backend *Backend) HostPortAvailable(ctx context.Context, port int) (bool, error) {
+	inspector, ok := backend.inspector.(interface {
+		HostPortAvailable(context.Context, int) (bool, error)
+	})
+	if !ok {
+		return false, fmt.Errorf("host port inspection is unavailable")
+	}
+	return inspector.HostPortAvailable(ctx, port)
+}

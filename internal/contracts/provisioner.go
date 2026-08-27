@@ -161,6 +161,14 @@ type HostResources struct {
 	CollectedAt      time.Time `json:"collectedAt"`
 }
 
+// HostPortAvailability reports whether a TCP host port is currently free for
+// a runtime container to publish. The provisioner checks Docker's host-side
+// bindings because the Manager runs in a different network namespace.
+type HostPortAvailability struct {
+	Port      int  `json:"port"`
+	Available bool `json:"available"`
+}
+
 type ErrorEnvelope struct {
 	Error APIError `json:"error"`
 }

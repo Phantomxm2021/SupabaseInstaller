@@ -27,6 +27,13 @@ type Probe interface {
 	Available(port int) bool
 }
 
+// ContextProbe can inspect resources outside the Manager container. The
+// provisioner implementation uses Docker's host-side port bindings, which a
+// local net.Listen probe cannot see.
+type ContextProbe interface {
+	AvailableContext(context.Context, int) (bool, error)
+}
+
 type NetworkProbe struct{}
 
 func (NetworkProbe) Available(port int) bool {
@@ -39,15 +46,33 @@ func (NetworkProbe) Available(port int) bool {
 }
 
 type Allocator struct {
-	store *store.Store
-	min   int
-	max   int
-	probe Probe
-	now   func() time.Time
+	store  *store.Store
+	min    int
+	max    int
+	probe  Probe
+	remote ContextProbe
+	now    func() time.Time
 }
 
 func NewAllocator(store *store.Store, minPort, maxPort int, probe Probe) *Allocator {
 	return &Allocator{store: store, min: minPort, max: maxPort, probe: probe, now: time.Now}
+}
+
+// NewAllocatorWithContextProbe retains the local probe as a fast fallback for
+// native listeners and adds a provisioner-backed check for Docker-published
+// host ports.
+func NewAllocatorWithContextProbe(store *store.Store, minPort, maxPort int, probe Probe, remote ContextProbe) *Allocator {
+	return &Allocator{store: store, min: minPort, max: maxPort, probe: probe, remote: remote, now: time.Now}
+}
+
+func (a *Allocator) available(ctx context.Context, port int) (bool, error) {
+	if !a.probe.Available(port) {
+		return false, nil
+	}
+	if a.remote == nil {
+		return true, nil
+	}
+	return a.remote.AvailableContext(ctx, port)
 }
 
 // ReserveMany allocates all requested server-owned ports as one atomic set.
@@ -83,7 +108,14 @@ func (a *Allocator) ReserveMany(ctx context.Context, projectID string, kinds []K
 		for _, kind := range missing {
 			for offset := 0; offset < rangeSize; offset++ {
 				port := a.min + (cursor+offset)%rangeSize
-				if used[port] || !a.probe.Available(port) {
+				if used[port] {
+					continue
+				}
+				available, probeErr := a.available(ctx, port)
+				if probeErr != nil {
+					return nil, fmt.Errorf("check host port %d: %w", port, probeErr)
+				}
+				if !available {
 					continue
 				}
 				selected[string(kind)] = port
@@ -148,7 +180,14 @@ func (a *Allocator) CandidateMany(ctx context.Context, projectID string, kinds [
 	rangeSize := a.max - a.min + 1
 	for offset := 0; offset < rangeSize; offset++ {
 		port := a.min + offset
-		if used[port] || !a.probe.Available(port) {
+		if used[port] {
+			continue
+		}
+		available, probeErr := a.available(ctx, port)
+		if probeErr != nil {
+			return nil, fmt.Errorf("check host port %d: %w", port, probeErr)
+		}
+		if !available {
 			continue
 		}
 		inUse, err := a.store.PortInUse(ctx, port)

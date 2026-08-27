@@ -50,6 +50,19 @@ func (i *Inspector) HostResources(ctx context.Context, projectRoot string) (cont
 	return source.HostResources(ctx, projectRoot)
 }
 
+// HostPortAvailable delegates host port inspection to the Docker-backed
+// source. It is intentionally separate from project health inspection because
+// it is used during Manager-side allocation before a project exists.
+func (i *Inspector) HostPortAvailable(ctx context.Context, port int) (bool, error) {
+	source, ok := i.source.(interface {
+		HostPortAvailable(context.Context, int) (bool, error)
+	})
+	if !ok {
+		return false, fmt.Errorf("host port inspection is unavailable")
+	}
+	return source.HostPortAvailable(ctx, port)
+}
+
 const projectProbeTimeout = 10 * time.Second
 
 func NewInspector(source Source) *Inspector {

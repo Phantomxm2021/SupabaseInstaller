@@ -55,6 +55,36 @@ func (source *DockerSource) ContainersForServices(ctx context.Context, composePr
 	return source.containers(ctx, composeProject, allowed)
 }
 
+// HostPortAvailable checks Docker's host-side TCP bindings. This must be
+// performed through the provisioner's Docker socket: the Manager is a
+// separate container and cannot observe ports published by runtime
+// containers from its own network namespace.
+func (source *DockerSource) HostPortAvailable(ctx context.Context, port int) (bool, error) {
+	if port < 1 || port > 65535 {
+		return false, fmt.Errorf("invalid TCP port %d", port)
+	}
+	var summaries []struct {
+		Ports []struct {
+			PublicPort uint16 `json:"PublicPort"`
+			Type       string `json:"Type"`
+		} `json:"Ports"`
+	}
+	// The Docker API defaults to running containers. Stopped containers retain
+	// their historical port metadata but do not hold a host socket, so they
+	// must not make a port appear occupied.
+	if err := source.get(ctx, "/"+dockerAPIVersion+"/containers/json", &summaries); err != nil {
+		return false, err
+	}
+	for _, summary := range summaries {
+		for _, binding := range summary.Ports {
+			if binding.PublicPort == uint16(port) && (binding.Type == "" || binding.Type == "tcp") {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
 func (source *DockerSource) containers(ctx context.Context, composeProject string, allowed map[string]struct{}) ([]Container, error) {
 	filters, _ := json.Marshal(map[string][]string{"label": {"com.docker.compose.project=" + composeProject}})
 	query := url.Values{"all": {"1"}, "filters": {string(filters)}}
