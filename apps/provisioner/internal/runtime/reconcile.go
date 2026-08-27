@@ -300,7 +300,7 @@ func (backend *Backend) waitHealthy(ctx context.Context, slug string, enabled []
 			return nil
 		}
 		if !reportHasTransientService(report) {
-			return fmt.Errorf("runtime health is %s", report.Health)
+			return healthFailureError(report)
 		}
 		timer := time.NewTimer(reconcileHealthPoll)
 		select {
@@ -312,6 +312,28 @@ func (backend *Backend) waitHealthy(ctx context.Context, slug string, enabled []
 		case <-timer.C:
 		}
 	}
+}
+
+// healthFailureError preserves the per-service Docker state that caused a
+// reconcile to fail. The candidate is intentionally removed during rollback,
+// so this error is the only durable, secret-free diagnostic available to the
+// Manager operation and Provisioner log.
+func healthFailureError(report health.Report) error {
+	failed := make([]string, 0)
+	for _, service := range report.Services {
+		if service.Health == contracts.HealthHealthy {
+			continue
+		}
+		label := service.Name
+		if service.Status != "" || service.Health != "" {
+			label += fmt.Sprintf(" (%s, %s)", service.Status, service.Health)
+		}
+		failed = append(failed, label)
+	}
+	if len(failed) == 0 {
+		return fmt.Errorf("runtime health is %s", report.Health)
+	}
+	return fmt.Errorf("runtime health is %s; services: %s", report.Health, strings.Join(failed, ", "))
 }
 
 func healthTimeoutError(report health.Report) error {

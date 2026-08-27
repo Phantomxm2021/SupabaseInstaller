@@ -207,6 +207,23 @@ func TestReconcilePollsStartingHealthBeforeAdvancingRevision(t *testing.T) {
 	}
 }
 
+func TestHealthFailureErrorNamesUnhealthyServices(t *testing.T) {
+	err := healthFailureError(health.Report{
+		Health: contracts.HealthUnhealthy,
+		Services: []contracts.ServiceState{
+			{Name: "db", Health: contracts.HealthHealthy, Status: "running"},
+			{Name: "auth", Health: contracts.HealthUnhealthy, Status: "restarting"},
+			{Name: "realtime", Health: contracts.HealthStarting, Status: "running"},
+		},
+	})
+	message := err.Error()
+	for _, want := range []string{"runtime health is UNHEALTHY", "auth (restarting, UNHEALTHY)", "realtime (running, STARTING)"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("healthFailureError() = %q, missing %q", message, want)
+		}
+	}
+}
+
 func TestInitialReconcileFailureRemovesRuntimeBeforeClearingGeneration(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
