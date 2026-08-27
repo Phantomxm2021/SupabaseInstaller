@@ -12,6 +12,7 @@ type composeConfig struct {
 	Services map[string]struct {
 		Ports   []string `yaml:"ports"`
 		Volumes []string `yaml:"volumes"`
+		CapAdd  []string `yaml:"cap_add"`
 	} `yaml:"services"`
 }
 
@@ -38,4 +39,16 @@ func TestComposeExposesOnlyManagerAndMountsSocketOnlyIntoProvisioner(t *testing.
 	if !strings.Contains(strings.Join(provisioner.Volumes, " "), "docker.sock") {
 		t.Fatal("provisioner must mount Docker socket")
 	}
+	if !contains(provisioner.CapAdd, "DAC_OVERRIDE") || !contains(provisioner.CapAdd, "FOWNER") {
+		t.Fatalf("provisioner cap_add = %#v, want DAC_OVERRIDE and FOWNER", provisioner.CapAdd)
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

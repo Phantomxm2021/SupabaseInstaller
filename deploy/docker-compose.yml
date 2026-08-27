@@ -47,6 +47,12 @@ services:
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
+    # The provisioner owns destructive project-data deletion. Supabase's
+    # database container creates bind-mounted files as a different UID; these
+    # narrowly-scoped capabilities let the root process remove only the
+    # project path already authorized by Manager without making the container
+    # fully privileged.
+    cap_add: [DAC_OVERRIDE, FOWNER]
     security_opt: [no-new-privileges:true]
     tmpfs:
       - /tmp:size=128m,mode=1777
