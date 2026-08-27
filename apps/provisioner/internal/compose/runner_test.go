@@ -2,6 +2,7 @@ package compose
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -68,6 +69,54 @@ func TestDownRuntimeDoesNotDeleteVolumes(t *testing.T) {
 	}
 }
 
+func TestDownRuntimeFallsBackToProjectScopedContainerCleanup(t *testing.T) {
+	executor := &sequenceExecutor{results: []executorResult{
+		{output: []byte("compose failed"), err: errors.New("compose config failed")},
+		{output: []byte("container-a\ncontainer-b\n")},
+		{},
+		{output: []byte("network-a\n")},
+		{},
+	}}
+	runner := NewRunner(executor)
+	if err := runner.DownRuntime(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"}); err != nil {
+		t.Fatalf("DownRuntime() error = %v", err)
+	}
+	if len(executor.calls) != 5 {
+		t.Fatalf("fallback calls = %#v", executor.calls)
+	}
+	wantPS := []string{"ps", "-aq", "--filter", "label=com.docker.compose.project=supabase-manager-bee"}
+	if !reflect.DeepEqual(executor.calls[1], wantPS) {
+		t.Fatalf("project lookup args = %#v, want %#v", executor.calls[1], wantPS)
+	}
+	wantRM := []string{"rm", "-f", "container-a", "container-b"}
+	if !reflect.DeepEqual(executor.calls[2], wantRM) {
+		t.Fatalf("container cleanup args = %#v, want %#v", executor.calls[2], wantRM)
+	}
+	wantNetworks := []string{"network", "ls", "-q", "--filter", "label=com.docker.compose.project=supabase-manager-bee"}
+	if !reflect.DeepEqual(executor.calls[3], wantNetworks) {
+		t.Fatalf("network lookup args = %#v, want %#v", executor.calls[3], wantNetworks)
+	}
+	wantNetworkRM := []string{"network", "rm", "network-a"}
+	if !reflect.DeepEqual(executor.calls[4], wantNetworkRM) {
+		t.Fatalf("network cleanup args = %#v, want %#v", executor.calls[4], wantNetworkRM)
+	}
+}
+
+func TestDownRuntimeTreatsMissingProjectContainersAsAlreadyRemoved(t *testing.T) {
+	executor := &sequenceExecutor{results: []executorResult{
+		{output: []byte("compose failed"), err: errors.New("compose config failed")},
+		{},
+		{},
+	}}
+	runner := NewRunner(executor)
+	if err := runner.DownRuntime(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"}); err != nil {
+		t.Fatalf("DownRuntime() error = %v", err)
+	}
+	if len(executor.calls) != 3 {
+		t.Fatalf("calls = %#v", executor.calls)
+	}
+}
+
 func TestRunnerUsesStableProjectDirAndCurrentConfig(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)
@@ -127,6 +176,27 @@ type fakeExecutor struct {
 	command string
 	args    []string
 	env     []string
+}
+
+type executorResult struct {
+	output []byte
+	err    error
+}
+
+type sequenceExecutor struct {
+	results []executorResult
+	calls   [][]string
+}
+
+func (executor *sequenceExecutor) Run(_ context.Context, command string, args, _ []string) ([]byte, error) {
+	executor.calls = append(executor.calls, append([]string(nil), args...))
+	if len(executor.results) == 0 {
+		return nil, nil
+	}
+	result := executor.results[0]
+	executor.results = executor.results[1:]
+	_ = command
+	return result.output, result.err
 }
 
 func (executor *fakeExecutor) Run(_ context.Context, command string, args, env []string) ([]byte, error) {

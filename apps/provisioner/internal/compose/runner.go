@@ -141,7 +141,17 @@ func (r *Runner) RemoveStopped(ctx context.Context, project ProjectRef, services
 }
 
 func (r *Runner) DownRuntime(ctx context.Context, project ProjectRef) error {
-	return r.run(ctx, project, "down", "--remove-orphans")
+	if err := r.run(ctx, project, "down", "--remove-orphans"); err == nil {
+		return nil
+	} else if fallbackErr := r.removeProjectResources(ctx, project); fallbackErr == nil {
+		// Compose can fail before it evaluates the project (for example, when a
+		// generated env_file is missing). The scoped label cleanup still removes
+		// only this project's containers and networks, allowing a force delete to
+		// finish without touching another Compose project.
+		return nil
+	} else {
+		return fmt.Errorf("%w; project-scoped cleanup failed: %v", err, fallbackErr)
+	}
 }
 
 func (r *Runner) RemoveTemporary(ctx context.Context, project ProjectRef) error {
@@ -162,6 +172,35 @@ func (r *Runner) run(ctx context.Context, project ProjectRef, action ...string) 
 	output, err := r.executor.Run(ctx, "docker", args, nil)
 	if err != nil {
 		return fmt.Errorf("compose action failed: %w; output length=%d", err, len(output))
+	}
+	return nil
+}
+
+func (r *Runner) removeProjectResources(ctx context.Context, project ProjectRef) error {
+	projectName := "supabase-manager-" + project.Slug
+	filter := "label=com.docker.compose.project=" + projectName
+	output, err := r.executor.Run(ctx, "docker", []string{"ps", "-aq", "--filter", filter}, nil)
+	if err != nil {
+		return fmt.Errorf("list project containers: %w", err)
+	}
+	containerIDs := strings.Fields(string(output))
+	if len(containerIDs) > 0 {
+		args := append([]string{"rm", "-f"}, containerIDs...)
+		if _, err := r.executor.Run(ctx, "docker", args, nil); err != nil {
+			return fmt.Errorf("remove project containers: %w", err)
+		}
+	}
+
+	networkOutput, err := r.executor.Run(ctx, "docker", []string{"network", "ls", "-q", "--filter", filter}, nil)
+	if err != nil {
+		return fmt.Errorf("list project networks: %w", err)
+	}
+	networkIDs := strings.Fields(string(networkOutput))
+	if len(networkIDs) > 0 {
+		args := append([]string{"network", "rm"}, networkIDs...)
+		if _, err := r.executor.Run(ctx, "docker", args, nil); err != nil {
+			return fmt.Errorf("remove project networks: %w", err)
+		}
 	}
 	return nil
 }
