@@ -125,7 +125,9 @@ it('keeps an invalid integrations step visible and focuses its first invalid con
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('switch', { name: 'Enable Google' }))
+  await user.click(screen.getByRole('button', { name: 'Add authentication method' }))
+  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
+  await user.click(screen.getByRole('button', { name: 'Google' }))
   await user.type(screen.getByLabelText('Client ID'), 'client')
   await user.type(screen.getByLabelText('Client secret'), ' ')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -134,6 +136,49 @@ it('keeps an invalid integrations step visible and focuses its first invalid con
   expect(screen.getByText('Step 3 of 4 · Security & integrations')).toBeVisible()
   expect(invalid).toHaveAttribute('aria-invalid', 'true')
   expect(invalid).toHaveFocus()
+})
+
+it('adds and removes OAuth providers through the authentication method dialog', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+  await user.click(screen.getByRole('button', { name: 'Add authentication method' }))
+  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
+  await user.click(screen.getByRole('button', { name: 'GitHub' }))
+
+  expect(screen.getByText('GitHub')).toBeVisible()
+  expect(screen.queryByRole('switch', { name: 'Enable GitHub' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Google' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Remove GitHub' }))
+  expect(screen.getByRole('heading', { name: 'Remove GitHub?' })).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Remove' }))
+  expect(screen.queryByText('GitHub')).not.toBeInTheDocument()
+})
+
+it('renders only enabled security integration module bodies', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+  expect(screen.getByRole('switch', { name: 'Authentication' })).toBeChecked()
+  expect(screen.getByRole('button', { name: 'Add authentication method' })).toBeVisible()
+  await user.click(screen.getByRole('switch', { name: 'Authentication' }))
+  expect(screen.queryByRole('button', { name: 'Add authentication method' })).not.toBeInTheDocument()
+  expect(screen.getByRole('switch', { name: 'Storage & Image Transformation' })).not.toBeChecked()
+  expect(screen.queryByLabelText('Storage backend')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('switch', { name: 'Storage & Image Transformation' }))
+  expect(screen.getByLabelText('Storage backend')).toBeVisible()
 })
 
 it('shows the identity fields in the Basic step', () => {
@@ -397,9 +442,37 @@ it('renders nested OAuth secret value errors at the secret control', async () =>
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('switch', { name: 'Enable Google' }))
+  await user.click(screen.getByRole('button', { name: 'Add authentication method' }))
+  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
+  await user.click(screen.getByRole('button', { name: 'Google' }))
   await user.type(screen.getByLabelText('Client ID'), 'client')
   await user.type(screen.getByLabelText('Client secret'), ' ')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   expect(screen.getByText('A replacement value is required')).toBeVisible()
+})
+
+it('submits dynamically added OAuth credentials through the existing aggregate configuration', async () => {
+  let body: Record<string, any> | undefined
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
+    body = JSON.parse(String(init.body))
+    return new Response(JSON.stringify({ projectId: 'project-oauth', operationId: 'operation-oauth' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Add authentication method' }))
+  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
+  await user.click(screen.getByRole('button', { name: 'Google' }))
+  await user.type(screen.getByLabelText('Client ID'), 'google-client')
+  await user.type(screen.getByLabelText('Client secret'), 'google-secret')
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Install project' }))
+
+  await waitFor(() => expect(body?.configuration.auth.oauth.google).toMatchObject({ enabled: true, clientId: 'google-client', secret: { action: 'replace', value: 'google-secret' } }))
 })
