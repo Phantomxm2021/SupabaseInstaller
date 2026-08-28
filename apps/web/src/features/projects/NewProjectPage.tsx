@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ArrowLeft, ArrowRight, Box, Rocket } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router-dom'
 import { Alert } from '@/components/ui/alert'
@@ -18,31 +18,49 @@ import { ReviewStep } from './ReviewStep'
 import { StorageFunctionsStep } from './StorageFunctionsStep'
 import { defaultConfiguration, normalizeCreateConfiguration, projectSchema, slugify, type ProjectForm } from './projectSchema'
 import { useProjectIdentityAvailability } from './wizard/useProjectIdentityAvailability'
+import { WizardStepFrame, type WizardStepDirection } from './wizard/WizardStepFrame'
+import { wizardSteps } from './wizard/types'
 
-const steps = ['Basic', 'Preset & Services', 'Auth & SMTP', 'Storage & Functions', 'Database & Network', 'Review']
 export function NewProjectPage() {
-  const [step, setStep] = useState(0); const [operation, setOperation] = useState<{ projectId: string; operationId: string }>(); const navigate = useNavigate()
+  const [step, setStep] = useState(0); const [direction, setDirection] = useState<WizardStepDirection>('forward'); const [operation, setOperation] = useState<{ projectId: string; operationId: string }>(); const navigate = useNavigate()
+  const wizardHeading = useRef<HTMLHeadingElement>(null)
+  const previousStep = useRef(step)
   const form = useForm<ProjectForm, any, ProjectForm>({ resolver: zodResolver(projectSchema) as any, mode: 'onChange', defaultValues: { name: '', slug: '', preset: 'LIGHTWEIGHT', configuration: defaultConfiguration('LIGHTWEIGHT') as any } })
   const name = form.watch('name'); const values = form.watch()
   useEffect(() => { form.setValue('slug', slugify(name), { shouldValidate: form.formState.isSubmitted, shouldDirty: !!name }) }, [name, form])
+  useEffect(() => {
+    if (previousStep.current !== step) wizardHeading.current?.focus()
+    previousStep.current = step
+  }, [step])
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => apiFetch<{ projects: Project[] }>('/api/projects'), retry: false })
   const availability = useProjectIdentityAvailability(name, values.slug, projects.data?.projects, projects.error)
   const identityReady = availability.name.status === 'available' && availability.slug.status === 'available'
   const firstStepCanContinue = identityReady && form.formState.isValid
   const create = useMutation({ mutationFn: (value: ProjectForm) => { const configuration = normalizeCreateConfiguration(value.configuration); const body: CreateProjectRequest = { name: value.name, slug: value.slug, preset: value.preset, configuration }; return apiFetch<{ projectId: string; operationId: string }>('/api/projects', { method: 'POST', body: JSON.stringify(body) }) }, onSuccess: setOperation })
   if (operation) return <main className="page narrow-page"><div className="page-heading"><div><p className="eyebrow">Installation in progress</p><h1>Installing {values.name}</h1><p className="muted">You can leave this page. Progress is stored on the server.</p></div></div><OperationPanel operationId={operation.operationId} projectId={operation.projectId} projectName={values.name} onSucceeded={(projectId) => navigate(`/projects/${projectId}/overview`, { replace: true })} onDeleted={() => navigate('/projects', { replace: true })} /></main>
+  const focusFirstInvalid = () => { window.setTimeout(() => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(), 0) }
+  const moveToStep = (nextStep: number) => {
+    setDirection(nextStep < step ? 'backward' : 'forward')
+    setStep(nextStep)
+  }
   const validateAnd = async (target: number) => {
     if (step === 0) {
       const valid = await form.trigger(['name', 'slug', 'configuration.general.siteUrl', 'configuration.general.studioUsername', 'configuration.general.studioPassword'])
-      if (valid && identityReady) setStep(target)
+      if (valid && identityReady) moveToStep(target)
+      else focusFirstInvalid()
       return
     }
-    await form.trigger()
-    await form.handleSubmit(() => setStep(target), () => undefined)()
+    if (await form.trigger()) moveToStep(target)
+    else focusFirstInvalid()
   }
-  const next = () => validateAnd(Math.min(5, step + 1))
-  const install = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); await form.trigger(); await form.handleSubmit((value) => create.mutate(value), (errors) => setStep(stepForError(errors)))(event) }
-  return <main className="page narrow-page"><div className="page-heading"><div><p className="eyebrow">New runtime</p><h1>{step === 5 ? 'Review installation' : 'Create a project'}</h1><p className="muted">Configure the complete Supabase runtime before Docker resources are created.</p></div><span className="wizard-step">Step {step + 1} of 6 · {steps[step]}</span></div><Form {...form}><form className="wizard mt-3" onSubmit={install} noValidate>{step === 0 && <BasicStep form={form} availability={availability} onRetryAvailability={() => { void projects.refetch() }} />}{step === 1 && <PresetStep form={form} />}{step === 2 && <AuthStep form={form} />}{step === 3 && <StorageFunctionsStep form={form} />}{step === 4 && <DatabaseNetworkStep form={form} />}{step === 5 && <ReviewStep project={values} />}{(form.formState.errors.root || create.error) && <Alert variant="destructive" className="mt-4">{String(form.formState.errors.root?.message || create.error?.message)}</Alert>}<div className="wizard-footer"><Button variant="secondary" nativeButton={false} render={<Link to="/projects" />}><ArrowLeft size={15} />Cancel</Button><div className="flex gap-2">{step > 0 && <Button variant="secondary" type="button" onClick={() => setStep((value) => value - 1)}><ArrowLeft size={15} />Back</Button>}{step < 5 && <><Button variant="secondary" type="button" disabled={step === 0 && !firstStepCanContinue} onClick={() => validateAnd(5)}>Review</Button><Button type="button" disabled={step === 0 && !firstStepCanContinue} onClick={next}>Continue<ArrowRight size={15} /></Button></>}{step === 5 && <Button type="submit" disabled={create.isPending}>{create.isPending ? <Box size={15} /> : <Rocket size={15} />}{create.isPending ? 'Creating operation…' : 'Install project'}</Button>}</div></div></form></Form></main>
+  const next = () => validateAnd(Math.min(wizardSteps.length - 1, step + 1))
+  const install = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (await form.trigger()) await form.handleSubmit((value) => create.mutate(value), () => undefined)(event)
+    else await form.handleSubmit(() => undefined, (errors) => { moveToStep(stepForError(errors)); focusFirstInvalid() })(event)
+  }
+  const currentStep = wizardSteps[step]
+  return <main className="page narrow-page"><div className="page-heading"><div><p className="eyebrow">New runtime</p><h1 ref={wizardHeading} tabIndex={-1}>{step === wizardSteps.length - 1 ? 'Review installation' : 'Create a project'}</h1><p className="muted">Configure the complete Supabase runtime before Docker resources are created.</p></div><span className="wizard-step">Step {step + 1} of {wizardSteps.length} · {currentStep.label}</span></div><Form {...form}><form className="wizard mt-3" onSubmit={install} noValidate><WizardStepFrame key={currentStep.id} step={currentStep.id} direction={direction}>{step === 0 && <BasicStep form={form} availability={availability} onRetryAvailability={() => { void projects.refetch() }} />}{step === 1 && <PresetStep form={form} />}{step === 2 && <div className="space-y-6"><AuthStep form={form} /><StorageFunctionsStep form={form} /></div>}{step === 3 && <div className="space-y-6"><DatabaseNetworkStep form={form} /><ReviewStep project={values} /></div>}</WizardStepFrame>{(form.formState.errors.root || create.error) && <Alert variant="destructive" className="mt-4">{String(form.formState.errors.root?.message || create.error?.message)}</Alert>}<div className="wizard-footer"><Button variant="secondary" nativeButton={false} render={<Link to="/projects" />}><ArrowLeft size={15} />Cancel</Button><div className="flex gap-2">{step > 0 && <Button variant="secondary" type="button" onClick={() => moveToStep(step - 1)}><ArrowLeft size={15} />Back</Button>}{step < wizardSteps.length - 1 && <Button type="button" disabled={step === 0 && !firstStepCanContinue} onClick={next}>Continue<ArrowRight size={15} /></Button>}{step === wizardSteps.length - 1 && <Button type="submit" disabled={create.isPending}>{create.isPending ? <Box size={15} /> : <Rocket size={15} />}{create.isPending ? 'Creating operation…' : 'Install project'}</Button>}</div></div></form></Form></main>
 }
 
 function stepForError(errors: Record<string, unknown>): number {
@@ -59,8 +77,7 @@ function stepForError(errors: Record<string, unknown>): number {
   }
   const path = find(errors)?.join('.') ?? ''
   if (/^(name|slug|configuration\.general)/.test(path)) return 0
-  if (path.startsWith('configuration.auth')) return 2
-  if (path.startsWith('configuration.storage') || path.startsWith('configuration.functions')) return 3
-  if (path.startsWith('configuration.database') || path.startsWith('configuration.pooler') || path.startsWith('configuration.network')) return 4
+  if (path.startsWith('configuration.auth') || path.startsWith('configuration.storage') || path.startsWith('configuration.functions')) return 2
+  if (path.startsWith('configuration.database') || path.startsWith('configuration.pooler') || path.startsWith('configuration.network')) return 3
   return 1
 }

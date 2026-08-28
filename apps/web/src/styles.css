@@ -1362,6 +1362,48 @@ a.auth-template-row:hover {
 .wizard {
   overflow: visible;
 }
+.wizard-step-frame {
+  animation-duration: 200ms;
+  animation-fill-mode: both;
+  animation-timing-function: ease-out;
+}
+.wizard-step-frame[data-direction="forward"] {
+  animation-name: wizard-step-forward;
+}
+.wizard-step-frame[data-direction="backward"] {
+  animation-name: wizard-step-backward;
+}
+@keyframes wizard-step-forward {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes wizard-step-backward {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes wizard-step-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wizard-step-frame {
+    animation-duration: 1ms;
+    animation-name: wizard-step-fade;
+    transform: none;
+  }
+}
 .wizard-footer {
   display: flex;
   align-items: center;

@@ -30,8 +30,46 @@ it('does not render the setup tab navigation while creating a project', () => {
   )
 
   expect(screen.queryByRole('tab', { name: /1\. Basic/ })).not.toBeInTheDocument()
-  expect(screen.getByText('Step 1 of 6 · Basic')).toBeVisible()
+  expect(screen.getByText('Step 1 of 4 · Project details')).toBeVisible()
   expect(screen.getByRole('button', { name: /Continue/ })).toBeVisible()
+})
+
+it('moves through four steps with directional motion and focuses the next heading', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+  expect(screen.getByText('Step 2 of 4 · Services')).toBeVisible()
+  expect(screen.getByTestId('wizard-step-frame')).toHaveAttribute('data-direction', 'forward')
+  expect(screen.getByRole('heading', { level: 1, name: 'Create a project' })).toHaveFocus()
+  await user.click(screen.getByRole('button', { name: 'Back' }))
+  expect(screen.getByTestId('wizard-step-frame')).toHaveAttribute('data-direction', 'backward')
+  expect(screen.getByText('Step 1 of 4 · Project details')).toBeVisible()
+})
+
+it('keeps an invalid integrations step visible and focuses its first invalid control', async () => {
+  window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('switch', { name: 'Enable Google' }))
+  await user.type(screen.getByLabelText('Client ID'), 'client')
+  await user.type(screen.getByLabelText('Client secret'), ' ')
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+  const invalid = screen.getByLabelText('Client secret')
+  expect(screen.getByText('Step 3 of 4 · Security & integrations')).toBeVisible()
+  expect(invalid).toHaveAttribute('aria-invalid', 'true')
+  expect(invalid).toHaveFocus()
 })
 
 it('shows the identity fields in the Basic step', () => {
@@ -135,7 +173,7 @@ it('installs Lightweight after name and base site URL', async () => {
   expect(screen.getByLabelText('Project slug')).toHaveValue('production-api')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
-  await user.click(screen.getByRole('button', { name: 'Review' }))
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   expect(screen.getByText('Lightweight')).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Install project' }))
 
@@ -157,7 +195,7 @@ it('prefixes the Basic-step Site URL with HTTPS before submitting', async () => 
   expect(screen.getByText('https://')).toBeVisible()
   await user.type(screen.getByLabelText('Site URL hostname'), 'app.example.com')
   await waitForIdentityAvailability()
-  await user.click(screen.getByRole('button', { name: 'Review' }))
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
 
   await waitFor(() => expect(body?.configuration.general.siteUrl).toBe('https://app.example.com'))
@@ -182,18 +220,18 @@ it('collects Studio username and password during project creation', async () => 
   await user.type(screen.getByLabelText('Studio username'), 'admin')
   await user.type(screen.getByLabelText('Studio password'), 'strong-password')
   await waitForIdentityAvailability()
-  for (let index = 0; index < 5; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
   await waitFor(() => expect(body?.configuration.general).toMatchObject({ studioUsername: 'admin', studioPassword: { action: 'replace', value: 'strong-password' } }))
 })
 
-it('blocks the Review shortcut when required Basic fields are invalid', async () => {
+it('does not expose a Review shortcut when required Basic fields are invalid', async () => {
   const fetchSpy = vi.fn()
   vi.stubGlobal('fetch', fetchSpy)
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
+  expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
   expect(fetchSpy).toHaveBeenCalledWith('/api/projects', expect.anything())
 })
@@ -206,7 +244,7 @@ it('posts the complete aggregate after navigating every wizard step', async () =
   await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
-  for (let index = 0; index < 5; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
   await waitFor(() => expect(body?.configuration).toBeDefined())
   expect(body?.supabaseVersion).toBeUndefined()
@@ -237,10 +275,8 @@ it('uses Standard aggregate controls and closes Direct DB through Custom without
   expect(screen.getByRole('switch', { name: 'Storage' })).toBeChecked()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('switch', { name: 'Direct PostgreSQL port' }))
   expect(screen.getByRole('switch', { name: 'Direct PostgreSQL port' })).toBeChecked()
-  await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
   await waitFor(() => expect(body?.configuration).toBeDefined())
   expect(body?.preset).toBe('CUSTOM')
