@@ -80,6 +80,47 @@ func TestStoreApplyWritesRootOnlyStudioCredentialsAndRemoveDeletesThem(t *testin
 	}
 }
 
+func TestStoreApplyMakesStudioCredentialPathReadableByNginx(t *testing.T) {
+	available := t.TempDir()
+	enabled := t.TempDir()
+	parent := filepath.Join(t.TempDir(), "supabase-manager")
+	auth := filepath.Join(parent, "nginx-auth")
+	if err := os.MkdirAll(auth, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(auth, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewStore(available, enabled, auth, &recordingRunner{})
+	rendered := RenderedSite{
+		AvailableName: "supabase-manager-studio.conf",
+		Contents:      "new nginx config",
+		AuthDirectory: auth,
+		AuthFileName:  "supabase-manager-studio.htpasswd",
+		AuthContents:  "operator:$apr1$salt$Xxd1irWT9ycqoYxGFn4cb.\n",
+	}
+	if err := store.Apply(context.Background(), rendered); err != nil {
+		t.Fatal(err)
+	}
+
+	for path, want := range map[string]os.FileMode{
+		parent: 0o711,
+		auth:   0o755,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("mode for %s = %#o, want %#o", path, got, want)
+		}
+	}
+}
+
 func TestStoreApplyRestoresPreviousSiteWhenReloadFails(t *testing.T) {
 	available := t.TempDir()
 	enabled := t.TempDir()

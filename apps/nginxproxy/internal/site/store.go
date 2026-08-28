@@ -49,6 +49,11 @@ func (s Store) Apply(ctx context.Context, rendered RenderedSite) error {
 	if rendered.AuthDirectory != "" && filepath.Clean(rendered.AuthDirectory) != filepath.Clean(s.authDirectory) {
 		return fmt.Errorf("credential directory does not match Agent configuration")
 	}
+	if rendered.AuthFileName != "" && rendered.AuthContents != "" {
+		if err := s.ensureNginxCanReadCredentials(); err != nil {
+			return err
+		}
+	}
 
 	previous, err := s.snapshot(rendered.AvailableName, rendered.AuthFileName)
 	if err != nil {
@@ -74,6 +79,25 @@ func (s Store) Apply(ctx context.Context, rendered RenderedSite) error {
 	}
 	if err := s.runner.Reload(ctx); err != nil {
 		return s.restoreAfterFailure(ctx, rendered.AvailableName, rendered.AuthFileName, previous, fmt.Errorf("reload nginx: %w", err))
+	}
+	return nil
+}
+
+// ensureNginxCanReadCredentials repairs the host-owned permission boundary
+// whenever a project site creates or updates Studio Basic Auth credentials.
+// The agent owns this directory, while Nginx workers must traverse its parent
+// and read the generated APR1 hash file.
+func (s Store) ensureNginxCanReadCredentials() error {
+	authDirectory := filepath.Clean(s.authDirectory)
+	parentDirectory := filepath.Dir(authDirectory)
+	if parentDirectory == authDirectory || parentDirectory == string(filepath.Separator) {
+		return fmt.Errorf("credential directory must have a dedicated parent directory")
+	}
+	if err := os.Chmod(parentDirectory, 0o711); err != nil {
+		return fmt.Errorf("set credential parent directory permissions: %w", err)
+	}
+	if err := os.Chmod(authDirectory, 0o755); err != nil {
+		return fmt.Errorf("set credential directory permissions: %w", err)
 	}
 	return nil
 }
