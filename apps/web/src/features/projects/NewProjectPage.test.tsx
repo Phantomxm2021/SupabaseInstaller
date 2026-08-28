@@ -345,6 +345,98 @@ it('does not expose a Review shortcut when required Basic fields are invalid', a
   expect(fetchSpy).toHaveBeenCalledWith('/api/projects', expect.anything())
 })
 
+it('keeps infrastructure settings collapsed until their section is opened', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+  expect(screen.getByRole('button', { name: 'Database and Realtime settings' })).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.getByRole('button', { name: 'Connection pooler settings' })).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.getByRole('button', { name: 'Gateway and network settings' })).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByLabelText('HTTPS mode')).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: 'Gateway and network settings' }))
+  expect(screen.getByRole('button', { name: 'Gateway and network settings' })).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByLabelText('HTTPS mode')).toBeVisible()
+})
+
+it('redacts dynamic OAuth secrets in the final review summary', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Add authentication method' }))
+  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
+  await user.click(screen.getByRole('button', { name: 'Google' }))
+  await user.type(screen.getByLabelText('Client ID'), 'google-client')
+  await user.type(screen.getByLabelText('Client secret'), 'google-secret')
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+  expect(screen.getByText('Google (Configured)')).toBeVisible()
+  expect(screen.queryByText('google-secret')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Edit security and integrations' })).toBeVisible()
+})
+
+it('returns to project details and refreshes availability after a create conflict', async () => {
+  let createAttempted = false
+  const fetchSpy = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
+    createAttempted = true
+    return new Response(JSON.stringify({ error: { code: 'PROJECT_EXISTS', message: 'This project already exists' } }), { status: 409, headers: { 'Content-Type': 'application/json' } })
+  })
+  vi.stubGlobal('fetch', fetchSpy)
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Install project' }))
+
+  await waitFor(() => expect(createAttempted).toBe(true))
+  expect(await screen.findByText('This project already exists')).toBeVisible()
+  expect(screen.getByText('Step 1 of 4 · Project details')).toBeVisible()
+  await waitFor(() => expect(fetchSpy.mock.calls.filter(([, init]) => !init?.method || init.method === 'GET').length).toBeGreaterThan(1))
+})
+
+it('submits the normalized Standard service aggregate with a dynamically added OAuth provider', async () => {
+  let body: Record<string, any> | undefined
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
+    body = JSON.parse(String(init.body))
+    return new Response(JSON.stringify({ projectId: 'project-standard-oauth', operationId: 'operation-standard-oauth' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Standard' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Add authentication method' }))
+  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
+  await user.click(screen.getByRole('button', { name: 'Google' }))
+  await user.type(screen.getByLabelText('Client ID'), 'google-client')
+  await user.type(screen.getByLabelText('Client secret'), 'google-secret')
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Install project' }))
+
+  await waitFor(() => expect(body).toBeDefined())
+  expect(body).toMatchObject({ preset: 'CUSTOM', configuration: { services: { storage: true, functions: true, supavisor: true }, auth: { oauth: { google: { enabled: true, clientId: 'google-client', secret: { action: 'replace', value: 'google-secret' } } } } } })
+  expect(body?.configuration.network).not.toHaveProperty('certificate')
+})
+
 it('posts the complete aggregate after navigating every wizard step', async () => {
   let body: Record<string, any> | undefined
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { if (!init?.method || init.method === 'GET') return projectListResponse(); body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ projectId: 'project-2', operationId: 'operation-2' }), { status: 202, headers: { 'Content-Type': 'application/json' } }) }))
@@ -384,6 +476,7 @@ it('uses Standard aggregate controls and closes Direct DB through Custom without
   expect(screen.getByRole('switch', { name: 'Storage' })).toBeChecked()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Database and Realtime settings' }))
   await user.click(screen.getByRole('switch', { name: 'Direct PostgreSQL port' }))
   expect(screen.getByRole('switch', { name: 'Direct PostgreSQL port' })).toBeChecked()
   await user.click(screen.getByRole('button', { name: 'Install project' }))
