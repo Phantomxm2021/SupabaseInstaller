@@ -2,7 +2,25 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
+import { beforeEach } from 'vitest'
 import { NewProjectPage } from './NewProjectPage'
+
+const projectListResponse = (projects: unknown[] = []) => new Response(
+  JSON.stringify({ projects }),
+  { status: 200, headers: { 'Content-Type': 'application/json' } },
+)
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async () => projectListResponse()))
+})
+
+async function waitForIdentityAvailability() {
+  await waitFor(() => {
+    expect(screen.getByText('Project name is available')).toBeVisible()
+    expect(screen.getByText('Project slug is available')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
+  })
+}
 
 it('does not render the setup tab navigation while creating a project', () => {
   render(
@@ -16,7 +34,7 @@ it('does not render the setup tab navigation while creating a project', () => {
   expect(screen.getByRole('button', { name: /Continue/ })).toBeVisible()
 })
 
-it('shows only the five Basic project fields', () => {
+it('shows the identity fields in the Basic step', () => {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}>
       <MemoryRouter><NewProjectPage /></MemoryRouter>
@@ -24,17 +42,65 @@ it('shows only the five Basic project fields', () => {
   )
 
   expect(screen.getByLabelText('Project name')).toBeVisible()
+  expect(screen.getByLabelText('Project slug')).toBeVisible()
   expect(screen.getByLabelText('Site URL hostname')).toBeVisible()
   expect(screen.getByLabelText('Studio username')).toBeVisible()
   expect(screen.getByLabelText('Studio password')).toBeVisible()
-  expect(screen.getByLabelText('Pinned Supabase version')).toBeVisible()
-  expect(screen.queryByLabelText('Project slug')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Runtime settings' })).toBeVisible()
+  expect(screen.queryByLabelText('Pinned Supabase version')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Project URL')).not.toBeInTheDocument()
+})
+
+it('shows available project identity feedback before enabling Continue', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+
+  await waitForIdentityAvailability()
+  expect(screen.getAllByRole('status')).toHaveLength(2)
+  expect(screen.getAllByRole('status')[0]).toHaveAttribute('aria-live', 'polite')
+})
+
+it('blocks a duplicate project identity before progression', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => projectListResponse([{ name: 'Production API', slug: 'production-api' }])))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+
+  expect(await screen.findByText('A project named “Production API” already exists')).toBeVisible()
+  expect(screen.getByText('The slug “production-api” is already in use')).toBeVisible()
+  expect(screen.getByLabelText('Project name')).toHaveAttribute('aria-invalid', 'true')
+  expect(screen.getByLabelText('Project slug')).toHaveAttribute('aria-invalid', 'true')
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
+})
+
+it('shows a retryable availability check failure instead of a duplicate', async () => {
+  let attempts = 0
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    attempts += 1
+    if (attempts === 1) return new Response(JSON.stringify({ error: { message: 'Projects unavailable' } }), { status: 503, headers: { 'Content-Type': 'application/json' } })
+    return projectListResponse()
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+
+  expect(await screen.findByText('Could not check project name availability. Try again.')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
+  await user.click(screen.getAllByRole('button', { name: 'Retry' })[0])
+  await waitForIdentityAvailability()
 })
 
 it('installs Lightweight after name and base site URL', async () => {
   let createBody: Record<string, unknown> = {}
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
     createBody = JSON.parse(String(init?.body)) as Record<string, unknown>
     return new Response(JSON.stringify({ projectId: 'project-1', operationId: 'operation-1' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
   }))
@@ -46,8 +112,9 @@ it('installs Lightweight after name and base site URL', async () => {
   )
 
   await user.type(screen.getByLabelText('Project name'), 'Production API')
-  expect(screen.queryByLabelText('Project slug')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Project slug')).toHaveValue('production-api')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Review' }))
   expect(screen.getByText('Lightweight')).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Install project' }))
@@ -59,6 +126,7 @@ it('installs Lightweight after name and base site URL', async () => {
 it('prefixes the Basic-step Site URL with HTTPS before submitting', async () => {
   let body: Record<string, any> | undefined
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
     body = JSON.parse(String(init?.body))
     return new Response(JSON.stringify({ projectId: 'project-https', operationId: 'operation-https' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
   }))
@@ -68,6 +136,7 @@ it('prefixes the Basic-step Site URL with HTTPS before submitting', async () => 
   await user.type(screen.getByLabelText('Project name'), 'Production API')
   expect(screen.getByText('https://')).toBeVisible()
   await user.type(screen.getByLabelText('Site URL hostname'), 'app.example.com')
+  await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Review' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
 
@@ -77,6 +146,7 @@ it('prefixes the Basic-step Site URL with HTTPS before submitting', async () => 
 it('collects Studio username and password during project creation', async () => {
   let body: Record<string, any> | undefined
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
     body = JSON.parse(String(init?.body))
     return new Response(JSON.stringify({ projectId: 'project-studio', operationId: 'operation-studio' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
   }))
@@ -91,6 +161,7 @@ it('collects Studio username and password during project creation', async () => 
   await user.clear(screen.getByLabelText('Studio username'))
   await user.type(screen.getByLabelText('Studio username'), 'admin')
   await user.type(screen.getByLabelText('Studio password'), 'strong-password')
+  await waitForIdentityAvailability()
   for (let index = 0; index < 5; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
   await waitFor(() => expect(body?.configuration.general).toMatchObject({ studioUsername: 'admin', studioPassword: { action: 'replace', value: 'strong-password' } }))
@@ -102,19 +173,19 @@ it('blocks the Review shortcut when required Basic fields are invalid', async ()
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.click(screen.getByRole('button', { name: 'Review' }))
-  expect(screen.getByText('Project name is required')).toBeVisible()
-  expect(screen.getByLabelText('Project name')).toHaveAttribute('aria-invalid', 'true')
-  expect(fetchSpy).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
+  expect(fetchSpy).toHaveBeenCalledWith('/api/projects', expect.anything())
 })
 
 it('posts the complete aggregate after navigating every wizard step', async () => {
   let body: Record<string, any> | undefined
-  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ projectId: 'project-2', operationId: 'operation-2' }), { status: 202, headers: { 'Content-Type': 'application/json' } }) }))
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { if (!init?.method || init.method === 'GET') return projectListResponse(); body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ projectId: 'project-2', operationId: 'operation-2' }), { status: 202, headers: { 'Content-Type': 'application/json' } }) }))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
   for (let index = 0; index < 5; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
   await waitFor(() => expect(body?.configuration).toBeDefined())
@@ -134,11 +205,12 @@ it('posts the complete aggregate after navigating every wizard step', async () =
 it('uses Standard aggregate controls and closes Direct DB through Custom without a hard-coded port', async () => {
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   let body: Record<string, any> | undefined
-  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ projectId: 'project-3', operationId: 'operation-3' }), { status: 202, headers: { 'Content-Type': 'application/json' } }) }))
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { if (!init?.method || init.method === 'GET') return projectListResponse(); body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ projectId: 'project-3', operationId: 'operation-3' }), { status: 202, headers: { 'Content-Type': 'application/json' } }) }))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Standard' }))
   expect(screen.getByRole('switch', { name: 'Edge Functions' })).toBeChecked()
@@ -165,6 +237,7 @@ it('restores the full dependency closure when a feature is enabled again', async
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('switch', { name: 'Authentication' }))
   await user.click(screen.getByRole('switch', { name: 'PostgREST' }))
@@ -182,6 +255,7 @@ it('enabling Storage or Image Transformation atomically restores database, REST,
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('switch', { name: 'PostgREST' }))
   expect(screen.getByRole('switch', { name: 'PostgREST' })).not.toBeChecked()
@@ -200,6 +274,7 @@ it('renders nested OAuth secret value errors at the secret control', async () =>
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('switch', { name: 'Enable Google' }))

@@ -4,7 +4,10 @@ import { Field, FieldError, FieldLabel, FieldGroup } from '@/components/ui/field
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type { ProjectForm } from './projectSchema'
+import type { ProjectIdentityAvailability } from './wizard/useProjectIdentityAvailability'
+import type { Availability } from './wizard/types'
 
 const httpsPrefix = 'https://'
 
@@ -17,13 +20,32 @@ function siteURLFromHostname(value: string) {
   return hostname ? `${httpsPrefix}${hostname}` : ''
 }
 
-export function BasicStep({ form }: { form: UseFormReturn<ProjectForm> }) {
+function AvailabilityFeedback({ availability, retry }: { availability: Availability; retry?: () => void }) {
+  if (availability.status === 'idle') return null
+  const message = availability.message ?? 'Checking availability…'
+  return <div role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
+    <span>{message}</span>
+    {availability.status === 'unavailable' && retry && <button type="button" className="underline" onClick={retry}>Retry</button>}
+  </div>
+}
+
+export function BasicStep({
+  form,
+  availability,
+  onRetryAvailability,
+}: {
+  form: UseFormReturn<ProjectForm>
+  availability: ProjectIdentityAvailability
+  onRetryAvailability?: () => void
+}) {
   const error = (name: string) => {
     let current: any = form.formState.errors
     for (const part of name.split('.')) current = current?.[part]
     return current?.message as string | undefined
   }
   const siteURL = form.watch('configuration.general.siteUrl')
+  const nameError = error('name')
+  const slugError = error('slug')
   const studioPasswordError = error('configuration.general.studioPassword')
 
   return (
@@ -39,9 +61,23 @@ export function BasicStep({ form }: { form: UseFormReturn<ProjectForm> }) {
             name="name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Project name</FormLabel>
-                <FormControl><Input autoFocus placeholder="Production API" {...field} /></FormControl>
+                <FormLabel htmlFor="project-name">Project name</FormLabel>
+                <Input id="project-name" autoFocus placeholder="Production API" {...field} aria-invalid={!!nameError || availability.name.status === 'conflict'} />
                 <FormMessage />
+                <AvailabilityFeedback availability={availability.name} retry={onRetryAvailability} />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="slug"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel htmlFor="project-slug">Project slug</FormLabel>
+                <Input id="project-slug" placeholder="production-api" {...field} aria-invalid={!!slugError || availability.slug.status === 'conflict'} />
+                <FormMessage />
+                <AvailabilityFeedback availability={availability.slug} retry={onRetryAvailability} />
               </FormItem>
             )}
           />
@@ -80,13 +116,18 @@ export function BasicStep({ form }: { form: UseFormReturn<ProjectForm> }) {
             <FieldError>{studioPasswordError}</FieldError>
           </Field>
 
-          <Field>
-            <FieldLabel>Supabase version</FieldLabel>
-            <Select value={form.watch('configuration.general.supabaseVersion')} onValueChange={(value) => form.setValue('configuration.general.supabaseVersion', value as any, { shouldDirty: true, shouldValidate: true })}>
-              <SelectTrigger aria-label="Pinned Supabase version"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="self-hosted/v0.8.0">self-hosted/v0.8.0</SelectItem></SelectContent>
-            </Select>
-          </Field>
+          <Collapsible>
+            <CollapsibleTrigger className="font-medium">Runtime settings</CollapsibleTrigger>
+            <CollapsibleContent className="mt-4">
+              <Field>
+                <FieldLabel>Supabase version</FieldLabel>
+                <Select value={form.watch('configuration.general.supabaseVersion')} onValueChange={(value) => form.setValue('configuration.general.supabaseVersion', value as any, { shouldDirty: true, shouldValidate: true })}>
+                  <SelectTrigger aria-label="Pinned Supabase version"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="self-hosted/v0.8.0">self-hosted/v0.8.0</SelectItem></SelectContent>
+                </Select>
+              </Field>
+            </CollapsibleContent>
+          </Collapsible>
         </FieldGroup>
       </CardContent>
     </Card>
