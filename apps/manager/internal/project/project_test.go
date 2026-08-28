@@ -1,16 +1,50 @@
 package project
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	managersecrets "supabase-manager/apps/manager/internal/secrets"
+	"supabase-manager/apps/manager/internal/store"
 	"supabase-manager/internal/contracts"
 )
 
 func TestNormalizeSlugProducesDNSCompatibleIdentifier(t *testing.T) {
 	if got := NormalizeSlug("  My Bee 2!  "); got != "my-bee-2" {
 		t.Fatalf("NormalizeSlug() = %q, want my-bee-2", got)
+	}
+}
+
+func TestNormalizeProjectAddressDerivesDomainFromSlugAndBaseSiteURL(t *testing.T) {
+	general := contracts.GeneralConfig{
+		// Domain is client-controlled input today; it must never define the
+		// public runtime address.
+		Domain:  "untrusted.example.net",
+		SiteURL: "https://BeeGame.Studio/",
+	}
+
+	if err := NormalizeProjectAddress("bgs", &general); err != nil {
+		t.Fatal(err)
+	}
+	if general.Domain != "bgs.beegame.studio" {
+		t.Fatalf("Domain = %q, want bgs.beegame.studio", general.Domain)
+	}
+	if general.SiteURL != "https://beegame.studio" {
+		t.Fatalf("SiteURL = %q, want canonical base URL", general.SiteURL)
+	}
+}
+
+func TestNormalizeProjectAddressRejectsNonHostnameBaseURL(t *testing.T) {
+	general := contracts.GeneralConfig{SiteURL: "https://beegame.studio/path"}
+
+	err := NormalizeProjectAddress("bee", &general)
+	if err == nil || !strings.Contains(err.Error(), "base hostname") {
+		t.Fatalf("NormalizeProjectAddress() error = %v, want base hostname validation", err)
 	}
 }
 
@@ -55,6 +89,43 @@ func TestProjectJSONDoesNotExposeConfigurationSecrets(t *testing.T) {
 		if strings.Contains(string(payload), secret) {
 			t.Fatalf("Project JSON leaked %q: %s", secret, payload)
 		}
+	}
+}
+
+func TestCreateEncryptsConfiguredStudioPassword(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cipher, err := managersecrets.NewCipher(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewServiceWithCipher(database, func() string { return "studio-project" }, time.Now, cipher)
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General.Domain = "studio.example.com"
+	cfg.General.SiteURL = "https://studio.example.com"
+	cfg.General.StudioUsername = "admin"
+	cfg.General.StudioPassword = contracts.SecretInput{Action: "replace", Value: "studio-password"}
+	created, err := service.Create(context.Background(), Draft{Name: "Studio", Slug: "studio", Preset: contracts.PresetLightweight, Configuration: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := database.GetSecret(context.Background(), created.ID, "dashboard-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, err := cipher.Decrypt(created.ID, "dashboard-password", envelope)
+	if err != nil || string(plaintext) != "studio-password" {
+		t.Fatalf("decrypted Studio password = %q, err = %v", plaintext, err)
+	}
+	snapshot, err := database.GetConfiguration(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Configuration.General.StudioPassword.Value != "" || snapshot.Configuration.General.StudioPassword.Action != "" || !snapshot.Configuration.General.StudioPasswordSet {
+		t.Fatalf("stored configuration exposed Studio password: %#v", snapshot.Configuration.General.StudioPassword)
 	}
 }
 

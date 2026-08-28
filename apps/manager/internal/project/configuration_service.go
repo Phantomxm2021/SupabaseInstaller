@@ -66,9 +66,25 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	if err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
+	project, err := s.store.GetProject(ctx, projectID)
+	if err != nil {
+		return contracts.ProjectConfiguration{}, err
+	}
 	cfg := base.Configuration
 	if patch.Configuration != nil {
 		cfg = *patch.Configuration
+		// Pre-domain-model snapshots did not always persist General in the
+		// aggregate. Preserve the stored projection while they are edited; an
+		// explicit General patch still requires a base domain.
+		if cfg.General.SiteURL == "" {
+			cfg.General.SiteURL = project.SiteURL
+		}
+		if cfg.General.Domain == "" {
+			cfg.General.Domain = project.Domain
+		}
+		if cfg.General.SupabaseVersion == "" {
+			cfg.General.SupabaseVersion = project.SupabaseVersion
+		}
 	}
 	if patch.General != nil {
 		cfg.General = *patch.General
@@ -110,6 +126,9 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	// validation can inspect the stored secret without treating an untouched
 	// redacted marker as an incoming command.
 	restoreUntouchedSecretActions(&cfg, &base.Configuration, patch)
+	if err := NormalizeProjectAddress(project.Slug, &cfg.General); err != nil {
+		return contracts.ProjectConfiguration{}, err
+	}
 	if err := ValidateConfiguration(cfg); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
@@ -143,6 +162,9 @@ func requireExplicitSecretActionsForPatch(patch contracts.ConfigurationPatch) er
 }
 
 func requireExplicitSecretActions(cfg contracts.ProjectConfiguration) error {
+	if cfg.General.StudioPasswordSet && cfg.General.StudioPassword.Action == "" {
+		return fmt.Errorf("general.studioPassword requires explicit retain, remove, or replace action")
+	}
 	if err := requireExplicitAuthSecretActions(&cfg.Auth); err != nil {
 		return err
 	}
@@ -174,6 +196,9 @@ func requireExplicitAuthSecretActions(auth *contracts.AuthConfig) error {
 
 func restoreUntouchedSecretActions(cfg, base *contracts.ProjectConfiguration, patch contracts.ConfigurationPatch) {
 	allIncoming := patch.Configuration != nil
+	if base.General.StudioPasswordSet && cfg.General.StudioPassword.Action == "" {
+		cfg.General.StudioPassword.Action = "retain"
+	}
 	if !allIncoming && patch.Auth == nil {
 		if base.Auth.SMTP.PasswordSet && cfg.Auth.SMTP.Password.Action == "" {
 			cfg.Auth.SMTP.Password.Action = "retain"
@@ -235,6 +260,9 @@ func (s *ConfigurationService) secretMutations(ctx context.Context, projectID st
 		input.Value = ""
 		input.Action = ""
 		return nil
+	}
+	if err := add("dashboard-password", &cfg.General.StudioPassword, &cfg.General.StudioPasswordSet); err != nil {
+		return nil, err
 	}
 	if err := add("smtp.password", &cfg.Auth.SMTP.Password, &cfg.Auth.SMTP.PasswordSet); err != nil {
 		return nil, err

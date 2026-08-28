@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	provisionersecrets "supabase-manager/apps/provisioner/internal/secrets"
 	"supabase-manager/internal/contracts"
 )
 
@@ -60,6 +61,24 @@ func TestWriteRepresentativeRenderFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+}
+
+func TestRenderUsesConfiguredStudioCredentials(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.General.StudioUsername = "studio-admin"
+	out, err := Project(Input{
+		Slug: "studio-creds", APIPort: 18001, Configuration: cfg,
+		Secrets: provisionersecrets.ProjectSecrets{DashboardPassword: "studio-password"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "DASHBOARD_USERNAME=studio-admin\n") {
+		t.Fatalf("rendered env missing configured studio username: %s", out.Env)
+	}
+	if !strings.Contains(out.Env, "DASHBOARD_PASSWORD=studio-password\n") {
+		t.Fatalf("rendered env missing configured studio password: %s", out.Env)
 	}
 }
 
@@ -171,6 +190,20 @@ func TestRenderCustomAuthAndSMTP(t *testing.T) {
 	}
 	if !strings.Contains(out.Compose, "GOTRUE_EXTERNAL_GOOGLE_ENABLED") {
 		t.Fatal("Google mapping missing from Auth service")
+	}
+}
+
+func TestRenderUsesDerivedProjectDomainForSiteURL(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.General.Domain = "bee.beegame.studio"
+	cfg.General.SiteURL = "https://beegame.studio"
+
+	out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, TemplateCompose: []byte(testCompose)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "SITE_URL=https://bee.beegame.studio") {
+		t.Fatalf("runtime SITE_URL does not use the project address:\n%s", out.Env)
 	}
 }
 
@@ -297,20 +330,6 @@ func TestRenderRequiresMarkedRuntimeSecrets(t *testing.T) {
 	cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: true, SecretSet: true}}
 	if _, err := Project(Input{Slug: "missing", APIPort: 18001, Configuration: cfg, RuntimeSecrets: map[string]string{"smtp.password": "ok"}}); err == nil || !strings.Contains(err.Error(), "oauth.google.secret") {
 		t.Fatal("missing OAuth secret was accepted")
-	}
-}
-
-func TestRenderDotEnvQuotesInjectionCharacters(t *testing.T) {
-	cfg := testConfiguration()
-	cfg.General.SiteURL = `https://example.com/a # comment $HOME "x`
-	out, err := Project(Input{Slug: "quoted", APIPort: 18001, Configuration: cfg})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, line := range strings.Split(out.Env, "\n") {
-		if strings.HasPrefix(line, "SITE_URL=") && !strings.Contains(line, `"`) {
-			t.Fatalf("SITE_URL was not safely encoded: %q", line)
-		}
 	}
 }
 
@@ -548,14 +567,6 @@ func TestRenderAuthSignupAndEmailChangeTruthTables(t *testing.T) {
 			}
 		}
 	})
-}
-
-func TestRenderRejectsUnicodeControlInjection(t *testing.T) {
-	cfg := testConfiguration()
-	cfg.General.SiteURL = "https://example.com/\u0085"
-	if _, err := Project(Input{Slug: "control", APIPort: 18001, Configuration: cfg}); err == nil || !strings.Contains(err.Error(), "control character") {
-		t.Fatal("C1 control character was accepted")
-	}
 }
 
 func TestRenderRequiresGeneratedRealtimeCredential(t *testing.T) {

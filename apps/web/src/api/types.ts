@@ -54,6 +54,9 @@ export interface GeneralConfig {
   domain: string;
   siteUrl: string;
   supabaseVersion: string;
+  studioUsername?: string;
+  studioPasswordSet?: boolean;
+  studioPassword?: SecretInput;
 }
 export interface EmailAuthConfig {
   enabled: boolean;

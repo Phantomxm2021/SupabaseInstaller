@@ -41,12 +41,13 @@ func renderEnvironment(input Input) (string, string, error) {
 	if err := requireRuntimeSecrets(input); err != nil {
 		return "", "", err
 	}
-	domain, siteURL := cfg.General.Domain, cfg.General.SiteURL
+	domain := cfg.General.Domain
 	values := map[string]string{
 		"ANON_KEY": input.Secrets.AnonKey, "API_EXTERNAL_URL": "https://" + domain + "/auth/v1",
+		"DASHBOARD_USERNAME": firstNonempty(strings.TrimSpace(cfg.General.StudioUsername), "supabase"),
 		"DASHBOARD_PASSWORD": input.Secrets.DashboardPassword, "JWT_SECRET": input.Secrets.JWTSecret,
 		"POSTGRES_PASSWORD": input.Secrets.DatabasePassword, "SECRET_KEY_BASE": input.Secrets.SecretKeyBase,
-		"SERVICE_ROLE_KEY": input.Secrets.ServiceRoleKey, "SITE_URL": siteURL,
+		"SERVICE_ROLE_KEY": input.Secrets.ServiceRoleKey, "SITE_URL": "https://" + domain,
 		"SUPABASE_PUBLIC_URL": "https://" + domain, "VAULT_ENC_KEY": input.Secrets.VaultEncryptionKey,
 		"PG_META_CRYPTO_KEY":  input.Secrets.SecretKeyBase,
 		"REALTIME_DB_ENC_KEY": firstNonempty(input.RuntimeSecrets["realtime.dbEncryptionKey"], input.Secrets.RealtimeDBEncryptionKey), "OPENAI_API_KEY": "",
@@ -589,6 +590,6 @@ func injectServiceConfiguration(services map[string]any, input Input) error {
 }
 
 func isReservedRuntimeKey(key string) bool {
-	reserved := map[string]bool{"POSTGRES_PASSWORD": true, "JWT_SECRET": true, "ANON_KEY": true, "SERVICE_ROLE_KEY": true, "DASHBOARD_PASSWORD": true, "SECRET_KEY_BASE": true, "VAULT_ENC_KEY": true, "SMTP_PASS": true, "AWS_SECRET_ACCESS_KEY": true, "PHONE_SECRET": true, "SUPABASE_URL": true, "SUPABASE_PUBLIC_URL": true, "FUNCTIONS_VERIFY_JWT": true}
+	reserved := map[string]bool{"POSTGRES_PASSWORD": true, "JWT_SECRET": true, "ANON_KEY": true, "SERVICE_ROLE_KEY": true, "DASHBOARD_USERNAME": true, "DASHBOARD_PASSWORD": true, "SECRET_KEY_BASE": true, "VAULT_ENC_KEY": true, "SMTP_PASS": true, "AWS_SECRET_ACCESS_KEY": true, "PHONE_SECRET": true, "SUPABASE_URL": true, "SUPABASE_PUBLIC_URL": true, "FUNCTIONS_VERIFY_JWT": true}
 	return reserved[key]
 }

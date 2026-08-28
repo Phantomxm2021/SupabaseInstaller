@@ -36,9 +36,12 @@ type SecretInput struct {
 }
 
 type GeneralConfig struct {
-	Domain          string `json:"domain"`
-	SiteURL         string `json:"siteUrl"`
-	SupabaseVersion string `json:"supabaseVersion"`
+	Domain            string      `json:"domain"`
+	SiteURL           string      `json:"siteUrl"`
+	SupabaseVersion   string      `json:"supabaseVersion"`
+	StudioUsername    string      `json:"studioUsername"`
+	StudioPasswordSet bool        `json:"studioPasswordSet"`
+	StudioPassword    SecretInput `json:"studioPassword,omitempty"`
 }
 
 type EmailAuthConfig struct {

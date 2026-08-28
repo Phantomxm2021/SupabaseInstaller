@@ -16,7 +16,22 @@ it('does not render the setup tab navigation while creating a project', () => {
   expect(screen.getByRole('button', { name: /Continue/ })).toBeVisible()
 })
 
-it('installs Lightweight after name, domain, and site URL', async () => {
+it('derives the project address from the slug and base domain', async () => {
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}>
+      <MemoryRouter><NewProjectPage /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+
+  await user.type(screen.getByLabelText('Project name'), 'Bee Game')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'beegame.studio')
+
+  expect(screen.queryByLabelText('Domain')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Project URL')).toHaveValue('https://bee-game.beegame.studio')
+})
+
+it('installs Lightweight after name and base site URL', async () => {
   let createBody: Record<string, unknown> = {}
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     createBody = JSON.parse(String(init?.body)) as Record<string, unknown>
@@ -31,7 +46,6 @@ it('installs Lightweight after name, domain, and site URL', async () => {
 
   await user.type(screen.getByLabelText('Project name'), 'Bee')
   expect(screen.getByLabelText('Project slug')).toHaveValue('bee')
-  await user.type(screen.getByLabelText('Domain'), 'bee.example.com')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Review' }))
   expect(screen.getByText('Lightweight')).toBeVisible()
@@ -51,13 +65,34 @@ it('prefixes the Basic-step Site URL with HTTPS before submitting', async () => 
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
   await user.type(screen.getByLabelText('Project name'), 'Bee')
-  await user.type(screen.getByLabelText('Domain'), 'bee.example.com')
   expect(screen.getByText('https://')).toBeVisible()
   await user.type(screen.getByLabelText('Site URL hostname'), 'app.example.com')
   await user.click(screen.getByRole('button', { name: 'Review' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
 
   await waitFor(() => expect(body?.configuration.general.siteUrl).toBe('https://app.example.com'))
+})
+
+it('collects Studio username and password during project creation', async () => {
+  let body: Record<string, any> | undefined
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body))
+    return new Response(JSON.stringify({ projectId: 'project-studio', operationId: 'operation-studio' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Bee')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+
+  expect(screen.getByLabelText('Studio username')).toBeVisible()
+  expect(screen.getByLabelText('Studio password')).toHaveAttribute('type', 'password')
+  await user.clear(screen.getByLabelText('Studio username'))
+  await user.type(screen.getByLabelText('Studio username'), 'admin')
+  await user.type(screen.getByLabelText('Studio password'), 'strong-password')
+  for (let index = 0; index < 5; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await waitFor(() => expect(body?.configuration.general).toMatchObject({ studioUsername: 'admin', studioPassword: { action: 'replace', value: 'strong-password' } }))
 })
 
 it('blocks the Review shortcut when required Basic fields are invalid', async () => {
@@ -78,7 +113,6 @@ it('posts the complete aggregate after navigating every wizard step', async () =
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Bee')
-  await user.type(screen.getByLabelText('Domain'), 'bee.example.com')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   for (let index = 0; index < 5; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
@@ -103,7 +137,6 @@ it('uses Standard aggregate controls and closes Direct DB through Custom without
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Bee')
-  await user.type(screen.getByLabelText('Domain'), 'bee.example.com')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Standard' }))
@@ -130,7 +163,6 @@ it('restores the full dependency closure when a feature is enabled again', async
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Bee')
-  await user.type(screen.getByLabelText('Domain'), 'bee.example.com')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('switch', { name: 'Authentication' }))
@@ -148,7 +180,6 @@ it('enabling Storage or Image Transformation atomically restores database, REST,
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Bee')
-  await user.type(screen.getByLabelText('Domain'), 'bee.example.com')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('switch', { name: 'PostgREST' }))
@@ -167,7 +198,6 @@ it('renders nested OAuth secret value errors at the secret control', async () =>
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
   await user.type(screen.getByLabelText('Project name'), 'Bee')
-  await user.type(screen.getByLabelText('Domain'), 'bee.example.com')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))

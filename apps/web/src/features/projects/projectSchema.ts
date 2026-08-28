@@ -104,6 +104,15 @@ export const validDomain = (value: string) => {
     .split(".")
     .every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
 };
+
+export const projectDomainFromBase = (slug: string, siteUrl: string) => {
+  const base = siteUrl
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/$/, "")
+    .toLowerCase();
+  return slug && base ? `${slug.toLowerCase()}.${base}` : "";
+};
 export const redactedSecretSchema = z.object({
   action: z.literal(""),
   value: z.never().optional(),
@@ -653,6 +662,9 @@ const baseConfiguration = z.object({
     domain: z.string(),
     siteUrl: z.string(),
     supabaseVersion: z.literal(SUPABASE_VERSION),
+    studioUsername: z.string().trim().min(1, "Studio username is required").default("supabase"),
+    studioPasswordSet: z.boolean().default(false),
+    studioPassword: secret.default({ action: "" }),
   }),
   services,
   auth,
@@ -828,12 +840,6 @@ export const projectSchema = z
     configuration: projectConfigurationSchema,
   })
   .superRefine((value, context) => {
-    if (!validDomain(value.configuration.general.domain))
-      context.addIssue({
-        code: "custom",
-        path: ["configuration", "general", "domain"],
-        message: "Enter a valid DNS hostname",
-      });
     if (!url().safeParse(value.configuration.general.siteUrl).success)
       context.addIssue({
         code: "custom",
@@ -890,7 +896,7 @@ export function defaultConfiguration(
   const selected = applyPreset(preset);
   return {
     revision: 0,
-    general: { domain: "", siteUrl: "", supabaseVersion: SUPABASE_VERSION },
+    general: { domain: "", siteUrl: "", supabaseVersion: SUPABASE_VERSION, studioUsername: "supabase", studioPasswordSet: false, studioPassword: emptySecret() },
     services: selected,
     auth: {
       enabled: selected.auth,

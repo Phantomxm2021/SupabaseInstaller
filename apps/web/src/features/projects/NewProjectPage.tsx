@@ -27,7 +27,7 @@ export function NewProjectPage() {
   const create = useMutation({ mutationFn: (value: ProjectForm) => { const configuration = normalizeCreateConfiguration(value.configuration); const body: CreateProjectRequest = { name: value.name, slug: value.slug, preset: value.preset, configuration }; return apiFetch<{ projectId: string; operationId: string }>('/api/projects', { method: 'POST', body: JSON.stringify(body) }) }, onSuccess: setOperation })
   if (operation) return <main className="page narrow-page"><div className="page-heading"><div><p className="eyebrow">Installation in progress</p><h1>Installing {values.name}</h1><p className="muted">You can leave this page. Progress is stored on the server.</p></div></div><OperationPanel operationId={operation.operationId} projectId={operation.projectId} projectName={values.name} onSucceeded={(projectId) => navigate(`/projects/${projectId}/overview`, { replace: true })} onDeleted={() => navigate('/projects', { replace: true })} /></main>
   const validateAnd = async (target: number) => {
-    const scope = target === 5 ? undefined : step === 0 ? ['name', 'slug', 'configuration.general.domain', 'configuration.general.siteUrl'] : undefined
+    const scope = target === 5 ? undefined : step === 0 ? ['name', 'slug', 'configuration.general.siteUrl'] : undefined
     await form.trigger(scope as any)
     await form.handleSubmit(() => setStep(target), () => undefined)()
   }

@@ -14,9 +14,9 @@ export function OverviewPage() {
   if (project.error) return <main className="page"><Alert variant="destructive">{project.error.message}</Alert></main>
   if (!project.data) return null
   const data = project.data
-  // Studio is served from the configured Site URL. Keep the domain fallback
-  // for projects created before Site URL was persisted in the project record.
-  const studioURL = data.siteUrl || (data.domain ? `https://${data.domain}` : '')
+  // Studio is served from the project's public Domain. Keep the Site URL
+  // fallback for legacy records that do not have a Domain yet.
+  const studioURL = data.domain ? `https://${data.domain}` : data.siteUrl
   const enabledServiceCount = Object.values(data.services).filter(Boolean).length
   return <main className="page project-overview-page">
     <header className="project-overview-header">

@@ -4,9 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { OverviewPage } from './OverviewPage'
 
-it('opens the configured site URL in Supabase Studio when Studio is healthy', async () => {
+it('opens the configured domain in Supabase Studio when Studio is healthy', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-    id: 'bee', name: 'Bee', slug: 'bee', domain: 'bee.example.com', siteUrl: 'https://studio.example.com', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'self-hosted/v0.8.0', preset: 'LIGHTWEIGHT',
+    id: 'bee', name: 'Bee', slug: 'bee', domain: 'studio.example.com', siteUrl: 'https://app.example.com', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'self-hosted/v0.8.0', preset: 'LIGHTWEIGHT',
     services: { database: true, gateway: true, auth: true, rest: true, studio: true, postgresMeta: true },
   }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/overview']}><Routes><Route path="/projects/:projectId/overview" element={<OverviewPage />} /></Routes></MemoryRouter></QueryClientProvider>)

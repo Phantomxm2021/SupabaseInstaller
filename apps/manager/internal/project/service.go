@@ -31,10 +31,14 @@ func NewServiceWithCipher(store *store.Store, id func() string, now func() time.
 }
 
 func (s *Service) Create(ctx context.Context, draft Draft) (Project, error) {
+	configuration := draft.Configuration
+	if err := NormalizeProjectAddress(draft.Slug, &configuration.General); err != nil {
+		return Project{}, err
+	}
+	draft.Configuration = configuration
 	if err := ValidateDraft(draft); err != nil {
 		return Project{}, err
 	}
-	configuration := draft.Configuration
 	now := s.now()
 	project := contracts.Project{
 		ID: s.id(), Name: strings.TrimSpace(draft.Name), Slug: draft.Slug, Domain: configuration.General.Domain,
@@ -103,6 +107,9 @@ func (s *Service) encryptConfigurationSecrets(projectID string, cfg *contracts.P
 		input.Action = ""
 		input.Value = ""
 		return nil
+	}
+	if err := add("dashboard-password", &cfg.General.StudioPassword, &cfg.General.StudioPasswordSet); err != nil {
+		return nil, err
 	}
 	if err := add("smtp.password", &cfg.Auth.SMTP.Password, &cfg.Auth.SMTP.PasswordSet); err != nil {
 		return nil, err

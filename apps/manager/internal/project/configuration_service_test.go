@@ -354,6 +354,29 @@ func TestConfigurationServicePartialGeneralPatchPreservesConfiguredSecrets(t *te
 	}
 }
 
+func TestConfigurationServiceDerivesDomainFromProjectSlugAndBaseSiteURL(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "project-derived-domain", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewConfigurationService(database, nil, time.Now)
+	got, err := service.PreparePatch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &contracts.GeneralConfig{Domain: "untrusted.example.net", SiteURL: "https://beegame.studio", SupabaseVersion: "self-hosted/v0.8.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.General.Domain != "bee.beegame.studio" || got.General.SiteURL != "https://beegame.studio" {
+		t.Fatalf("derived general configuration = %#v", got.General)
+	}
+}
+
 func TestConfigurationServicePartialGeneralPatchAcceptsDefaultLocalAndDisabledPhone(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
@@ -361,6 +384,7 @@ func TestConfigurationServicePartialGeneralPatchAcceptsDefaultLocalAndDisabledPh
 	}
 	defer database.Close()
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	project := contracts.Project{ID: "project-1", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0", Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
 		t.Fatal(err)
@@ -378,6 +402,7 @@ func TestConfigurationServiceIgnoresStaleClientRevision(t *testing.T) {
 	}
 	defer database.Close()
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	project := contracts.Project{ID: "project-1", Slug: "bee", Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0", Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
 		t.Fatal(err)

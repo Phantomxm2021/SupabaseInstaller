@@ -44,7 +44,7 @@ func (e *ValidationError) add(field, message string) {
 // DefaultConfiguration returns a complete safe configuration for a preset.
 func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguration {
 	return contracts.ProjectConfiguration{
-		General:  contracts.GeneralConfig{SupabaseVersion: "self-hosted/v0.8.0"},
+		General:  contracts.GeneralConfig{SupabaseVersion: "self-hosted/v0.8.0", StudioUsername: "supabase"},
 		Services: ApplyPreset(preset),
 		Auth: contracts.AuthConfig{
 			Enabled:       true,
@@ -143,6 +143,9 @@ func ValidateConfiguration(cfg contracts.ProjectConfiguration) error {
 // configured secret has an empty action by design; command validation remains
 // strict at PreparePatch/Save boundaries.
 func ValidateStoredConfiguration(cfg contracts.ProjectConfiguration) error {
+	if cfg.General.StudioPasswordSet && cfg.General.StudioPassword.Action == "" {
+		cfg.General.StudioPassword.Action = "retain"
+	}
 	if cfg.Auth.SMTP.PasswordSet && cfg.Auth.SMTP.Password.Action == "" {
 		cfg.Auth.SMTP.Password.Action = "retain"
 	}
