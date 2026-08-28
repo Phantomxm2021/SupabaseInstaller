@@ -111,6 +111,26 @@ func TestRetryEndpointCreatesNewInstallationOperation(t *testing.T) {
 	}
 }
 
+func TestListProjectsUsesLiveProvisionerHealth(t *testing.T) {
+	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	defer database.Close()
+	projects := project.NewService(database, func() string { return "project-1" }, time.Now)
+	created, _ := projects.Create(context.Background(), projectDraftFixture())
+	if err := database.UpdateProjectStatus(context.Background(), created.ID, contracts.ProjectStatusFailed, contracts.HealthUnhealthy); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterProjectRoutes(mux, ProjectOptions{Projects: projects, Installer: &fakeInstaller{}, Inspector: fakeInspector{health: contracts.HealthHealthy}})
+	request := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"health":"HEALTHY"`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 type fakeInstaller struct{ projectID string }
 
 func projectDraftFixture() contracts.ProjectDraft {
@@ -142,4 +162,10 @@ func (fake *fakeLifecycle) ForceDelete(context.Context, contracts.Project, lifec
 }
 func (*fakeInstaller) Run(context.Context, contracts.Project, operation.Operation) (operation.Operation, error) {
 	return operation.Operation{ID: "operation-1", Status: operation.Succeeded}, nil
+}
+
+type fakeInspector struct{ health contracts.HealthStatus }
+
+func (fake fakeInspector) Inspect(_ context.Context, request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
+	return contracts.InspectProjectResponse{ProjectID: request.ProjectID, Health: fake.health}, nil
 }

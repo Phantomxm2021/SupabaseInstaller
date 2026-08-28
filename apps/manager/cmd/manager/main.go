@@ -74,7 +74,7 @@ func main() {
 	lifecycleManager := lifecycle.NewService(database, operations, provisionerClient)
 	api := httpapi.NewRouter(httpapi.RouterOptions{
 		Auth:          httpapi.AuthOptions{Service: adminAuth, PublicOrigin: cfg.PublicOrigin, SecureCookies: cfg.SecureCookies},
-		Projects:      httpapi.ProjectOptions{Projects: projects, AuthAdmin: authAdmin, Installer: installer, Lifecycle: lifecycleManager},
+		Projects:      httpapi.ProjectOptions{Projects: projects, AuthAdmin: authAdmin, Installer: installer, Inspector: provisionerClient, Lifecycle: lifecycleManager},
 		HostResources: provisionerClient,
 		Operations:    operations,
 		Configuration: configurationManager,

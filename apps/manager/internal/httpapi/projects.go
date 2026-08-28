@@ -9,6 +9,7 @@ import (
 
 	"supabase-manager/apps/manager/internal/authadmin"
 	"supabase-manager/apps/manager/internal/configuration"
+	"supabase-manager/apps/manager/internal/install"
 	"supabase-manager/apps/manager/internal/lifecycle"
 	"supabase-manager/apps/manager/internal/operation"
 	"supabase-manager/apps/manager/internal/project"
@@ -21,6 +22,13 @@ type Installer interface {
 	Run(ctx context.Context, project contracts.Project, operation operation.Operation) (operation.Operation, error)
 }
 
+// ProjectInspector is the live runtime health boundary. Project health is
+// persisted for fast reads, but Docker can be restarted outside Manager; API
+// reads therefore refresh the displayed health from Provisioner when present.
+type ProjectInspector interface {
+	Inspect(ctx context.Context, request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error)
+}
+
 type LifecycleManager interface {
 	Queue(ctx context.Context, project contracts.Project, action lifecycle.Action, confirmation string) (operation.Operation, error)
 	Run(ctx context.Context, project contracts.Project, action lifecycle.Action, operation operation.Operation) (operation.Operation, error)
@@ -31,6 +39,7 @@ type ProjectOptions struct {
 	Projects      *project.Service
 	AuthAdmin     *authadmin.Service
 	Installer     Installer
+	Inspector     ProjectInspector
 	Lifecycle     LifecycleManager
 	Configuration *configuration.Orchestrator
 }
@@ -188,6 +197,9 @@ func (handlers projectHandlers) list(response http.ResponseWriter, request *http
 		writeError(response, http.StatusInternalServerError, "PROJECT_LIST_FAILED", "Unable to list projects")
 		return
 	}
+	for index := range projects {
+		projects[index] = handlers.refreshHealth(request.Context(), projects[index])
+	}
 	writeJSON(response, http.StatusOK, map[string]any{"projects": projects})
 }
 
@@ -201,5 +213,20 @@ func (handlers projectHandlers) get(response http.ResponseWriter, request *http.
 		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read project")
 		return
 	}
+	found = handlers.refreshHealth(request.Context(), found)
 	writeJSON(response, http.StatusOK, found)
+}
+
+func (handlers projectHandlers) refreshHealth(ctx context.Context, found contracts.Project) contracts.Project {
+	if handlers.options.Inspector == nil || found.Status == contracts.ProjectStatusDraft || found.Status == contracts.ProjectStatusInstalling {
+		return found
+	}
+	inspection, err := handlers.options.Inspector.Inspect(ctx, contracts.InspectProjectRequest{
+		ProjectID: found.ID, Slug: found.Slug, EnabledServices: install.EnabledComposeServices(found.Services),
+	})
+	if err != nil {
+		return found
+	}
+	found.Health = inspection.Health
+	return found
 }
