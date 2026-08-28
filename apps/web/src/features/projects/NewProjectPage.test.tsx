@@ -683,6 +683,7 @@ it('clears Custom SMTP credentials from the DTO when Authentication is disabled'
 })
 
 it('clears Custom SMTP credentials when its module is disabled while Authentication remains enabled', async () => {
+  window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   let body: Record<string, any> | undefined
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (!init?.method || init.method === 'GET') return projectListResponse()
