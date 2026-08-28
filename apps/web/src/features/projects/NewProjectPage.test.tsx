@@ -382,6 +382,44 @@ it('keeps a Realtime validation error on review and focuses its field', async ()
   await waitFor(() => expect(realtimeMaxConnections).toHaveFocus())
 })
 
+it('reopens the Realtime section before focusing an invalid field during installation', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
+  const section = screen.getByRole('button', { name: 'Database and Realtime settings' })
+  await user.click(section)
+  await user.clear(screen.getAllByRole('spinbutton', { name: 'Max connections' })[1])
+  await user.click(section)
+  expect(section).toHaveAttribute('aria-expanded', 'false')
+  await user.click(screen.getByRole('button', { name: 'Install project' }))
+
+  expect(section).toHaveAttribute('aria-expanded', 'true')
+  const realtimeMaxConnections = screen.getAllByRole('spinbutton', { name: 'Max connections' })[1]
+  expect(realtimeMaxConnections).toHaveAttribute('aria-invalid', 'true')
+  await waitFor(() => expect(realtimeMaxConnections).toHaveFocus())
+})
+
+it('opens and focuses infrastructure settings from the review summary edit action', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
+  const section = screen.getByRole('button', { name: 'Database and Realtime settings' })
+  expect(section).toHaveAttribute('aria-expanded', 'false')
+
+  await user.click(screen.getByRole('button', { name: 'Edit infrastructure' }))
+
+  expect(section).toHaveAttribute('aria-expanded', 'true')
+  await waitFor(() => expect(section).toHaveFocus())
+})
+
 it('redacts dynamic OAuth secrets in the final review summary', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
