@@ -1,45 +1,49 @@
-# Install Supabase Manager
+# Install Supabase Manager on Ubuntu
 
-Supabase Manager runs as two containers but exposes one browser URL. `manager` serves the React application and API. The private `provisioner` owns the Docker socket and has no published port.
+Supabase Manager runs Manager and Provisioner as containers and uses a native
+host Agent for per-project Nginx sites. Run the installer from the repository
+root. It is the only supported production deployment command.
 
 ## Prerequisites
 
-- Docker Engine 24+ with Docker Compose v2
-- At least 8 GB RAM assigned to Docker (12 GB recommended for Supabase plus builds)
-- An absolute project directory that Docker can share with containers
+- Ubuntu with systemd and outbound access to Ubuntu packages and container images
+- At least 8 GB RAM available to Docker (12 GB recommended for concurrent Supabase runtimes)
+- A Cloudflare Origin Certificate and private key already installed on the host
+- Cloudflare DNS records that point the Manager and project hostnames to this server
 
-## Configure and start
+The installer installs Docker Engine/Compose v2, Nginx, and OpenSSL only when
+they are absent. It does not create Cloudflare DNS records or certificates.
 
-From the repository root:
-
-```sh
-mkdir -p /Users/Shared/supabase-manager/projects
-umask 077
-MASTER_ENCRYPTION_KEY="$(openssl rand -base64 32)"
-PROVISIONER_TOKEN="$(openssl rand -hex 32)"
-install -m 600 /dev/null deploy/.env
-sed -e "s#^MASTER_ENCRYPTION_KEY=.*#MASTER_ENCRYPTION_KEY=$MASTER_ENCRYPTION_KEY#" -e "s#^PROVISIONER_TOKEN=.*#PROVISIONER_TOKEN=$PROVISIONER_TOKEN#" deploy/.env.example > deploy/.env.tmp
-chmod 600 deploy/.env.tmp
-mv deploy/.env.tmp deploy/.env
-unset MASTER_ENCRYPTION_KEY PROVISIONER_TOKEN
-```
-
-The command writes a mode-0600 `deploy/.env` without printing either secret. The
-master key must decode to exactly 32 bytes and `PROVISIONER_TOKEN` must contain
-at least 32 bytes; startup rejects placeholders and zero/fixed example values.
-Set `PROJECT_ROOT` to the absolute directory you created. For a remote HTTPS
-URL, set `PUBLIC_ORIGIN` to that exact origin and `SECURE_COOKIES=true`.
+## Install or upgrade
 
 ```sh
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build --wait
+sudo ./scripts/install-supabase-manager.sh \
+  --public-origin https://manager.example.com \
+  --certificate-file /etc/nginx/ssl/cloudflare-origin.pem \
+  --certificate-key-file /etc/nginx/ssl/cloudflare-origin.key
 ```
 
-Open `PUBLIC_ORIGIN` (by default `http://localhost:8080`). The first visit creates the administrator and displays one-time recovery codes.
+For non-default project storage, add `--project-root /opt/supabase-manager/projects`.
+The script creates `deploy/.env` mode `0600`, preserves valid existing secrets,
+sets managed Nginx mode, installs and explicitly restarts the Agent, then runs
+the control-plane Compose stack with `--build --wait`.
 
-For a public project host behind host-level Nginx and Cloudflare, configure
-the Manager hostname separately from each project's `General.Domain`. Use the
-optional native managed-proxy installation to create and remove safe per-project
-`sites-available`/`sites-enabled` files automatically; `PUBLIC_ORIGIN` alone
+Interactive execution may be used when flags are omitted:
+
+```sh
+sudo ./scripts/install-supabase-manager.sh
+```
+
+Rerun the same command after pulling a new release. It updates Manager,
+Provisioner, and the Nginx Agent without deleting Manager volumes, generated
+project data, or unrelated Nginx sites.
+
+Open the configured `PUBLIC_ORIGIN`. The first visit creates the administrator
+and displays one-time recovery codes.
+
+For public project hosts, configure the Manager hostname separately from each
+project's `General.Domain`. The installed native Agent creates and removes only
+safe per-project `sites-available`/`sites-enabled` files; `PUBLIC_ORIGIN` alone
 does not publish project runtimes. See [Project Supabase host behind Nginx and
 Cloudflare](project-host-nginx.md).
 

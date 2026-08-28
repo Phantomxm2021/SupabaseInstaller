@@ -46,50 +46,21 @@ paths to render virtual hosts.
 
 ## Install the managed agent
 
-The installer does not edit `/etc/nginx/nginx.conf`. It requires Ubuntu's
-standard include to already be present:
-
-```nginx
-include /etc/nginx/sites-enabled/*;
-```
-
-Generate a separate agent token and add it to `deploy/.env`:
+Use the single Ubuntu installer from the repository root. It generates a
+dedicated Agent token, validates the standard Nginx layout, installs the native
+Agent, explicitly restarts it on every upgrade, and starts the control plane in
+managed-proxy mode.
 
 ```sh
-umask 077
-NGINX_PROXY_TOKEN="$(openssl rand -hex 32)"
-printf '\nNGINX_PROXY_TOKEN=%s\n' "$NGINX_PROXY_TOKEN" >> deploy/.env
-unset NGINX_PROXY_TOKEN
+sudo ./scripts/install-supabase-manager.sh \
+  --public-origin https://manager.example.com \
+  --certificate-file /etc/nginx/ssl/cloudflare-origin.pem \
+  --certificate-key-file /etc/nginx/ssl/cloudflare-origin.key
 ```
 
-With the Cloudflare origin certificate installed, run the native host
-installer. Set the two certificate variables if your paths differ from the
-defaults shown here:
-
-```sh
-sudo NGINX_CERTIFICATE_FILE=/etc/nginx/ssl/cloudflare-origin.pem \
-  NGINX_CERTIFICATE_KEY_FILE=/etc/nginx/ssl/cloudflare-origin.key \
-  scripts/install-nginx-proxy-agent.sh deploy/.env
-```
-
-It builds the static agent, writes only its root-owned environment file and
-systemd unit, then starts `supabase-manager-nginx-proxy-agent.service`.
-
-Start the control plane with the managed-proxy Compose override so that only
-the private socket directory is mounted into Provisioner:
-
-```sh
-docker compose \
-  -f deploy/docker-compose.yml \
-  -f deploy/docker-compose.nginx-proxy.yml \
-  --env-file deploy/.env up -d --build --wait
-```
-
-Use the base Compose file alone to keep the prior manual-proxy behavior:
-
-```sh
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build --wait
-```
+The installer never edits unrelated Nginx sites and never removes Supabase
+project data. Rerun it after upgrading the repository; no separate Agent or
+Compose override command is required.
 
 ## Lifecycle behavior
 

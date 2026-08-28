@@ -4,13 +4,33 @@ Supabase Manager is a two-container control plane for isolated, pinned
 Self-hosted Supabase projects. Manager is the only public HTTP endpoint;
 Provisioner is private and is the only process with Docker Socket access.
 
-## Requirements
+## Ubuntu installation
+
+For an Ubuntu server with managed Nginx project hosts, use the single supported
+deployment command. It installs missing host prerequisites, creates and
+preserves deployment secrets, starts Manager and Provisioner, and installs then
+restarts the native Nginx Agent.
+
+```sh
+sudo ./scripts/install-supabase-manager.sh \
+  --public-origin https://manager.example.com \
+  --certificate-file /etc/nginx/ssl/cloudflare-origin.pem \
+  --certificate-key-file /etc/nginx/ssl/cloudflare-origin.key
+```
+
+Cloudflare DNS records and a valid Cloudflare Origin Certificate are operator
+prerequisites. The installer does not issue certificates or create DNS records.
+Rerun the same command after pulling an upgrade; it keeps valid secrets and
+project data while rebuilding the control plane and explicitly restarting the
+Nginx Agent.
+
+## Docker Desktop development
 
 Use Docker Engine 27+ and Docker Compose v2. Allocate at least 8 GB to Docker
 Desktop for a Lightweight project (12 GB is recommended for concurrent work).
 On Docker Desktop, `PROJECT_ROOT` must be an absolute shared host path.
 
-## Start
+## Start manually
 
 ```sh
 mkdir -p /Users/Shared/supabase-manager/projects
@@ -72,3 +92,6 @@ removing the control-plane database is intentional.
 Publish only Manager through the reverse proxy. Set `PUBLIC_ORIGIN` to the
 external HTTPS origin and `SECURE_COOKIES=true`; preserve Host and X-Forwarded-
 Proto, and do not proxy the private Provisioner network.
+
+For managed per-project Nginx hosts on Ubuntu, use the one-command installer
+above rather than a separate Compose override or Agent command.

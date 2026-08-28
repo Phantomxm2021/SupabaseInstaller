@@ -62,9 +62,13 @@ services:
       ACCEPTANCE_INSPECTOR_FAIL_ONCE: ${ACCEPTANCE_INSPECTOR_FAIL_ONCE:-0}
       PROJECT_ROOT: ${PROJECT_ROOT:-/opt/supabase-manager/projects}
       DOCKER_HOST: unix:///var/run/docker.sock
+      NGINX_PROXY_MODE: ${NGINX_PROXY_MODE:-disabled}
+      NGINX_PROXY_SOCKET: ${NGINX_PROXY_SOCKET:-/run/supabase-manager/nginx-proxy-agent.sock}
+      NGINX_PROXY_TOKEN: ${NGINX_PROXY_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PROJECT_ROOT:-/opt/supabase-manager/projects}:${PROJECT_ROOT:-/opt/supabase-manager/projects}
+      - ${NGINX_PROXY_SOCKET_DIRECTORY:-/tmp/supabase-manager-nginx-socket}:/run/supabase-manager
     networks: [management, runtime-egress]
     healthcheck:
       test: [CMD, wget, -q, --spider, http://127.0.0.1:9090/health/live]
