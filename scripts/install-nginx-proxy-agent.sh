@@ -52,6 +52,12 @@ docker build \
 install -d -m 0711 /etc/supabase-manager
 install -d -m 0750 /run/supabase-manager
 install -d -m 0755 "$AUTH_DIRECTORY"
+# `install -d -m` creates missing directories, but existing deployments may
+# retain the old restrictive modes. Enforce the complete read path on every
+# one-command installation and repair all already-rendered project files.
+chmod 0711 /etc/supabase-manager
+chmod 0755 "$AUTH_DIRECTORY"
+find "$AUTH_DIRECTORY" -maxdepth 1 -type f -name 'supabase-manager-*.htpasswd' -exec chmod 0644 {} +
 install -m 0755 "$TEMPORARY_DIRECTORY/nginx-proxy-agent" /usr/local/bin/nginx-proxy-agent
 install -m 0644 "$REPOSITORY_ROOT/deploy/systemd/supabase-manager-nginx-proxy-agent.service" /etc/systemd/system/supabase-manager-nginx-proxy-agent.service
 
