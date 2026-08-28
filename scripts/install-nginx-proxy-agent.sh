@@ -69,5 +69,8 @@ EOF
 chmod 0600 /etc/supabase-manager/nginx-proxy-agent.env
 
 systemctl daemon-reload
-systemctl enable --now supabase-manager-nginx-proxy-agent.service
+systemctl enable supabase-manager-nginx-proxy-agent.service
+# `enable --now` does not replace an already-running process. Explicitly
+# restart so upgrades always activate the binary just installed above.
+systemctl restart supabase-manager-nginx-proxy-agent.service
 systemctl --no-pager --full status supabase-manager-nginx-proxy-agent.service
