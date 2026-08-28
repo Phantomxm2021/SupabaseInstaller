@@ -96,18 +96,6 @@ func TestReconcileEndpointInvokesProductionBackend(t *testing.T) {
 	if len(executor.calls) < 3 || !strings.Contains(strings.Join(executor.calls[0], " "), "config --quiet") {
 		t.Fatalf("production backend compose calls = %#v", executor.calls)
 	}
-	stale := request
-	stale.OperationID, stale.IdempotencyKey = "op-stale", "key-stale"
-	stale.ExpectedRevision, stale.NextRevision, stale.Configuration.Revision = 0, 2, 2
-	if response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", stale); response.Code != http.StatusConflict {
-		t.Fatalf("stale status = %d, body = %s", response.Code, response.Body.String())
-	}
-	invalid := request
-	invalid.OperationID, invalid.IdempotencyKey = "op-invalid", "key-invalid"
-	invalid.ExpectedRevision, invalid.NextRevision, invalid.Configuration.Revision = 1, 2, 1
-	if response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", invalid); response.Code != http.StatusBadRequest {
-		t.Fatalf("invalid revision status = %d, body = %s", response.Code, response.Body.String())
-	}
 	failed := request
 	failed.OperationID, failed.IdempotencyKey = "op-failed", "key-failed"
 	failed.ExpectedRevision, failed.NextRevision, failed.Configuration.Revision = 1, 2, 2

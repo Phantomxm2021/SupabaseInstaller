@@ -4,7 +4,7 @@ import { APIError, apiFetch } from '../../../api/client'
 import type { UpdateSecretInput } from '../../../api/types'
 import { sectionEndpoint, type ConfigurationSection, type PendingConfigurationSave } from './types'
 
-export type ConfigurationOperation = { projectId: string; operationId: string; revision: number }
+export type ConfigurationOperation = { projectId: string; operationId: string; revision?: number }
 
 function normalizeSecrets(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalizeSecrets)
@@ -27,12 +27,12 @@ function normalizeSecrets(value: unknown): unknown {
 
 export function normalizeConfigurationValue(value: unknown) { return normalizeSecrets(structuredClone(value)) }
 
-export function useConfigurationMutation(projectId: string, revision: number, onQueued: (result: ConfigurationOperation) => void, onError?: (error: Error) => void) {
+export function useConfigurationMutation(projectId: string, _revision: number, onQueued: (result: ConfigurationOperation) => void, onError?: (error: Error) => void) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (pending: PendingConfigurationSave) => {
       const endpoint = sectionEndpoint(pending.section, pending.provider)
-      return apiFetch<ConfigurationOperation>(`/api/projects/${projectId}/configuration/${endpoint}`, { method: 'PATCH', body: JSON.stringify({ expectedRevision: revision, value: normalizeConfigurationValue(pending.value) }) })
+      return apiFetch<ConfigurationOperation>(`/api/projects/${projectId}/configuration/${endpoint}`, { method: 'PATCH', body: JSON.stringify({ value: normalizeConfigurationValue(pending.value) }) })
     },
     onSuccess: (result) => {
       onQueued(result)

@@ -31,6 +31,69 @@ func TestStoreCreatesAndReadsProject(t *testing.T) {
 	if err := s.DB().QueryRow(`SELECT enabled FROM project_services WHERE project_id = ? AND service = 'database'`, want.ID).Scan(&enabled); err != nil || enabled != 1 {
 		t.Fatalf("database service projection = %d, %v; want enabled", enabled, err)
 	}
+	var canonicalCount int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM project_configuration WHERE project_id=?`, want.ID).Scan(&canonicalCount); err != nil || canonicalCount != 1 {
+		t.Fatalf("canonical configuration rows = %d, %v; want exactly one", canonicalCount, err)
+	}
+}
+
+func TestGetConfigurationReturnsCanonicalPendingValue(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	base := configurationFixture()
+	if err := s.CreateProject(context.Background(), project, base); err != nil {
+		t.Fatal(err)
+	}
+	pending := base
+	pending.General.Domain = "pending.example.com"
+	now := time.Now().UTC()
+	op := contracts.Operation{ID: "op-canonical-pending", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{
+		Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1,
+		Configuration: pending, OperationKind: "UPDATE_CONFIG", Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Configuration.General.Domain != pending.General.Domain {
+		t.Fatalf("canonical domain = %q, want pending %q", got.Configuration.General.Domain, pending.General.Domain)
+	}
+}
+
+func TestCommitCanonicalConfigurationAdvancesAppliedProjection(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	base := configurationFixture()
+	if err := s.CreateProject(context.Background(), project, base); err != nil {
+		t.Fatal(err)
+	}
+	pending := base
+	pending.General.Domain = "pending.example.com"
+	now := time.Now().UTC()
+	op := contracts.Operation{ID: "op-canonical-commit", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: op, ProjectID: project.ID, Owner: op.ID, ExpectedRevision: 1, Configuration: pending, OperationKind: "UPDATE_CONFIG", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CommitCanonicalConfiguration(context.Background(), project.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Revision != 2 || got.LastGoodRevision != 2 || got.Configuration.General.Domain != pending.General.Domain {
+		t.Fatalf("committed canonical snapshot = revision %d/last-good %d/domain %q, want 2/2/%q", got.Revision, got.LastGoodRevision, got.Configuration.General.Domain, pending.General.Domain)
+	}
+	var reservations int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM configuration_reservations WHERE project_id=?`, project.ID).Scan(&reservations); err != nil {
+		t.Fatal(err)
+	}
+	if reservations != 0 {
+		t.Fatalf("canonical commit left %d reservations", reservations)
+	}
 }
 
 func TestAdmitConfigurationIgnoresPortsOwnedByDisabledServices(t *testing.T) {
@@ -393,7 +456,7 @@ func TestStorePersistsOnlyEncryptedSecretEnvelope(t *testing.T) {
 	}
 }
 
-func TestConfigurationRevisionIsOptimisticAndRedacted(t *testing.T) {
+func TestConfigurationSequenceIsDiagnosticAndRedacted(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
 	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
@@ -416,8 +479,10 @@ func TestConfigurationRevisionIsOptimisticAndRedacted(t *testing.T) {
 	if saved.Revision != 2 {
 		t.Fatalf("saved revision = %d, want 2", saved.Revision)
 	}
-	if _, err := admitStoreConfiguration(s, project.ID, 1, cfg, "revision-stale"); !errors.Is(err, ErrStaleConfiguration) {
-		t.Fatalf("stale admission error = %v, want ErrStaleConfiguration", err)
+	if repeated, err := admitStoreConfiguration(s, project.ID, 1, cfg, "revision-repeat"); err != nil {
+		t.Fatalf("repeat admission error = %v, want canonical overwrite", err)
+	} else if repeated.Revision != 3 {
+		t.Fatalf("repeat revision = %d, want diagnostic sequence 3", repeated.Revision)
 	}
 	var raw string
 	if err := s.DB().QueryRow(`SELECT config_json FROM project_configs WHERE project_id = ? AND section = 'aggregate' AND revision = 2`, project.ID).Scan(&raw); err != nil {

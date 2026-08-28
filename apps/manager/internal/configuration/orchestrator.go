@@ -103,9 +103,9 @@ func randomID() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// QueuePatch validates and durably saves the desired aggregate before the
-// runtime operation is started. The revision guard makes concurrent section
-// edits fail atomically.
+// QueuePatch validates and durably saves the canonical aggregate before the
+// runtime operation is started. A per-project lock plus the durable active
+// operation check serializes concurrent edits without client revision guards.
 func (o *Orchestrator) QueuePatch(ctx context.Context, projectID string, patch contracts.ConfigurationPatch) (operation.Operation, store.ConfigurationSnapshot, error) {
 	if o.configs == nil || o.operations == nil {
 		return operation.Operation{}, store.ConfigurationSnapshot{}, errors.New("configuration orchestrator is unavailable")
@@ -113,6 +113,37 @@ func (o *Orchestrator) QueuePatch(ctx context.Context, projectID string, patch c
 	if !o.tryAcquire(projectID) {
 		return operation.Operation{}, store.ConfigurationSnapshot{}, store.ErrConfigurationBusy
 	}
+	// The client revision is advisory only. Read the canonical aggregate while
+	// holding the per-project lock and let admission use that value. Older
+	// dashboard bundles still send expectedRevision, but it must never block a
+	// valid edit against the configuration currently stored by Manager.
+	canonical, err := o.configs.Get(ctx, projectID)
+	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, err
+	}
+	if active, found, activeErr := o.store.FindActiveOperation(ctx, projectID, operation.TypeUpdateConfig); activeErr != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, activeErr
+	} else if found {
+		if o.now().Sub(active.CreatedAt) > time.Hour {
+			// A worker that has been RUNNING for longer than the durable apply
+			// budget cannot safely keep blocking edits (this is how old 70%
+			// operations stranded every later update). Close it with an explicit
+			// diagnostic, then admit the new canonical value.
+			if active.Status == operation.Queued {
+				_ = o.operations.Start(ctx, active.ID)
+			}
+			_ = o.operations.Fail(ctx, active.ID, "RESUME", errors.New("configuration apply worker exceeded one-hour deadline"))
+		} else {
+			// A Manager restart clears the in-process lock while the durable worker
+			// may still be running. Reuse that operation rather than admitting a
+			// second candidate and producing a queue of workers stuck at 70%.
+			o.release(projectID)
+			return active, canonical, nil
+		}
+	}
+	patch.ExpectedRevision = canonical.Revision
 	owner := ""
 	cfg, err := o.configs.PreparePatch(ctx, projectID, patch)
 	if err != nil {
@@ -668,10 +699,102 @@ func (o *Orchestrator) failRejectedRuntimeRevision(ctx context.Context, queued o
 	return o.fail(ctx, queued, step, fmt.Errorf("%s: %w; candidate configuration restored", message, reconcileErr), false)
 }
 
-// Run executes the six durable update steps. Runtime failures are intentionally
-// reported with a generic message; the Provisioner response is typed and
-// redacted, and operation events must never contain rendered environment data.
-func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project, queued operation.Operation, snapshot store.ConfigurationSnapshot) (operation.Operation, error) {
+// Run applies the canonical configuration directly. The legacy revisioned
+// implementation remains below only as an isolated compatibility helper for
+// password-rotation recovery; normal Dashboard updates never enter it.
+func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project, queued operation.Operation, _ store.ConfigurationSnapshot) (operation.Operation, error) {
+	if o.configs == nil {
+		return queued, errors.New("configuration orchestrator is unavailable")
+	}
+	snapshot, err := o.configs.Get(ctx, currentProject.ID)
+	if err != nil {
+		return queued, err
+	}
+	defer o.release(currentProject.ID)
+	// QueuePatch keeps the lease in the orchestrator's in-memory registry. The
+	// canonical snapshot intentionally omits fencing metadata, so releasing by
+	// snapshot.Fence would leak the durable lease after every successful update.
+	defer o.releaseLease(context.Background(), currentProject.ID)
+	if o.provisioner == nil {
+		return queued, errors.New("configuration provisioner is unavailable")
+	}
+	if queued.Status == operation.Queued {
+		if err := o.operations.Start(ctx, queued.ID); err != nil {
+			return queued, err
+		}
+	} else if queued.Status != operation.Running {
+		return queued, errors.New("configuration operation is not runnable")
+	}
+	steps := []struct {
+		name     string
+		progress int
+	}{
+		{"VALIDATE_CONFIGURATION", 10},
+		{"PERSIST_CONFIGURATION", 25},
+		{"RENDER_RUNTIME", 40},
+	}
+	for _, step := range steps {
+		if err := o.operations.StartStep(ctx, queued.ID, step.name, step.progress); err != nil {
+			return queued, err
+		}
+		if step.name == "VALIDATE_CONFIGURATION" {
+			if err := project.ValidateStoredConfiguration(snapshot.Configuration); err != nil {
+				return o.fail(ctx, queued, step.name, err, false)
+			}
+		}
+		if err := o.operations.CompleteStep(ctx, queued.ID, step.name, step.progress); err != nil {
+			return queued, err
+		}
+	}
+	secrets, runtimeSecrets, err := o.hydrate(ctx, currentProject.ID, snapshot.Configuration)
+	if err != nil {
+		return o.fail(ctx, queued, "RENDER_RUNTIME", err, false)
+	}
+	if err := o.operations.StartStep(ctx, queued.ID, "COMPOSE_UP", 70); err != nil {
+		return queued, err
+	}
+	request := contracts.ReconcileProjectRequest{
+		OperationID: queued.ID, IdempotencyKey: queued.ID + ":reconcile", ProjectID: currentProject.ID,
+		ProjectName: currentProject.Name, Slug: currentProject.Slug, APIPort: snapshot.Configuration.Network.APIPort,
+		Configuration: snapshot.Configuration, Secrets: secrets, RuntimeSecrets: runtimeSecrets,
+	}
+	if request.APIPort == 0 {
+		request.APIPort, _ = o.store.ReservedPort(ctx, currentProject.ID, string(ports.KindAPI))
+		request.Configuration.Network.APIPort = request.APIPort
+	}
+	result, reconcileErr := o.provisioner.Reconcile(ctx, request)
+	if reconcileErr != nil {
+		return o.fail(ctx, queued, "COMPOSE_UP", reconcileErr, reconcileRollback(reconcileErr))
+	}
+	if err := o.operations.CompleteStep(ctx, queued.ID, "COMPOSE_UP", 70); err != nil {
+		return queued, err
+	}
+	if err := o.operations.StartStep(ctx, queued.ID, "VERIFY_SERVICES", 90); err != nil {
+		return queued, err
+	}
+	if result.OperationID != queued.ID || result.ProjectID != currentProject.ID || !sameServices(result.EnabledServices, enabledServices(snapshot.Configuration)) {
+		// Revision numbers belong to the retired optimistic-concurrency protocol.
+		// Runtime metadata may advance independently (for example after a manual
+		// Docker restart); identity and enabled-service health are the only
+		// verification invariants for a canonical apply.
+		return o.fail(ctx, queued, "VERIFY_SERVICES", runtimeVerificationError(result, queued.ID, currentProject.ID, -1, snapshot.Configuration), false)
+	}
+	if err := o.operations.CompleteStep(ctx, queued.ID, "VERIFY_SERVICES", 90); err != nil {
+		return queued, err
+	}
+	if err := o.store.CommitCanonicalConfiguration(ctx, currentProject.ID, o.now()); err != nil {
+		return o.fail(ctx, queued, "VERIFY_SERVICES", err, false)
+	}
+	if err := o.operations.Succeed(ctx, queued.ID); err != nil {
+		return queued, err
+	}
+	return o.operations.Get(ctx, queued.ID)
+}
+
+// runLegacy is retained solely for source compatibility with password
+// rotation recovery while existing installations migrate. It is not called
+// by normal configuration PATCH operations.
+func (o *Orchestrator) runLegacy(ctx context.Context, currentProject contracts.Project, queued operation.Operation, snapshot store.ConfigurationSnapshot) (operation.Operation, error) {
 	defer o.release(currentProject.ID)
 	defer o.releaseLeaseToken(context.Background(), currentProject.ID, queued.ID, snapshot.Fence)
 	workCtx, cancelWork := context.WithCancel(ctx)
@@ -964,7 +1087,7 @@ func runtimeVerificationError(result contracts.ReconcileProjectResponse, operati
 	if result.ProjectID != projectID {
 		mismatches = append(mismatches, fmt.Sprintf("project ID received=%q expected=%q", result.ProjectID, projectID))
 	}
-	if result.Revision != revision {
+	if revision >= 0 && result.Revision != revision {
 		mismatches = append(mismatches, fmt.Sprintf("revision received=%d expected=%d", result.Revision, revision))
 	}
 	expected := enabledServices(cfg)

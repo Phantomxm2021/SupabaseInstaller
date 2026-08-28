@@ -43,6 +43,99 @@ func TestResumeAfterCommittedPublicationOnlyCompletesOperation(t *testing.T) {
 	}
 }
 
+func TestQueuePatchIgnoresClientRevision(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := time.Now().UTC()
+	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "direct.example.com", SiteURL: "https://direct.example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	proj := contracts.Project{ID: "direct-project", Name: "Direct", Slug: "direct", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: now, UpdatedAt: now}
+	if err := database.CreateProject(context.Background(), proj, cfg); err != nil {
+		t.Fatal(err)
+	}
+	ops := operation.NewService(database, func() string { return "direct-op" }, time.Now)
+	orchestrator := NewOrchestrator(database, ops)
+	updated := cfg.General
+	updated.SiteURL = "https://changed.example.com"
+	queued, snapshot, err := orchestrator.QueuePatch(context.Background(), proj.ID, contracts.ConfigurationPatch{ExpectedRevision: 0, General: &updated})
+	if err != nil {
+		t.Fatalf("QueuePatch() rejected client revision: %v", err)
+	}
+	if queued.ID == "" || snapshot.Configuration.General.SiteURL != updated.SiteURL {
+		t.Fatalf("queued=%#v snapshot=%#v", queued, snapshot)
+	}
+}
+
+func TestQueuePatchReusesDurableActiveOperation(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := time.Now().UTC()
+	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "active.example.com", SiteURL: "https://active.example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	proj := contracts.Project{ID: "active-project", Name: "Active", Slug: "active", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: now, UpdatedAt: now}
+	if err := database.CreateProject(context.Background(), proj, cfg); err != nil {
+		t.Fatal(err)
+	}
+	active := contracts.Operation{ID: "active-op", ProjectID: proj.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationRunning, CreatedAt: now}
+	if err := database.CreateOperation(context.Background(), active, "OPERATION_STARTED", []byte(`{"status":"RUNNING"}`)); err != nil {
+		t.Fatal(err)
+	}
+	ops := operation.NewService(database, func() string { return "new-op" }, time.Now)
+	orchestrator := NewOrchestrator(database, ops)
+	updated := cfg.General
+	updated.SiteURL = "https://ignored.example.com"
+	got, snapshot, err := orchestrator.QueuePatch(context.Background(), proj.ID, contracts.ConfigurationPatch{General: &updated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != active.ID || snapshot.Configuration.General.SiteURL != cfg.General.SiteURL {
+		t.Fatalf("reused operation=%q snapshot URL=%q; want %q and canonical URL %q", got.ID, snapshot.Configuration.General.SiteURL, active.ID, cfg.General.SiteURL)
+	}
+}
+
+func TestQueuePatchClosesAbandonedOperationBeforeAdmittingNewValue(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := time.Now().UTC()
+	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "abandoned.example.com", SiteURL: "https://abandoned.example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	proj := contracts.Project{ID: "abandoned-project", Name: "Abandoned", Slug: "abandoned", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: now, UpdatedAt: now}
+	if err := database.CreateProject(context.Background(), proj, cfg); err != nil {
+		t.Fatal(err)
+	}
+	active := contracts.Operation{ID: "abandoned-op", ProjectID: proj.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationRunning, CreatedAt: now.Add(-2 * time.Hour)}
+	if err := database.CreateOperation(context.Background(), active, "OPERATION_STARTED", []byte(`{"status":"RUNNING"}`)); err != nil {
+		t.Fatal(err)
+	}
+	ops := operation.NewService(database, func() string { return "replacement-op" }, func() time.Time { return now })
+	orchestrator := NewOrchestrator(database, ops, func() time.Time { return now })
+	updated := cfg.General
+	updated.SiteURL = "https://replacement.example.com"
+	got, _, err := orchestrator.QueuePatch(context.Background(), proj.ID, contracts.ConfigurationPatch{General: &updated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID == active.ID {
+		t.Fatalf("abandoned operation was reused: %q", got.ID)
+	}
+	closed, err := database.GetOperation(context.Background(), active.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed.Status != operation.Failed || !strings.Contains(closed.ErrorMessage, "one-hour deadline") {
+		t.Fatalf("abandoned operation = %s/%q, want FAILED with deadline diagnostic", closed.Status, closed.ErrorMessage)
+	}
+}
+
 func TestResumeAfterRestoredPublicationOnlyCompletesRollback(t *testing.T) {
 	orchestrator, database, operations, project, snapshot, lease, op := newRecoveryFixture(t, "UPDATE_CONFIG")
 	if err := database.RestoreConfigurationStateOwned(context.Background(), project.ID, snapshot.Revision, op.ID, lease.Fence, time.Now()); err != nil {
@@ -55,15 +148,15 @@ func TestResumeAfterRestoredPublicationOnlyCompletesRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := waitRecoveryOperation(t, operations, op.ID)
-	if got.Status != operation.RolledBack {
-		t.Fatalf("resumed restored operation = %s, want ROLLED_BACK", got.Status)
+	if got.Status != operation.Succeeded {
+		t.Fatalf("resumed restored operation = %s, want SUCCEEDED", got.Status)
 	}
 	current, err := database.GetConfiguration(context.Background(), project.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if current.Revision != 1 || current.LastGoodRevision != 1 {
-		t.Fatalf("restored configuration = revision %d/last-good %d, want 1/1", current.Revision, current.LastGoodRevision)
+		t.Fatalf("reconciled configuration = revision %d/last-good %d, want 1/1", current.Revision, current.LastGoodRevision)
 	}
 }
 
@@ -145,8 +238,8 @@ func waitRecoveryOperation(t *testing.T, operations *operation.Service, id strin
 
 type noopRecoveryProvisioner struct{}
 
-func (noopRecoveryProvisioner) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
-	return contracts.ReconcileProjectResponse{}, nil
+func (noopRecoveryProvisioner) Reconcile(_ context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, EnabledServices: enabledServices(request.Configuration)}, nil
 }
 
 func TestEnabledServicesUsesAuthoritativeSupavisorName(t *testing.T) {
@@ -217,8 +310,8 @@ func TestRunPersistsConcreteRuntimeVerificationMismatch(t *testing.T) {
 	}
 }
 
-func TestRunRestoresCandidateAndStopsRetryingOnStaleRuntimeRevision(t *testing.T) {
-	orchestrator, database, operations, currentProject, snapshot, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
+func TestRunPersistsConcreteProvisionerErrorWithoutRevisionProtocol(t *testing.T) {
+	orchestrator, _, operations, currentProject, snapshot, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
 	orchestrator.provisioner = staticErrorProvisioner{err: contracts.ErrStaleConfigRevision}
 
 	_, err := orchestrator.Run(context.Background(), currentProject, op, snapshot)
@@ -232,19 +325,12 @@ func TestRunRestoresCandidateAndStopsRetryingOnStaleRuntimeRevision(t *testing.T
 	if stored.Status != operation.Failed {
 		t.Fatalf("operation status = %s, want FAILED instead of a retryable RUNNING operation", stored.Status)
 	}
-	if !strings.Contains(stored.ErrorMessage, "runtime configuration revision conflict") {
-		t.Fatalf("stored error = %q, want actionable revision conflict", stored.ErrorMessage)
-	}
-	restored, err := database.GetConfiguration(context.Background(), currentProject.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if restored.Revision != restored.LastGoodRevision || restored.Revision != 1 {
-		t.Fatalf("configuration = revision %d / last-good %d, want restored 1 / 1", restored.Revision, restored.LastGoodRevision)
+	if !strings.Contains(stored.ErrorMessage, "stale config revision") {
+		t.Fatalf("stored error = %q, want concrete provisioner diagnostic", stored.ErrorMessage)
 	}
 }
 
-func TestRunStopsRetryingWhenStaleCandidateHasAlreadyBeenSuperseded(t *testing.T) {
+func TestRunDoesNotRestoreOrCompareLegacyCandidateRevision(t *testing.T) {
 	orchestrator, database, operations, currentProject, snapshot, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
 	orchestrator.provisioner = staticErrorProvisioner{err: contracts.ErrStaleConfigRevision}
 	if _, err := database.DB().Exec(`UPDATE projects SET config_revision=3 WHERE id=?`, currentProject.ID); err != nil {
@@ -262,8 +348,8 @@ func TestRunStopsRetryingWhenStaleCandidateHasAlreadyBeenSuperseded(t *testing.T
 	if stored.Status != operation.Failed {
 		t.Fatalf("operation status = %s, want FAILED instead of a retryable RUNNING operation", stored.Status)
 	}
-	if !strings.Contains(stored.ErrorMessage, "candidate configuration could not be restored") {
-		t.Fatalf("stored error = %q, want explicit superseded-candidate diagnostic", stored.ErrorMessage)
+	if !strings.Contains(stored.ErrorMessage, "stale config revision") {
+		t.Fatalf("stored error = %q, want concrete provisioner diagnostic", stored.ErrorMessage)
 	}
 }
 

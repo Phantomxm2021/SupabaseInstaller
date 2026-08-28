@@ -1,9 +1,16 @@
 # Project configuration operations
 
-The Configuration page edits one aggregate revision. PATCH requests are
-optimistic-concurrency checked; a stale revision is a conflict and never
-silently overwrites another change. The operation panel reports validation,
-runtime reconciliation, health verification, and terminal state.
+The Configuration page edits one canonical project configuration. Manager
+SQLite is the source of truth; a PATCH writes that value, then queues one
+runtime apply operation. The Provisioner renders the complete configuration
+and runs Docker Compose against the project directory. The operation panel
+reports validation, Compose, health verification, and the concrete terminal
+error when an apply fails.
+
+Older clients may still include a revision field in their request body. It is
+ignored by the current API and is not sent to Provisioner. A retry always reads
+the current canonical row; it does not reuse a stale candidate or restore a
+last-good value.
 
 ## General
 
@@ -77,21 +84,20 @@ longer requires it. GET and operation history expose only `passwordSet` or
 `secretSet` markers. Reveal requires recent administrator authentication and
 is `no-store`; plaintext is held only in memory until the view is cleared.
 
-An operation stages and validates a candidate runtime before publication, then
-recreates only affected services and waits for the selected health set. A
-render/stage failure restores the admitted desired revision and encrypted
-secret snapshot. A post-publication failure attempts to restore the previous
-generation and reports `ROLLED_BACK` only after health confirms recovery;
-otherwise it reports `FAILED` for operator intervention. Database-password
-rotation journals its phases and uses the same idempotency key on retry.
+An operation validates the canonical value, renders the runtime files, runs
+`docker compose config --quiet`, and applies them with `docker compose up -d
+--remove-orphans`. A failure leaves the canonical value intact and records the
+phase, service, exit status, and redacted Compose/health detail. It never
+silently restores another configuration. Database-password rotation remains a
+narrow compatibility command because it must coordinate an old and new
+credential; ordinary settings do not use that protocol.
 
 ## Restart, recreate, and rollback
 
-Restarting Manager or Provisioner resumes durable queued/running operations;
-replaying an idempotency key does not double-promote a revision. Runtime
-recreate keeps project volumes and applies the selected generation. Rollback
-restores the prior runtime generation, secret snapshot, canonical projections,
-and revision when recovery succeeds.
+Restarting Manager or Provisioner resumes durable queued/running operations by
+re-reading the canonical configuration. Runtime recreate keeps project volumes
+and only changes the services affected by the rendered configuration. Retry is
+safe because no numeric revision comparison is used by the normal apply path.
 
 ## Inspecting operations safely
 

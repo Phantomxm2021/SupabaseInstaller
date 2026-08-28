@@ -25,18 +25,21 @@ func (e *ReconcileFailure) Error() string { return "runtime reconciliation faile
 func (e *ReconcileFailure) Unwrap() error { return e.Cause }
 
 type ReconcileProjectRequest struct {
-	OperationID      string               `json:"operationId"`
-	IdempotencyKey   string               `json:"idempotencyKey"`
+	OperationID string `json:"operationId"`
+	// Reconcile is keyed by the durable operation ID. These fields remain
+	// in-memory only so older callers compile while the wire contract no longer
+	// carries the retired revision/fence protocol.
+	IdempotencyKey   string               `json:"-"`
 	ProjectID        string               `json:"projectId"`
 	ProjectName      string               `json:"projectName"`
 	Slug             string               `json:"slug"`
-	ExpectedRevision int64                `json:"expectedRevision"`
-	NextRevision     int64                `json:"nextRevision"`
+	ExpectedRevision int64                `json:"-"`
+	NextRevision     int64                `json:"-"`
 	APIPort          int                  `json:"apiPort"`
 	Configuration    ProjectConfiguration `json:"configuration"`
 	Secrets          ProjectSecrets       `json:"secrets"`
 	RuntimeSecrets   map[string]string    `json:"runtimeSecrets,omitempty"`
-	Fence            int64                `json:"fence,omitempty"`
+	Fence            int64                `json:"-"`
 }
 
 type ReconcileProjectResponse struct {

@@ -70,8 +70,7 @@ func (h configurationHandlers) get(w http.ResponseWriter, r *http.Request) {
 }
 
 type sectionPatch struct {
-	ExpectedRevision int64           `json:"expectedRevision"`
-	Value            json.RawMessage `json:"value"`
+	Value json.RawMessage `json:"value"`
 }
 
 func (h configurationHandlers) patch(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +84,7 @@ func (h configurationHandlers) patch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_JSON", "Request body is invalid")
 		return
 	}
-	patch, err := sectionValuePatch(section, envelope.ExpectedRevision, envelope.Value)
+	patch, err := sectionValuePatch(section, envelope.Value)
 	if err != nil {
 		writeValidationError(w, err)
 		return
@@ -126,11 +125,11 @@ func (h configurationHandlers) patchOAuth(w http.ResponseWriter, r *http.Request
 		snapshot.Configuration.Auth.OAuth = map[string]contracts.OAuthProviderConfig{}
 	}
 	merged := mergeOAuthAuthPatch(snapshot.Configuration.Auth, r.PathValue("provider"), value)
-	h.queue(w, r, contracts.ConfigurationPatch{ExpectedRevision: envelope.ExpectedRevision, Auth: &merged})
+	h.queue(w, r, contracts.ConfigurationPatch{Auth: &merged})
 }
 
-func sectionValuePatch(section string, expected int64, raw []byte) (contracts.ConfigurationPatch, error) {
-	p := contracts.ConfigurationPatch{ExpectedRevision: expected}
+func sectionValuePatch(section string, raw []byte) (contracts.ConfigurationPatch, error) {
+	p := contracts.ConfigurationPatch{}
 	switch section {
 	case "general":
 		var v contracts.GeneralConfig
@@ -306,10 +305,6 @@ func (h configurationHandlers) handleConfigError(w http.ResponseWriter, err erro
 	}
 	if errors.Is(err, store.ErrConfigurationConflict) {
 		writeError(w, http.StatusConflict, "CONFIGURATION_CONFLICT", "Configuration conflicts with another project")
-		return
-	}
-	if errors.Is(err, project.ErrStaleConfiguration) || errors.Is(err, store.ErrStaleConfiguration) {
-		writeError(w, http.StatusConflict, "CONFIGURATION_STALE", "Project configuration revision is stale")
 		return
 	}
 	writeValidationError(w, err)

@@ -82,6 +82,26 @@ func (s *Store) ListActiveOperations(ctx context.Context, typ contracts.Operatio
 	return result, rows.Err()
 }
 
+// FindActiveOperation returns the single queued/running operation for a
+// project, if one exists. Configuration applies are serialized per project so
+// a repeated click or browser retry reuses the in-flight operation instead of
+// creating another worker that can stall at the same Compose step.
+func (s *Store) FindActiveOperation(ctx context.Context, projectID string, typ contracts.OperationType) (contracts.Operation, bool, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `
+SELECT id FROM operations
+WHERE project_id=? AND type=? AND status IN (?,?)
+ORDER BY created_at DESC, id DESC LIMIT 1`, projectID, typ, contracts.OperationQueued, contracts.OperationRunning).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return contracts.Operation{}, false, nil
+	}
+	if err != nil {
+		return contracts.Operation{}, false, err
+	}
+	op, err := s.GetOperation(ctx, id)
+	return op, err == nil, err
+}
+
 type OperationUpdate struct {
 	Status       contracts.OperationStatus
 	CurrentStep  string

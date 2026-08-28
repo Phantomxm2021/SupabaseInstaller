@@ -22,10 +22,11 @@ import (
 )
 
 // Reconcile renders and atomically applies one complete project configuration.
-// Metadata, idempotency and the last-known-good revision are updated only after
-// the candidate has passed Compose validation and service health checks.
+// The request contains the complete canonical state. Legacy revision fields
+// are accepted for wire compatibility but are deliberately ignored: the
+// Manager serializes writes and the runtime always applies the supplied state.
 func (backend *Backend) Reconcile(ctx context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
-	slog.Info("runtime reconciliation entered", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "expected_revision", request.ExpectedRevision, "next_revision", request.NextRevision)
+	slog.Info("runtime reconciliation entered", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID)
 	var result contracts.ReconcileProjectResponse
 	var runtimeRollback func() error
 	var runtimeRollbackSucceeded bool
@@ -39,19 +40,13 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			}
 			return nil
 		}
-		// The Manager stores complete immutable configuration snapshots. If its
-		// candidate is ahead of the runtime, the candidate can safely bring the
-		// runtime forward in one reconcile pass (for example after the runtime
-		// was unavailable during earlier admissions). Only reject a runtime that
-		// is ahead of the candidate, which would risk overwriting newer state.
-		if metadata.Revision > request.ExpectedRevision {
-			return contracts.ErrStaleConfigRevision
-		}
-		if request.Fence > 0 && metadata.Fence > request.Fence {
-			return contracts.ErrStaleConfigRevision
-		}
-		if request.NextRevision <= metadata.Revision || request.Configuration.Revision != request.NextRevision {
-			return contracts.ErrInvalidReconcileRevision
+		// Revisions/fences belonged to the removed desired-vs-last-good protocol.
+		// Keep a monotonic diagnostic value in metadata for operators, but never
+		// reject a complete canonical apply because an old client supplied a stale
+		// number. This is what makes Retry deterministic after a Manager restart.
+		applyRevision := metadata.Revision + 1
+		if request.NextRevision > applyRevision {
+			applyRevision = request.NextRevision
 		}
 		// Claim the highest fence durably before rendering or touching Docker.
 		// The projectfs file lock serializes this claim across Provisioner
@@ -235,14 +230,14 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if err := backend.waitHealthy(ctx, request.Slug, newServices); err != nil {
 			return fail(rollback(err))
 		}
-		result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.NextRevision, EnabledServices: newServices, RecreatedServices: intersect(affectedServices(previousConfig, request.Configuration), newServices)}
+		result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: applyRevision, EnabledServices: newServices, RecreatedServices: intersect(affectedServices(previousConfig, request.Configuration), newServices)}
 		encoded, _ := json.Marshal(result)
-		metadata.ProjectID, metadata.ProjectName, metadata.Revision = request.ProjectID, request.ProjectName, request.NextRevision
+		metadata.ProjectID, metadata.ProjectName, metadata.Revision = request.ProjectID, request.ProjectName, applyRevision
 		if request.Fence > 0 {
 			metadata.Fence = request.Fence
 		}
 		metadata.Configuration = request.Configuration
-		metadata.Configuration.Revision = request.NextRevision
+		metadata.Configuration.Revision = applyRevision
 		metadata.EnabledServices = append([]string(nil), newServices...)
 		metadata.Idempotency[request.IdempotencyKey] = encoded
 		runtimeRollback = func() error {

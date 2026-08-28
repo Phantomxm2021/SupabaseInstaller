@@ -571,7 +571,14 @@ func copyEmbeddedTemplate(destination string) error {
 		if err != nil {
 			return fmt.Errorf("read embedded template mode %s: %w", path, err)
 		}
+		// PostgreSQL runs the mounted bootstrap SQL as its own container user,
+		// not as the provisioner account.  Keep Manager-owned env/runtime files
+		// private, but make the official database assets world-readable so a
+		// first bootstrap cannot fail with "permission denied".
 		mode := fs.FileMode(0o600)
+		if strings.HasPrefix(relative, "volumes/db/") {
+			mode = 0o644
+		}
 		if info.Mode()&0o111 != 0 {
 			mode = 0o700
 		}

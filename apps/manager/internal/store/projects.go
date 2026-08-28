@@ -70,6 +70,9 @@ INSERT INTO projects (
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO project_configs(project_id, section, revision, config_json, created_at) VALUES (?, 'aggregate', 1, ?, ?)`, project.ID, string(configurationJSON), formatTime(project.CreatedAt)); err != nil {
 			return fmt.Errorf("create initial configuration: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_configuration(project_id, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET config_json=excluded.config_json, updated_at=excluded.updated_at`, project.ID, string(configurationJSON), formatTime(project.CreatedAt)); err != nil {
+			return fmt.Errorf("create canonical configuration: %w", err)
+		}
 		for _, service := range projectServiceProjection(configuration.Services) {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO project_services(project_id, service, enabled, status) VALUES (?, ?, ?, 'UNKNOWN')`, project.ID, service.name, service.enabled); err != nil {
 				return fmt.Errorf("create service projection %s: %w", service.name, err)

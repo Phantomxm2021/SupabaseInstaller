@@ -56,7 +56,7 @@ describe('RateLimitsPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Confirm and apply' }))
     await waitFor(() => expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith('/configuration/auth') && (init as RequestInit).method === 'PATCH')).toBe(true))
     const patch = fetchMock.mock.calls.find(([path, init]) => String(path).endsWith('/configuration/auth') && (init as RequestInit).method === 'PATCH')
-    expect(JSON.parse((patch![1] as RequestInit).body as string)).toMatchObject({ expectedRevision: 7, value: { rateLimits: { emailSent: 42, tokenRefresh: 150 }, mfa: { maxEnrolledFactors: 10 } } })
+    expect(JSON.parse((patch![1] as RequestInit).body as string)).toMatchObject({ value: { rateLimits: { emailSent: 42, tokenRefresh: 150 }, mfa: { maxEnrolledFactors: 10 } } })
     router.dispose()
   })
 

@@ -20,6 +20,24 @@ func TestClientDefaultRequestTimeoutAllowsDurableRuntimeRecovery(t *testing.T) {
 	}
 }
 
+func TestReconcileWireRequestOmitsRetiredRevisionProtocol(t *testing.T) {
+	var body []byte
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body, _ = io.ReadAll(request.Body)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"operationId":"op","projectId":"project","enabledServices":[]}`)), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+	_, err := client.Reconcile(context.Background(), contracts.ReconcileProjectRequest{OperationID: "op", ProjectID: "project", Slug: "bee", IdempotencyKey: "legacy", ExpectedRevision: 4, NextRevision: 5, Fence: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"idempotencyKey", "expectedRevision", "nextRevision", "fence"} {
+		if strings.Contains(string(body), field) {
+			t.Fatalf("wire request contains retired field %q: %s", field, body)
+		}
+	}
+}
+
 func TestClientReturnsProvisionerErrorCode(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "STALE_CONFIG_REVISION", Message: "stale"}})

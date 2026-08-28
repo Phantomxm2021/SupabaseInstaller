@@ -138,20 +138,15 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	var input contracts.ReconcileProjectRequest
-	if err := decodeJSON(response, request, &input); err != nil || input.OperationID == "" || input.IdempotencyKey == "" || input.ProjectID == "" || input.Slug == "" {
+	if err := decodeJSON(response, request, &input); err != nil || input.OperationID == "" || input.ProjectID == "" || input.Slug == "" {
 		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed reconcile request is required")
 		return
 	}
-	s.logger.Info("project runtime reconciliation started", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "expected_revision", input.ExpectedRevision, "next_revision", input.NextRevision)
+	if input.IdempotencyKey == "" {
+		input.IdempotencyKey = input.OperationID
+	}
+	s.logger.Info("project runtime reconciliation started", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID)
 	result, err := s.backend.Reconcile(request.Context(), input)
-	if errors.Is(err, contracts.ErrStaleConfigRevision) {
-		writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
-		return
-	}
-	if errors.Is(err, contracts.ErrInvalidReconcileRevision) {
-		writeError(response, http.StatusBadRequest, "INVALID_CONFIG_REVISION", "Next revision must advance the typed configuration snapshot")
-		return
-	}
 	if err != nil {
 		s.logReconcileFailure(input, err)
 		var failure *contracts.ReconcileFailure

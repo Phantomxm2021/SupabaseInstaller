@@ -548,7 +548,7 @@ func TestRealComposeParserValidatesRevisionZeroFunctionsCandidateWithoutCurrent(
 	}
 }
 
-func TestReconcileRejectsNonAdvancingOrMismatchedSnapshotRevision(t *testing.T) {
+func TestReconcileAcceptsCompleteConfigurationWithoutRevisionGuards(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -561,14 +561,14 @@ func TestReconcileRejectsNonAdvancingOrMismatchedSnapshotRevision(t *testing.T) 
 	for _, next := range []int64{1, 0} {
 		request := reconcileRequest(baseConfig(), 1, next)
 		request.IdempotencyKey += "-invalid"
-		if _, err := backend.Reconcile(context.Background(), request); err == nil {
-			t.Fatalf("next revision %d was accepted", next)
+		if _, err := backend.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("complete configuration with next revision %d was rejected: %v", next, err)
 		}
 	}
 	mismatch := reconcileRequest(baseConfig(), 1, 2)
 	mismatch.Configuration.Revision = 1
-	if _, err := backend.Reconcile(context.Background(), mismatch); err == nil {
-		t.Fatal("mismatched snapshot revision was accepted")
+	if _, err := backend.Reconcile(context.Background(), mismatch); err != nil {
+		t.Fatalf("complete configuration with mismatched revision was rejected: %v", err)
 	}
 }
 
@@ -599,7 +599,7 @@ func TestReconcileAllowsRuntimeToCatchUpWhenManagerRevisionIsAhead(t *testing.T)
 	}
 }
 
-func TestReconcileRejectsRuntimeAheadOfManagerCandidate(t *testing.T) {
+func TestReconcileAcceptsRuntimeAheadOfManagerCandidate(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -614,8 +614,27 @@ func TestReconcileRejectsRuntimeAheadOfManagerCandidate(t *testing.T) {
 
 	request := reconcileRequest(baseConfig(), 1, 2)
 	request.IdempotencyKey = "runtime-ahead"
-	if _, err := backend.Reconcile(context.Background(), request); !errors.Is(err, contracts.ErrStaleConfigRevision) {
-		t.Fatalf("runtime-ahead reconcile error = %v, want stale revision", err)
+	if _, err := backend.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("runtime-ahead canonical apply error = %v", err)
+	}
+}
+
+func TestReconcileDoesNotRejectCanonicalApplyForRuntimeAheadMetadata(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := NewBackend(root, &fakeReconcileRunner{}, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 1, 2)); err != nil {
+		t.Fatal(err)
+	}
+	request := reconcileRequest(baseConfig(), 1, 3)
+	request.IdempotencyKey = "canonical-apply"
+	if _, err := backend.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("canonical apply was rejected because metadata was ahead of client revision: %v", err)
 	}
 }
 

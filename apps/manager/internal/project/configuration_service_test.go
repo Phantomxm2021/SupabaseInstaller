@@ -107,6 +107,9 @@ func TestConfigurationServiceResetsLegacyAuthConfiguration(t *testing.T) {
 	if _, err := database.DB().Exec(`UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=1`, string(payload), project.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.DB().Exec(`UPDATE project_configuration SET config_json=? WHERE project_id=?`, string(payload), project.ID); err != nil {
+		t.Fatal(err)
+	}
 	service := NewConfigurationService(database, nil, time.Now)
 	count, err := service.ResetLegacyAuthConfigurations(context.Background())
 	if err != nil || count != 1 {
@@ -157,6 +160,9 @@ func TestConfigurationServiceMigratesOnlyFailedPostgreSQL15Projects(t *testing.T
 			t.Fatal(err)
 		}
 		if _, err := database.DB().Exec(`UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=1`, string(payload), project.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.DB().Exec(`UPDATE project_configuration SET config_json=? WHERE project_id=?`, string(payload), project.ID); err != nil {
 			t.Fatal(err)
 		}
 		return project
@@ -365,7 +371,7 @@ func TestConfigurationServicePartialGeneralPatchAcceptsDefaultLocalAndDisabledPh
 	}
 }
 
-func TestConfigurationServiceRejectsStaleRevision(t *testing.T) {
+func TestConfigurationServiceIgnoresStaleClientRevision(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -380,8 +386,8 @@ func TestConfigurationServiceRejectsStaleRevision(t *testing.T) {
 	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); !errors.Is(err, ErrStaleConfiguration) {
-		t.Fatalf("stale Save() error = %v, want ErrStaleConfiguration", err)
+	if _, err := admitProjectPatch(service, project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Configuration: &cfg}); err != nil {
+		t.Fatalf("repeat Save() error = %v, want canonical overwrite", err)
 	}
 }
 

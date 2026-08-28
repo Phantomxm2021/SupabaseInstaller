@@ -64,7 +64,7 @@ func TestConfigurationHTTPOAuthPatchUsesProviderSubresource(t *testing.T) {
 	manager := configuration.NewOrchestrator(database, operations)
 	mux := http.NewServeMux()
 	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: manager})
-	body := strings.NewReader(`{"expectedRevision":1,"value":{"enabled":false,"clientId":"","secretSet":false,"secret":{"action":""},"fields":{}}}`)
+	body := strings.NewReader(`{"value":{"enabled":false,"clientId":"","secretSet":false,"secret":{"action":""},"fields":{}}}`)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/projects/bee/configuration/oauth/google", body))
 	if response.Code != http.StatusAccepted {
@@ -86,7 +86,7 @@ func TestConfigurationHTTPRejectsUnsupportedNetworkFields(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: configuration.NewOrchestrator(database, nil)})
-	body := strings.NewReader(`{"expectedRevision":1,"value":{"gateway":"envoy","httpsMode":"external","certificate":"unexpected"}}`)
+	body := strings.NewReader(`{"value":{"gateway":"envoy","httpsMode":"external","certificate":"unexpected"}}`)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/projects/bee/configuration/network", body))
 	if response.Code != http.StatusUnprocessableEntity {
@@ -118,8 +118,8 @@ func TestConfigurationPatchRejectsUnknownAndTrailingJSON(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: configuration.NewOrchestrator(nil, nil)})
 	for name, body := range map[string]string{
-		"unknown field":  `{"expectedRevision":1,"value":{},"ignored":true}`,
-		"trailing value": `{"expectedRevision":1,"value":{}} {"ignored":true}`,
+		"unknown field":  `{"value":{},"ignored":true}`,
+		"trailing value": `{"value":{}} {"ignored":true}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := httptest.NewRecorder()
@@ -141,7 +141,7 @@ func TestConfigurationPatchNotFoundUsesProjectNotFound(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: configuration.NewOrchestrator(database, operation.NewService(database, func() string { return "op" }, time.Now))})
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPatch, "/api/projects/missing/configuration/general", strings.NewReader(`{"expectedRevision":1,"value":{"domain":"missing.example.com","siteUrl":"https://missing.example.com","supabaseVersion":"self-hosted/v0.8.0"}}`))
+	request := httptest.NewRequest(http.MethodPatch, "/api/projects/missing/configuration/general", strings.NewReader(`{"value":{"domain":"missing.example.com","siteUrl":"https://missing.example.com","supabaseVersion":"self-hosted/v0.8.0"}}`))
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), "PROJECT_NOT_FOUND") {
 		t.Fatalf("status/body = %d/%s; want 404 PROJECT_NOT_FOUND", response.Code, response.Body.String())
@@ -206,7 +206,7 @@ func TestOAuthPatchWithNewProviderRetainsConfiguredSMTPAndReplacesSecret(t *test
 	manager := configuration.NewOrchestrator(database, operation.NewService(database, func() string { return "oauth-http-op" }, time.Now), cipher)
 	mux := http.NewServeMux()
 	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: manager})
-	body := strings.NewReader(`{"expectedRevision":1,"value":{"enabled":true,"clientId":"google-client","secretSet":true,"secret":{"value":"google-secret"},"fields":{}}}`)
+	body := strings.NewReader(`{"value":{"enabled":true,"clientId":"google-client","secretSet":true,"secret":{"value":"google-secret"},"fields":{}}}`)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/projects/mailer/configuration/oauth/google", body))
 	if response.Code != http.StatusAccepted {

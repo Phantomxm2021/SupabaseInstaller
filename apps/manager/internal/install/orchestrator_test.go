@@ -88,6 +88,9 @@ func TestInstallHydratesConfiguredSMTPSecretIntoRevisionOneReconcile(t *testing.
 	if _, err := orchestrator.store.DB().Exec(`UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=1`, string(raw), project.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := orchestrator.store.DB().Exec(`UPDATE project_configuration SET config_json=? WHERE project_id=?`, string(raw), project.ID); err != nil {
+		t.Fatal(err)
+	}
 	envelope, err := orchestrator.cipher.Encrypt(project.ID, "smtp.password", []byte("configured-smtp-secret"))
 	if err != nil {
 		t.Fatal(err)

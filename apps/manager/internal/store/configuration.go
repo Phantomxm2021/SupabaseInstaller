@@ -69,9 +69,11 @@ func (s *Store) GetOperationCompensation(ctx context.Context, operationID string
 	return state, err
 }
 
-// ConfigurationAdmission is the single durable admission boundary for a
-// configuration command. The lease, revision, encrypted mutations, operation
-// event and exact command payload are committed (or rolled back) together.
+// ConfigurationAdmission is the compatibility admission boundary used by
+// password rotation and historical fixtures. Normal Dashboard updates now
+// read/write project_configuration and treat the numeric revision as a
+// diagnostic sequence only; this method still keeps the old operation payload
+// tables available until the explicit offline cleanup migration.
 type ConfigurationAdmission struct {
 	Operation        contracts.Operation
 	ProjectID        string
@@ -102,7 +104,10 @@ func (s *Store) AdmitConfiguration(ctx context.Context, input ConfigurationAdmis
 		input.Now = time.Now()
 	}
 	redacted := redactConfiguration(input.Configuration)
-	redacted.Revision = input.ExpectedRevision + 1
+	// Revision is retained only as a diagnostic sequence for old operation
+	// records. It is assigned from the database's current counter below; the
+	// caller-provided expected value is never a concurrency gate.
+	redacted.Revision = 0
 	payload, err := json.Marshal(redacted)
 	if err != nil {
 		return ConfigurationSnapshot{}, ConfigurationLease{}, fmt.Errorf("encode configuration: %w", err)
@@ -150,10 +155,13 @@ func (s *Store) AdmitConfiguration(ctx context.Context, input ConfigurationAdmis
 		} else if err != nil {
 			return err
 		}
-		if current != input.ExpectedRevision {
-			return fmt.Errorf("%w: expected %d, current %d", ErrStaleConfiguration, input.ExpectedRevision, current)
+		next := current + 1
+		redacted.Revision = next
+		payloadBytes, marshalErr := json.Marshal(redacted)
+		if marshalErr != nil {
+			return fmt.Errorf("encode canonical configuration: %w", marshalErr)
 		}
-		next := input.ExpectedRevision + 1
+		payload = payloadBytes
 		// A failed admission can leave its immutable candidate snapshot behind
 		// after the desired revision is restored. Reusing that revision is safe
 		// only when the old operation is terminal; an active operation must keep
@@ -214,6 +222,9 @@ LIMIT 1`, input.ProjectID, next).Scan(&existingOperationID, &existingStatus)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO project_configs(project_id,section,revision,config_json,created_at) VALUES(?, 'aggregate', ?, ?, ?)`, input.ProjectID, next, string(payload), formatTime(input.Now)); err != nil {
 			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_configuration(project_id,config_json,updated_at) VALUES(?,?,?) ON CONFLICT(project_id) DO UPDATE SET config_json=excluded.config_json,updated_at=excluded.updated_at`, input.ProjectID, string(payload), formatTime(input.Now)); err != nil {
+			return fmt.Errorf("persist canonical configuration: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO project_secret_versions(project_id,revision,kind,envelope_version,nonce,ciphertext) SELECT project_id, ?, kind, envelope_version, nonce, ciphertext FROM project_secrets WHERE project_id=?`, next, input.ProjectID); err != nil {
 			return err
@@ -349,27 +360,12 @@ func (s *Store) AcquireConfigurationLeaseForOperation(ctx context.Context, proje
 }
 
 func (s *Store) GetConfiguration(ctx context.Context, projectID string) (ConfigurationSnapshot, error) {
-	var snapshot ConfigurationSnapshot
-	var raw string
-	err := s.db.QueryRowContext(ctx, `
-SELECT p.id, p.config_revision, p.last_good_revision, c.config_json
-FROM projects AS p
-JOIN project_configs AS c ON c.project_id = p.id AND c.section = 'aggregate' AND c.revision = p.last_good_revision
-WHERE p.id = ?`, projectID).Scan(&snapshot.ProjectID, &snapshot.Revision, &snapshot.LastGoodRevision, &raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ConfigurationSnapshot{}, ErrNotFound
-	}
-	if err != nil {
-		return ConfigurationSnapshot{}, fmt.Errorf("get configuration: %w", err)
-	}
-	if err := json.Unmarshal([]byte(raw), &snapshot.Configuration); err != nil {
-		return ConfigurationSnapshot{}, fmt.Errorf("decode configuration: %w", err)
-	}
-	snapshot.Configuration = redactConfiguration(snapshot.Configuration)
-	// Revision remains the current desired revision for optimistic PATCH
-	// checks, while the body is projected from the last-known-good snapshot.
-	snapshot.Configuration.Revision = snapshot.Revision
-	return snapshot, nil
+	// The canonical configuration is the value most recently saved by the
+	// dashboard. It is also the exact value that the provisioner must apply.
+	// Returning last_good_revision here created a split-brain UI: the response
+	// displayed an old value while its revision pointed at a newer candidate,
+	// which in turn caused stale/conflict errors on every subsequent edit.
+	return s.GetDesiredConfiguration(ctx, projectID)
 }
 
 // GetDesiredConfiguration returns the latest aggregate, including revisions
@@ -378,7 +374,7 @@ WHERE p.id = ?`, projectID).Scan(&snapshot.ProjectID, &snapshot.Revision, &snaps
 func (s *Store) GetDesiredConfiguration(ctx context.Context, projectID string) (ConfigurationSnapshot, error) {
 	var snapshot ConfigurationSnapshot
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT p.id, p.config_revision, p.last_good_revision, c.config_json FROM projects p JOIN project_configs c ON c.project_id=p.id AND c.section='aggregate' AND c.revision=p.config_revision WHERE p.id=?`, projectID).Scan(&snapshot.ProjectID, &snapshot.Revision, &snapshot.LastGoodRevision, &raw)
+	err := s.db.QueryRowContext(ctx, `SELECT p.id, p.config_revision, p.last_good_revision, pc.config_json FROM projects p JOIN project_configuration pc ON pc.project_id=p.id WHERE p.id=?`, projectID).Scan(&snapshot.ProjectID, &snapshot.Revision, &snapshot.LastGoodRevision, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConfigurationSnapshot{}, ErrNotFound
 	}
@@ -391,6 +387,32 @@ func (s *Store) GetDesiredConfiguration(ctx context.Context, projectID string) (
 	snapshot.Configuration = redactConfiguration(snapshot.Configuration)
 	snapshot.Configuration.Revision = snapshot.Revision
 	return snapshot, nil
+}
+
+// CommitCanonicalConfiguration marks the canonical value as applied after the
+// Provisioner has successfully reconciled the runtime. The legacy revision
+// columns are retained as a read-only migration ledger, but they must never
+// remain one revision behind the single source of truth or block the next
+// dashboard edit with a stale/candidate conflict.
+func (s *Store) CommitCanonicalConfiguration(ctx context.Context, projectID string, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE projects SET last_good_revision=config_revision, updated_at=? WHERE id=?`, formatTime(now), projectID)
+		if err != nil {
+			return fmt.Errorf("commit canonical configuration: %w", err)
+		}
+		if count, err := result.RowsAffected(); err != nil {
+			return err
+		} else if count != 1 {
+			return ErrNotFound
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=?`, projectID); err != nil {
+			return fmt.Errorf("release canonical configuration reservations: %w", err)
+		}
+		return nil
+	})
 }
 
 // ResetLegacyAuthConfigurations replaces only the obsolete Mailer section for
@@ -447,8 +469,13 @@ func (s *Store) ResetLegacyAuthConfigurations(ctx context.Context, defaults cont
 			return updated, err
 		}
 		err = s.InTx(ctx, func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, `UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=?`, string(payload), item.id, item.revision)
-			return err
+			if _, err := tx.ExecContext(ctx, `UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=?`, string(payload), item.id, item.revision); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE project_configuration SET config_json=?, updated_at=? WHERE project_id=?`, string(payload), formatTime(time.Now()), item.id); err != nil {
+				return err
+			}
+			return nil
 		})
 		if err != nil {
 			return updated, err
@@ -570,6 +597,9 @@ func (s *Store) PersistAllocatedConfiguration(ctx context.Context, projectID str
 		}
 		if count == 0 {
 			return ErrNotFound
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_configuration(project_id,config_json,updated_at) VALUES(?,?,?) ON CONFLICT(project_id) DO UPDATE SET config_json=excluded.config_json,updated_at=excluded.updated_at`, projectID, string(payload), formatTime(now)); err != nil {
+			return fmt.Errorf("persist canonical allocated configuration: %w", err)
 		}
 		// Keep the query projections (services and server-owned ports) in sync
 		// with the allocated aggregate. This is intentionally in the same
@@ -814,6 +844,13 @@ func (s *Store) MarkConfigurationGoodOwned(ctx context.Context, projectID string
 }
 
 func updateCanonicalProjectionTx(ctx context.Context, tx *sql.Tx, projectID string, cfg contracts.ProjectConfiguration, now time.Time) error {
+	payload, err := json.Marshal(redactConfiguration(cfg))
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO project_configuration(project_id,config_json,updated_at) VALUES(?,?,?) ON CONFLICT(project_id) DO UPDATE SET config_json=excluded.config_json,updated_at=excluded.updated_at`, projectID, string(payload), formatTime(now)); err != nil {
+		return err
+	}
 	servicesJSON, err := json.Marshal(cfg.Services)
 	if err != nil {
 		return err

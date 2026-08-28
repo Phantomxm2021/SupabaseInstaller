@@ -171,6 +171,27 @@ func TestStageRuntimeFilesHydratesMetadataOnlyFreshProject(t *testing.T) {
 	}
 }
 
+func TestStageRuntimeFilesMakesDatabaseBootstrapAssetsReadable(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := root.StageRuntimeFiles("fresh", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")}); err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("fresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(project, "volumes", "db", "webhooks.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("initial database bootstrap mode = %04o, want 0644", got)
+	}
+}
+
 func TestResetInitialDatabaseRemovesOnlyDatabaseDataDirectory(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
