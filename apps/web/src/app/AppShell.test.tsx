@@ -34,11 +34,20 @@ it('does not render a sidebar on the projects landing page', () => {
   expect(screen.queryByRole('button', { name: /sidebar/i })).not.toBeInTheDocument()
 })
 
-it.each(['/projects/new', '/projects/bee/configuration'])('does not render a sidebar during %s', (path) => {
+it('does not render a sidebar during project creation', () => {
+  const path = '/projects/new'
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><AppShell /></MemoryRouter></QueryClientProvider>)
 
   expect(document.querySelector('[data-slot="sidebar"]')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /sidebar/i })).not.toBeInTheDocument()
+})
+
+it('keeps the primary project sidebar visible in Project Settings', () => {
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/configuration']}><AppShell /></MemoryRouter></QueryClientProvider>)
+
+  expect(document.querySelector('[data-slot="sidebar"]')).toBeInTheDocument()
+  expect(screen.getByRole('navigation', { name: /project navigation/i })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Project Settings' })).toHaveAttribute('aria-current', 'page')
 })
 
 it('provides a focusable sidebar trigger for narrow screens', () => {

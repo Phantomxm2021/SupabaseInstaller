@@ -36,8 +36,7 @@ export function AppShell() {
   const isProjectRoute = Boolean(projectId) && projectId !== 'new'
   const isProjectsLanding = location.pathname === '/projects'
   const isProjectCreation = location.pathname === '/projects/new'
-  const isProjectConfiguration = isProjectRoute && location.pathname.endsWith('/configuration')
-  const showSidebar = !isProjectsLanding && !isProjectCreation && !isProjectConfiguration
+  const showSidebar = !isProjectsLanding && !isProjectCreation
   const projects = useQuery({
     queryKey: ['projects'],
     queryFn: () => apiFetch<{ projects: Project[] }>('/api/projects'),
