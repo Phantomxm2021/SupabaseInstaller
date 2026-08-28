@@ -3,6 +3,7 @@ package configuration
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -216,8 +217,64 @@ func TestRunPersistsConcreteRuntimeVerificationMismatch(t *testing.T) {
 	}
 }
 
+func TestRunRestoresCandidateAndStopsRetryingOnStaleRuntimeRevision(t *testing.T) {
+	orchestrator, database, operations, currentProject, snapshot, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
+	orchestrator.provisioner = staticErrorProvisioner{err: contracts.ErrStaleConfigRevision}
+
+	_, err := orchestrator.Run(context.Background(), currentProject, op, snapshot)
+	if !errors.Is(err, contracts.ErrStaleConfigRevision) {
+		t.Fatalf("Run() error = %v, want stale configuration revision", err)
+	}
+	stored, err := operations.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != operation.Failed {
+		t.Fatalf("operation status = %s, want FAILED instead of a retryable RUNNING operation", stored.Status)
+	}
+	if !strings.Contains(stored.ErrorMessage, "runtime configuration revision conflict") {
+		t.Fatalf("stored error = %q, want actionable revision conflict", stored.ErrorMessage)
+	}
+	restored, err := database.GetConfiguration(context.Background(), currentProject.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Revision != restored.LastGoodRevision || restored.Revision != 1 {
+		t.Fatalf("configuration = revision %d / last-good %d, want restored 1 / 1", restored.Revision, restored.LastGoodRevision)
+	}
+}
+
+func TestRunStopsRetryingWhenStaleCandidateHasAlreadyBeenSuperseded(t *testing.T) {
+	orchestrator, database, operations, currentProject, snapshot, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
+	orchestrator.provisioner = staticErrorProvisioner{err: contracts.ErrStaleConfigRevision}
+	if _, err := database.DB().Exec(`UPDATE projects SET config_revision=3 WHERE id=?`, currentProject.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := orchestrator.Run(context.Background(), currentProject, op, snapshot)
+	if !errors.Is(err, contracts.ErrStaleConfigRevision) {
+		t.Fatalf("Run() error = %v, want stale configuration revision", err)
+	}
+	stored, err := operations.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != operation.Failed {
+		t.Fatalf("operation status = %s, want FAILED instead of a retryable RUNNING operation", stored.Status)
+	}
+	if !strings.Contains(stored.ErrorMessage, "candidate configuration could not be restored") {
+		t.Fatalf("stored error = %q, want explicit superseded-candidate diagnostic", stored.ErrorMessage)
+	}
+}
+
 type staticResponseProvisioner struct {
 	response contracts.ReconcileProjectResponse
+}
+
+type staticErrorProvisioner struct{ err error }
+
+func (s staticErrorProvisioner) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, s.err
 }
 
 func (s staticResponseProvisioner) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {

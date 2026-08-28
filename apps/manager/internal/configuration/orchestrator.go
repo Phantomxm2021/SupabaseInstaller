@@ -469,6 +469,9 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			rotationRequest.Fence = snapshot.Fence
 			result, reconcileErr := rotator.RotateDatabasePassword(workCtx, rotationRequest)
 			if reconcileErr != nil {
+				if isRejectedRuntimeRevision(reconcileErr) {
+					return o.failRejectedRuntimeRevision(ctx, queued, step, currentProject.ID, snapshot, reconcileErr)
+				}
 				if !runtimeOutcomeKnown(reconcileErr) {
 					// A lost HTTP response is not a runtime failure. Keep the durable
 					// operation active so Resume can replay its idempotency key.
@@ -646,6 +649,25 @@ func runtimeOutcomeKnown(err error) bool {
 	return errors.As(err, &outcome) && outcome.RuntimeOutcomeKnown()
 }
 
+// isRejectedRuntimeRevision identifies Provisioner rejections made before it
+// can render, switch a runtime generation, or recreate a service. Unlike a
+// transport failure, these responses are deterministic: preserving the
+// operation as RUNNING would replay the same rejected request forever.
+func isRejectedRuntimeRevision(err error) bool {
+	return errors.Is(err, contracts.ErrStaleConfigRevision) || errors.Is(err, contracts.ErrInvalidReconcileRevision)
+}
+
+func (o *Orchestrator) failRejectedRuntimeRevision(ctx context.Context, queued operation.Operation, step, projectID string, snapshot store.ConfigurationSnapshot, reconcileErr error) (operation.Operation, error) {
+	message := "runtime configuration revision is invalid"
+	if errors.Is(reconcileErr, contracts.ErrStaleConfigRevision) {
+		message = "runtime configuration revision conflict"
+	}
+	if restoreErr := o.restoreConfigurationState(ctx, projectID, queued.ID, snapshot); restoreErr != nil {
+		return o.fail(ctx, queued, step, fmt.Errorf("%s: %w; candidate configuration could not be restored: %v", message, reconcileErr, restoreErr), false)
+	}
+	return o.fail(ctx, queued, step, fmt.Errorf("%s: %w; candidate configuration restored", message, reconcileErr), false)
+}
+
 // Run executes the six durable update steps. Runtime failures are intentionally
 // reported with a generic message; the Provisioner response is typed and
 // redacted, and operation events must never contain rendered environment data.
@@ -728,6 +750,9 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 	result, reconcileErr := o.provisioner.Reconcile(workCtx, request)
 	if reconcileErr != nil {
 		slog.Error("configuration reconciliation returned an error", "project_id", currentProject.ID, "slug", currentProject.Slug, "operation_id", queued.ID, "error", reconcileErr)
+		if isRejectedRuntimeRevision(reconcileErr) {
+			return o.failRejectedRuntimeRevision(ctx, queued, "RECONCILE_SERVICES", currentProject.ID, snapshot, reconcileErr)
+		}
 		if !runtimeOutcomeKnown(reconcileErr) {
 			// Preserve RUNNING for scheduler/startup recovery when the private
 			// request may have completed but its response was lost.
