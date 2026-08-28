@@ -142,6 +142,7 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed reconcile request is required")
 		return
 	}
+	s.logger.Info("project runtime reconciliation started", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "expected_revision", input.ExpectedRevision, "next_revision", input.NextRevision)
 	result, err := s.backend.Reconcile(request.Context(), input)
 	if errors.Is(err, contracts.ErrStaleConfigRevision) {
 		writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
@@ -173,6 +174,7 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 		writeError(response, http.StatusUnprocessableEntity, "RECONCILE_FAILED", "Project runtime reconciliation failed")
 		return
 	}
+	s.logger.Info("project runtime reconciliation completed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "revision", result.Revision, "recreated_services", result.RecreatedServices)
 	writeJSON(response, http.StatusOK, result)
 }
 

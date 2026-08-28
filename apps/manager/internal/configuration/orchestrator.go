@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
 	"strings"
@@ -723,8 +724,10 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 	if err := o.operations.StartStep(ctx, queued.ID, "RECONCILE_SERVICES", 70); err != nil {
 		return queued, err
 	}
+	slog.Info("configuration reconciliation requested", "project_id", currentProject.ID, "slug", currentProject.Slug, "operation_id", queued.ID, "revision", snapshot.Revision)
 	result, reconcileErr := o.provisioner.Reconcile(workCtx, request)
 	if reconcileErr != nil {
+		slog.Error("configuration reconciliation returned an error", "project_id", currentProject.ID, "slug", currentProject.Slug, "operation_id", queued.ID, "error", reconcileErr)
 		if !runtimeOutcomeKnown(reconcileErr) {
 			// Preserve RUNNING for scheduler/startup recovery when the private
 			// request may have completed but its response was lost.
@@ -738,6 +741,7 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 		}
 		return o.fail(ctx, queued, "RECONCILE_SERVICES", fmt.Errorf("runtime reconciliation failed: %w", reconcileErr), rolledBack)
 	}
+	slog.Info("configuration reconciliation completed", "project_id", currentProject.ID, "slug", currentProject.Slug, "operation_id", queued.ID, "revision", result.Revision, "recreated_services", result.RecreatedServices)
 	if err := o.operations.CompleteStep(ctx, queued.ID, "RECONCILE_SERVICES", 70); err != nil {
 		return queued, err
 	}

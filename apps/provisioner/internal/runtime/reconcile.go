@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -24,6 +25,7 @@ import (
 // Metadata, idempotency and the last-known-good revision are updated only after
 // the candidate has passed Compose validation and service health checks.
 func (backend *Backend) Reconcile(ctx context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	slog.Info("runtime reconciliation entered", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "expected_revision", request.ExpectedRevision, "next_revision", request.NextRevision)
 	var result contracts.ReconcileProjectResponse
 	var runtimeRollback func() error
 	var runtimeRollbackSucceeded bool
@@ -74,6 +76,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if len(previousServices) == 0 && metadata.Revision > 0 {
 			previousServices = enabledServices(previousConfig)
 		}
+		slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "render")
 		rendered, err := render.Project(render.Input{
 			ProjectID: request.ProjectID, Slug: request.Slug, APIPort: request.APIPort,
 			Configuration: request.Configuration, Secrets: request.Secrets, RuntimeSecrets: request.RuntimeSecrets,
@@ -160,6 +163,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if err := pointFunctionsEnvAtCandidate(candidateRef, rendered.Compose); err != nil {
 			return fail(rollback(err))
 		}
+		slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "validate_compose")
 		if err := backend.runner.Validate(ctx, candidateProject); err != nil {
 			return fail(rollback(err))
 		}
@@ -177,6 +181,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			// A project with no published revision has never completed its first
 			// bootstrap. Stop any orphaned attempt, remove its partial PGDATA,
 			// and let the pinned Postgres image run its full official init path.
+			slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "bootstrap_database")
 			if err := backend.runner.DownRuntime(ctx, currentProject); err != nil {
 				return fail(rollback(err))
 			}
@@ -201,6 +206,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			}
 		} else {
 			affected := intersect(affectedServices(previousConfig, request.Configuration), newServices)
+			slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "recreate_services", "services", affected)
 			if err := backend.runner.Recreate(ctx, currentProject, affected...); err != nil {
 				return fail(rollback(err))
 			}
@@ -220,6 +226,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			}
 			return fail(rollback(cause))
 		}
+		slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "wait_healthy", "services", newServices)
 		if err := backend.waitHealthy(ctx, request.Slug, newServices); err != nil {
 			return fail(rollback(err))
 		}
@@ -257,6 +264,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		}
 		return result, err
 	}
+	slog.Info("runtime reconciliation completed", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "revision", metadata.Revision, "recreated_services", result.RecreatedServices)
 	result.Revision = metadata.Revision
 	return result, nil
 }
