@@ -681,3 +681,34 @@ it('clears Custom SMTP credentials from the DTO when Authentication is disabled'
 
   await waitFor(() => expect(body?.configuration.auth.smtp).toEqual({ enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' }))
 })
+
+it('clears Custom SMTP credentials when its module is disabled while Authentication remains enabled', async () => {
+  let body: Record<string, any> | undefined
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
+    body = JSON.parse(String(init.body))
+    return new Response(JSON.stringify({ projectId: 'project-smtp-module-disabled', operationId: 'operation-smtp-module-disabled' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Add authentication method' }))
+  await user.click(screen.getByRole('button', { name: 'Login methods' }))
+  await user.click(screen.getByRole('button', { name: 'Custom SMTP' }))
+  await user.type(screen.getByLabelText('Host'), 'smtp.example.com')
+  await user.type(screen.getByLabelText('Username'), 'mailer')
+  await user.type(screen.getByLabelText('Password'), 'smtp-secret')
+  await user.type(screen.getByLabelText('Sender email'), 'hello@example.com')
+  await user.type(screen.getByLabelText('Sender name'), 'Example')
+  await user.click(screen.getByRole('switch', { name: 'Custom SMTP' }))
+  expect(screen.getByRole('switch', { name: 'Authentication' })).toBeChecked()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Install project' }))
+
+  await waitFor(() => expect(body?.configuration.auth.smtp).toEqual({ enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' }))
+})

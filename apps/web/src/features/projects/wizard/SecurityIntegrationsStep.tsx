@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { OAuthProviderFields } from '../OAuthProviderFields'
 import { type ProjectForm } from '../projectSchema'
-import { setServiceEnabled } from '../PresetStep'
+import { disabledSmtpConfiguration, setServiceEnabled } from '../PresetStep'
 import { AuthMethodDialog, type AuthenticationMethod } from './AuthMethodDialog'
 
 export function SecurityIntegrationsStep({ form }: { form: UseFormReturn<ProjectForm> }) {
@@ -21,6 +21,7 @@ export function SecurityIntegrationsStep({ form }: { form: UseFormReturn<Project
   const storage = form.watch('configuration.storage')
   const functions = form.watch('configuration.functions')
   const set = (name: string, value: unknown) => { form.setValue(name as any, value as any, { shouldDirty: true, shouldValidate: true }); form.setValue('preset', 'CUSTOM', { shouldDirty: true }) }
+  const setSmtpEnabled = (enabled: boolean) => set('configuration.auth.smtp', enabled ? { ...form.getValues('configuration.auth.smtp'), enabled: true } : disabledSmtpConfiguration())
   const error = (name: string) => fieldError(form, name)
   const selectMethod = (method: AuthenticationMethod) => {
     if (method.kind === 'oauth') {
@@ -56,7 +57,7 @@ export function SecurityIntegrationsStep({ form }: { form: UseFormReturn<Project
     <Module title="Authentication" enabled={services.auth} onEnabledChange={(enabled) => setServiceEnabled(form, 'auth', enabled)}>
       <div className="space-y-6"><Button type="button" variant="secondary" onClick={() => setDialogOpen(true)}>Add authentication method</Button><FieldGroup className="grid gap-4 md:grid-cols-2"><Toggle label="Email Auth" checked={auth.email.enabled} onChange={(value) => set('configuration.auth.email.enabled', value)} /><Toggle label="Allow signup" checked={auth.email.allowSignup} onChange={(value) => { set('configuration.auth.email.allowSignup', value); set('configuration.auth.disableSignup', !value) }} error={error('configuration.auth.disableSignup')} /><Toggle label="Confirm email" checked={auth.email.confirmEmail} onChange={(value) => set('configuration.auth.email.confirmEmail', value)} /><Toggle label="Secure email change" checked={auth.email.secureEmailChange} onChange={(value) => { set('configuration.auth.email.secureEmailChange', value); set('configuration.auth.email.doubleConfirmChanges', value) }} error={error('configuration.auth.email.secureEmailChange')} /><NumberField label="Session JWT expiry (seconds)" name="configuration.auth.jwtExpiry" form={form} /></FieldGroup><Field><FieldLabel htmlFor="redirect-urls">Redirect URLs</FieldLabel><FieldDescription>One absolute http(s) URL per line.</FieldDescription><Textarea id="redirect-urls" value={auth.redirectUrls.join('\n')} onChange={(event) => set('configuration.auth.redirectUrls', event.target.value.split(/\n/).map((value) => value.trim()).filter(Boolean))} aria-invalid={!!error('configuration.auth.redirectUrls')} /><FieldError>{error('configuration.auth.redirectUrls')}</FieldError>{redirectErrors(form).map(([index, message]) => <FieldError key={index}>Redirect URL {index + 1}: {message}</FieldError>)}</Field>{auth.phone.enabled && <PhoneFields form={form} set={set} error={error} />}{auth.anonymousSignIn && <p className="text-sm text-muted-foreground">Anonymous sign-in is enabled.</p>}<OAuthProviderFields form={form} siteUrl={form.watch('configuration.general.siteUrl')} /></div>
     </Module>
-    <Module title="Custom SMTP" enabled={auth.smtp.enabled} onEnabledChange={(enabled) => set('configuration.auth.smtp.enabled', enabled)}>
+    <Module title="Custom SMTP" enabled={auth.smtp.enabled} onEnabledChange={setSmtpEnabled}>
       <FieldGroup className="grid gap-4 md:grid-cols-2"><TextField label="Host" name="configuration.auth.smtp.host" form={form} /><NumberField label="Port" name="configuration.auth.smtp.port" form={form} /><TextField label="Username" name="configuration.auth.smtp.username" form={form} /><SecretField label="Password" path="configuration.auth.smtp.password" set={set} configured={auth.smtp.passwordSet} error={error('configuration.auth.smtp.password')} /><TextField label="Sender email" name="configuration.auth.smtp.senderEmail" form={form} /><TextField label="Sender name" name="configuration.auth.smtp.senderName" form={form} /></FieldGroup>
     </Module>
     <Module title="Storage & Image Transformation" enabled={services.storage} onEnabledChange={(enabled) => setServiceEnabled(form, 'storage', enabled)}>

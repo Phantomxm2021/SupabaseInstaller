@@ -3,6 +3,10 @@ import type { ProjectForm } from './projectSchema'
 
 export type ServiceName = keyof ProjectForm['configuration']['services']
 
+export function disabledSmtpConfiguration(): ProjectForm['configuration']['auth']['smtp'] {
+  return { enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' }
+}
+
 export const serviceLabels: Record<ServiceName, string> = { database: 'PostgreSQL', gateway: 'API Gateway', auth: 'Authentication', rest: 'PostgREST', studio: 'Supabase Studio', postgresMeta: 'postgres-meta', realtime: 'Realtime', storage: 'Storage', imgproxy: 'Image Transformation', functions: 'Edge Functions', supavisor: 'Supavisor', logs: 'Logs & Analytics', vector: 'Vector', directDb: 'Direct PostgreSQL port' }
 
 export const serviceGroups = [
@@ -55,7 +59,7 @@ export function setServiceEnabled(form: UseFormReturn<ProjectForm>, name: Servic
       anonymousSignIn: false,
       oauth: {},
       phone: { ...auth.phone, enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} },
-      smtp: { enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' },
+      smtp: disabledSmtpConfiguration(),
     }, { shouldDirty: true })
   }
   if (name === 'imgproxy' && enabled) next.storage = true
