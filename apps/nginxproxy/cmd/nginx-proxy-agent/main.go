@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -27,11 +28,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(settings.AuthDirectory, 0o700); err != nil {
-		return fmt.Errorf("create Studio credential directory: %w", err)
-	}
-	if err := os.Chmod(settings.AuthDirectory, 0o700); err != nil {
-		return fmt.Errorf("secure Studio credential directory: %w", err)
+	if err := ensureAuthDirectory(settings.AuthDirectory); err != nil {
+		return err
 	}
 	listener, err := server.ListenUnix(settings.SocketPath)
 	if err != nil {
@@ -66,4 +64,27 @@ func run() error {
 		defer cancel()
 		return httpServer.Shutdown(context)
 	}
+}
+
+// ensureAuthDirectory keeps the credential directory readable by the Nginx
+// worker. The directory contains only per-site htpasswd files, which are
+// already written with restrictive file permissions by the site store. A
+// 0700 directory prevents Nginx from traversing the path and turns every
+// protected Studio request into a 500 response after an agent restart.
+func ensureAuthDirectory(path string) error {
+	cleanPath := filepath.Clean(path)
+	parentPath := filepath.Dir(cleanPath)
+	if parentPath == cleanPath || parentPath == string(filepath.Separator) {
+		return fmt.Errorf("Studio credential directory must have a dedicated parent directory")
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return fmt.Errorf("create Studio credential directory: %w", err)
+	}
+	if err := os.Chmod(parentPath, 0o711); err != nil {
+		return fmt.Errorf("set Studio credential parent directory permissions: %w", err)
+	}
+	if err := os.Chmod(cleanPath, 0o755); err != nil {
+		return fmt.Errorf("set Studio credential directory permissions: %w", err)
+	}
+	return nil
 }

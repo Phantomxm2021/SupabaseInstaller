@@ -16,4 +16,8 @@ grep -Fqx 'chmod 0755 "$AUTH_DIRECTORY"' \
 grep -Fqx 'find "$AUTH_DIRECTORY" -maxdepth 1 -type f -name '\''supabase-manager-*.htpasswd'\'' -exec chmod 0644 {} +' \
   "$REPOSITORY_ROOT/scripts/install-nginx-proxy-agent.sh"
 
+# The repair must also run after restart so upgrades from the old 0700 Agent
+# cannot leave Nginx with an unreadable credentials directory.
+test "$(grep -Fc 'chmod 0755 "$AUTH_DIRECTORY"' "$REPOSITORY_ROOT/scripts/install-nginx-proxy-agent.sh")" -ge 2
+
 echo "nginx proxy agent installer permissions test passed"

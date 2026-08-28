@@ -80,4 +80,10 @@ systemctl enable supabase-manager-nginx-proxy-agent.service
 # `enable --now` does not replace an already-running process. Explicitly
 # restart so upgrades always activate the binary just installed above.
 systemctl restart supabase-manager-nginx-proxy-agent.service
+# Keep the permission boundary correct even when upgrading from an older Agent
+# binary that reset this directory to 0700 during startup. New binaries enforce
+# 0755 themselves; this makes the one-command installer safe across upgrades.
+chmod 0711 /etc/supabase-manager
+chmod 0755 "$AUTH_DIRECTORY"
+find "$AUTH_DIRECTORY" -maxdepth 1 -type f -name 'supabase-manager-*.htpasswd' -exec chmod 0644 {} +
 systemctl --no-pager --full status supabase-manager-nginx-proxy-agent.service
