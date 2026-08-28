@@ -1401,6 +1401,9 @@ a.auth-template-row:hover {
   font-weight: 400;
   line-height: 1.45;
 }
+.service-preset-option[aria-current="true"] .service-preset-description {
+  color: var(--primary-foreground);
+}
 .service-configuration-content {
   min-width: 0;
 }

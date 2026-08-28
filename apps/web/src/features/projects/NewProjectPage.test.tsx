@@ -42,6 +42,12 @@ it('disables directional transforms when reduced motion is requested', () => {
   expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s+\.wizard-step-frame\[data-direction\] \{\s+animation-duration: 1ms !important;\s+animation-name: wizard-step-fade;\s+transform: none;/)
 })
 
+it('uses the primary foreground for the selected preset description', () => {
+  const styles = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
+
+  expect(styles).toMatch(/\.service-preset-option\[aria-current="true"\] \.service-preset-description \{\s+color: var\(--primary-foreground\);/)
+})
+
 it('moves through four steps with directional motion and focuses the next heading', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
