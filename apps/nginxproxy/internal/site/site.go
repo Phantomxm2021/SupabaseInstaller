@@ -4,6 +4,7 @@ package site
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -12,23 +13,29 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // ApplyRequest is the complete, typed routing state for one project.
 type ApplyRequest struct {
-	Slug          string `json:"slug"`
-	Domain        string `json:"domain"`
-	APIPort       int    `json:"apiPort"`
-	StudioPort    int    `json:"studioPort"`
-	StudioEnabled bool   `json:"studioEnabled"`
+	Slug           string `json:"slug"`
+	Domain         string `json:"domain"`
+	APIPort        int    `json:"apiPort"`
+	StudioPort     int    `json:"studioPort"`
+	StudioEnabled  bool   `json:"studioEnabled"`
+	StudioUsername string `json:"studioUsername"`
+	StudioPassword string `json:"studioPassword"`
 }
 
 // TLSPaths is installed by the host operator and is not project-controlled.
 type TLSPaths struct {
 	CertificateFile    string
 	CertificateKeyFile string
+	AuthDirectory      string
 }
 
 // RenderedSite is a validated Nginx site ready for transactional activation.
 type RenderedSite struct {
 	AvailableName string
 	Contents      string
+	AuthDirectory string
+	AuthFileName  string
+	AuthContents  string
 }
 
 // Renderer renders only the fixed proxy configuration used by the manager.
@@ -37,6 +44,9 @@ type Renderer struct {
 }
 
 func NewRenderer(tls TLSPaths) Renderer {
+	if strings.TrimSpace(tls.AuthDirectory) == "" {
+		tls.AuthDirectory = defaultAuthDirectory
+	}
 	return Renderer{tls: tls}
 }
 
@@ -48,9 +58,18 @@ func (r Renderer) RenderApply(request ApplyRequest) (RenderedSite, error) {
 		return RenderedSite{}, err
 	}
 
+	authFileName, err := ManagedCredentialName(request.Slug)
+	if err != nil {
+		return RenderedSite{}, err
+	}
 	studioLocation := "location / { return 404; }"
+	authContents := ""
 	if request.StudioEnabled {
-		studioLocation = fmt.Sprintf("location / {\n        proxy_pass http://127.0.0.1:%d;\n    }", request.StudioPort)
+		authContents, err = renderHTPasswd(request.StudioUsername, request.StudioPassword)
+		if err != nil {
+			return RenderedSite{}, err
+		}
+		studioLocation = fmt.Sprintf("location / {\n        auth_basic \"Supabase Studio\";\n        auth_basic_user_file %s;\n        proxy_pass http://127.0.0.1:%d;\n    }", filepath.Join(r.tls.AuthDirectory, authFileName), request.StudioPort)
 	}
 
 	availableName, err := ManagedSiteName(request.Slug)
@@ -59,6 +78,9 @@ func (r Renderer) RenderApply(request ApplyRequest) (RenderedSite, error) {
 	}
 	return RenderedSite{
 		AvailableName: availableName,
+		AuthDirectory: r.tls.AuthDirectory,
+		AuthFileName:  authFileName,
+		AuthContents:  authContents,
 		Contents: fmt.Sprintf(`server {
     listen 80;
     listen [::]:80;
@@ -139,8 +161,17 @@ func ManagedSiteName(slug string) (string, error) {
 	return "supabase-manager-" + slug + ".conf", nil
 }
 
+// ManagedCredentialName maps a project slug to the separate root-owned
+// htpasswd file used only by the Studio location of that same project.
+func ManagedCredentialName(slug string) (string, error) {
+	if !slugPattern.MatchString(slug) {
+		return "", fmt.Errorf("invalid project slug")
+	}
+	return "supabase-manager-" + slug + ".htpasswd", nil
+}
+
 func validateTLSPaths(paths TLSPaths) error {
-	if !safeAbsolutePath(paths.CertificateFile) || !safeAbsolutePath(paths.CertificateKeyFile) {
+	if !safeAbsolutePath(paths.CertificateFile) || !safeAbsolutePath(paths.CertificateKeyFile) || !safeAbsolutePath(paths.AuthDirectory) {
 		return fmt.Errorf("invalid TLS certificate paths")
 	}
 	return nil

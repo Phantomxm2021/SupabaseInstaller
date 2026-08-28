@@ -11,6 +11,7 @@ type Config struct {
 	Token              string
 	SitesAvailable     string
 	SitesEnabled       string
+	AuthDirectory      string
 	CertificateFile    string
 	CertificateKeyFile string
 	NginxBinary        string
@@ -23,6 +24,7 @@ func Load(lookup func(string) string) (Config, error) {
 		Token:              strings.TrimSpace(lookup("NGINX_PROXY_TOKEN")),
 		SitesAvailable:     valueOr(lookup, "NGINX_SITES_AVAILABLE", "/etc/nginx/sites-available"),
 		SitesEnabled:       valueOr(lookup, "NGINX_SITES_ENABLED", "/etc/nginx/sites-enabled"),
+		AuthDirectory:      valueOr(lookup, "NGINX_AUTH_DIRECTORY", "/etc/supabase-manager/nginx-auth"),
 		CertificateFile:    strings.TrimSpace(lookup("NGINX_CERTIFICATE_FILE")),
 		CertificateKeyFile: strings.TrimSpace(lookup("NGINX_CERTIFICATE_KEY_FILE")),
 		NginxBinary:        valueOr(lookup, "NGINX_BINARY", "/usr/sbin/nginx"),
@@ -32,6 +34,7 @@ func Load(lookup func(string) string) (Config, error) {
 		"NGINX_PROXY_SOCKET":         config.SocketPath,
 		"NGINX_SITES_AVAILABLE":      config.SitesAvailable,
 		"NGINX_SITES_ENABLED":        config.SitesEnabled,
+		"NGINX_AUTH_DIRECTORY":       config.AuthDirectory,
 		"NGINX_CERTIFICATE_FILE":     config.CertificateFile,
 		"NGINX_CERTIFICATE_KEY_FILE": config.CertificateKeyFile,
 		"NGINX_BINARY":               config.NginxBinary,

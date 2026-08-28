@@ -15,11 +15,13 @@ import (
 )
 
 type Route struct {
-	Slug          string `json:"slug"`
-	Domain        string `json:"domain"`
-	APIPort       int    `json:"apiPort"`
-	StudioPort    int    `json:"studioPort"`
-	StudioEnabled bool   `json:"studioEnabled"`
+	Slug           string `json:"slug"`
+	Domain         string `json:"domain"`
+	APIPort        int    `json:"apiPort"`
+	StudioPort     int    `json:"studioPort"`
+	StudioEnabled  bool   `json:"studioEnabled"`
+	StudioUsername string `json:"studioUsername"`
+	StudioPassword string `json:"studioPassword"`
 }
 
 type Client interface {

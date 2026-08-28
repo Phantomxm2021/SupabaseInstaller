@@ -73,7 +73,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			return outcome
 		}
 		previousConfig := metadata.Configuration
-		previousProxyRoute, previousProxyManaged := routeForProxy(request.Slug, previousConfig)
+		previousProxyRoute, previousProxyManaged := routeForProxy(request.Slug, previousConfig, request.Secrets)
 		previousServices := append([]string(nil), metadata.EnabledServices...)
 		if len(previousServices) == 0 && metadata.Revision > 0 {
 			previousServices = enabledServices(previousConfig)
@@ -249,7 +249,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if err := backend.waitHealthy(ctx, request.Slug, newServices); err != nil {
 			return fail(rollback(err))
 		}
-		if currentProxyRoute, managed := routeForProxy(request.Slug, request.Configuration); managed {
+		if currentProxyRoute, managed := routeForProxy(request.Slug, request.Configuration, request.Secrets); managed {
 			if err := backend.proxy.Apply(ctx, currentProxyRoute); err != nil {
 				return fail(rollback(fmt.Errorf("apply managed nginx site: %w", err)))
 			}
@@ -299,16 +299,22 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 	return result, nil
 }
 
-func routeForProxy(slug string, configuration contracts.ProjectConfiguration) (proxy.Route, bool) {
+func routeForProxy(slug string, configuration contracts.ProjectConfiguration, secrets contracts.ProjectSecrets) (proxy.Route, bool) {
 	if configuration.Network.HTTPSMode != contracts.HTTPSModeExternal || configuration.General.Domain == "" || configuration.Network.APIPort == 0 {
 		return proxy.Route{}, false
 	}
+	studioUsername := strings.TrimSpace(configuration.General.StudioUsername)
+	if studioUsername == "" {
+		studioUsername = "supabase"
+	}
 	return proxy.Route{
-		Slug:          slug,
-		Domain:        configuration.General.Domain,
-		APIPort:       configuration.Network.APIPort,
-		StudioPort:    configuration.Network.StudioPort,
-		StudioEnabled: configuration.Services.Studio,
+		Slug:           slug,
+		Domain:         configuration.General.Domain,
+		APIPort:        configuration.Network.APIPort,
+		StudioPort:     configuration.Network.StudioPort,
+		StudioEnabled:  configuration.Services.Studio,
+		StudioUsername: studioUsername,
+		StudioPassword: secrets.DashboardPassword,
 	}, true
 }
 

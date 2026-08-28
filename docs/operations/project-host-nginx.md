@@ -10,9 +10,11 @@ project.supabase.example.com     -> project API/Studio  (one project host)
 ```
 
 The recommended deployment uses the native `nginx-proxy-agent`. It owns only
-`/etc/nginx/sites-available/supabase-manager-<slug>.conf` and its matching
-`sites-enabled` link. The Provisioner talks to it through an authenticated
-Unix socket; neither Manager nor Provisioner has access to `/etc/nginx`.
+`/etc/nginx/sites-available/supabase-manager-<slug>.conf`, its matching
+`sites-enabled` link, and one root-only credential file beneath
+`/etc/supabase-manager/nginx-auth`. The Provisioner talks to it through an
+authenticated Unix socket; neither Manager nor Provisioner has access to
+`/etc/nginx`.
 
 ## Project values
 
@@ -95,19 +97,20 @@ In managed mode, a successful reconcile performs these steps:
 
 1. Render and validate the project runtime.
 2. Start/recreate the runtime and wait for its health checks.
-3. Atomically write the slug-stable Nginx site file, validate with `nginx -t`,
-   then reload Nginx.
+3. Atomically write the slug-stable Nginx site file and the root-only Studio
+   credential hash, validate with `nginx -t`, then reload Nginx.
 4. Persist the project configuration.
 
-If Nginx validation/reload fails, the agent restores its prior site file and
-enabled link. If a later Manager metadata write fails, Provisioner restores
+If Nginx validation/reload fails, the agent restores its prior site file,
+enabled link, and credential hash. If a later Manager metadata write fails, Provisioner restores
 the prior runtime and prior proxy route. Updating `General.Domain` overwrites
 the same slug-named site file, so it cannot leave an obsolete hostname file.
 Deleting a project stops its runtime, removes its managed site and enabled
 link, and only then removes project data.
 
-The generated template routes `/` to Studio (or returns `404` when Studio is
-disabled), and routes `/auth`, `/rest`, `/graphql`, `/storage/v1/`,
+The generated template requires the configured Studio username and password
+for `/` (or returns `404` when Studio is disabled), and routes `/auth`,
+`/rest`, `/graphql`, `/storage/v1/`,
 `/functions`, `/mcp`, `/sso`, and `/realtime/v1/` to the API Gateway. Realtime
 includes WebSocket forwarding.
 

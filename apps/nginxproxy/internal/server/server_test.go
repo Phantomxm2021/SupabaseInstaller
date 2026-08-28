@@ -17,7 +17,7 @@ func TestApplyRequiresBearerTokenAndForwardsTypedRequest(t *testing.T) {
 	}), store)
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/sites/apply", bytes.NewBufferString(`{
-		"slug":"bee","domain":"bee.example.com","apiPort":18001,"studioPort":18002,"studioEnabled":true
+		"slug":"bee","domain":"bee.example.com","apiPort":18001,"studioPort":18002,"studioEnabled":true,"studioUsername":"operator","studioPassword":"studio-password"
 	}`))
 	request.Header.Set("Authorization", "Bearer agent-token")
 	response := httptest.NewRecorder()

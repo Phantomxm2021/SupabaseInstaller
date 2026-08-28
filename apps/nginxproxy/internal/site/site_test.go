@@ -12,11 +12,13 @@ func TestRenderApplyUsesStableSlugFileAndCurrentDomain(t *testing.T) {
 	})
 
 	rendered, err := renderer.RenderApply(ApplyRequest{
-		Slug:          "bee-game",
-		Domain:        "bee.example.com",
-		APIPort:       18001,
-		StudioPort:    18002,
-		StudioEnabled: true,
+		Slug:           "bee-game",
+		Domain:         "bee.example.com",
+		APIPort:        18001,
+		StudioPort:     18002,
+		StudioEnabled:  true,
+		StudioUsername: "operator",
+		StudioPassword: "operator-password",
 	})
 	if err != nil {
 		t.Fatalf("RenderApply() error = %v", err)
@@ -36,6 +38,44 @@ func TestRenderApplyUsesStableSlugFileAndCurrentDomain(t *testing.T) {
 	} {
 		if !strings.Contains(rendered.Contents, fragment) {
 			t.Errorf("rendered config does not contain %q:\n%s", fragment, rendered.Contents)
+		}
+	}
+}
+
+func TestRenderApplyProtectsOnlyStudioRoot(t *testing.T) {
+	renderer := NewRenderer(TLSPaths{
+		CertificateFile:    "/etc/nginx/ssl/cloudflare-origin.pem",
+		CertificateKeyFile: "/etc/nginx/ssl/cloudflare-origin.key",
+	})
+
+	rendered, err := renderer.RenderApply(ApplyRequest{
+		Slug: "studio", Domain: "studio.example.com", APIPort: 18001,
+		StudioPort: 18002, StudioEnabled: true, StudioUsername: "operator", StudioPassword: "operator-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		`auth_basic "Supabase Studio";`,
+		"auth_basic_user_file /etc/supabase-manager/nginx-auth/supabase-manager-studio.htpasswd;",
+		"proxy_pass http://127.0.0.1:18002;",
+	} {
+		if !strings.Contains(rendered.Contents, want) {
+			t.Fatalf("rendered Studio root is missing %q:\n%s", want, rendered.Contents)
+		}
+	}
+	for _, apiRoute := range []string{"location /auth", "location /rest", "location /storage/v1/", "location /realtime/v1/"} {
+		begin := strings.Index(rendered.Contents, apiRoute)
+		if begin < 0 {
+			t.Fatalf("missing API route %q", apiRoute)
+		}
+		end := strings.Index(rendered.Contents[begin:], "}\n")
+		if end < 0 {
+			t.Fatalf("cannot find end of API route %q", apiRoute)
+		}
+		if strings.Contains(rendered.Contents[begin:begin+end], "auth_basic") {
+			t.Fatalf("API route %q must not require Studio credentials", apiRoute)
 		}
 	}
 }

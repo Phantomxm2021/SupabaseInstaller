@@ -74,7 +74,7 @@ func TestReconcileAppliesProxyOnlyAfterHealthyRuntime(t *testing.T) {
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(configuration, 0, 1)); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if got, want := proxyClient.applied, []proxy.Route{{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true}}; !reflect.DeepEqual(got, want) {
+	if got, want := proxyClient.applied, []proxy.Route{{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true, StudioUsername: "supabase", StudioPassword: "dashboard-password"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("proxy routes = %#v, want %#v", got, want)
 	}
 }
@@ -747,9 +747,9 @@ func TestReconcileMetadataWriteFailureRestoresPreviousManagedProxy(t *testing.T)
 		t.Fatalf("result=%#v err=%v, want rollback", result, err)
 	}
 	want := []proxy.Route{
-		{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true},
-		{Slug: "bee", Domain: "new.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true},
-		{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true},
+		{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true, StudioUsername: "supabase", StudioPassword: "dashboard-password"},
+		{Slug: "bee", Domain: "new.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true, StudioUsername: "supabase", StudioPassword: "dashboard-password"},
+		{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true, StudioUsername: "supabase", StudioPassword: "dashboard-password"},
 	}
 	if got := proxyClient.applied; !reflect.DeepEqual(got, want) {
 		t.Fatalf("proxy routes = %#v, want %#v", got, want)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -26,6 +27,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(settings.AuthDirectory, 0o700); err != nil {
+		return fmt.Errorf("create Studio credential directory: %w", err)
+	}
+	if err := os.Chmod(settings.AuthDirectory, 0o700); err != nil {
+		return fmt.Errorf("secure Studio credential directory: %w", err)
+	}
 	listener, err := server.ListenUnix(settings.SocketPath)
 	if err != nil {
 		return err
@@ -35,10 +42,11 @@ func run() error {
 	store := site.NewStore(
 		settings.SitesAvailable,
 		settings.SitesEnabled,
+		settings.AuthDirectory,
 		site.NewSystemRunner(site.OSExecutor{}, settings.NginxBinary, settings.SystemctlBinary),
 	)
 	handler := server.New(settings.Token, site.NewRenderer(site.TLSPaths{
-		CertificateFile: settings.CertificateFile, CertificateKeyFile: settings.CertificateKeyFile,
+		CertificateFile: settings.CertificateFile, CertificateKeyFile: settings.CertificateKeyFile, AuthDirectory: settings.AuthDirectory,
 	}), store)
 	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 

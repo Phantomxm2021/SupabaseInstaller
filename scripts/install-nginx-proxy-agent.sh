@@ -11,6 +11,7 @@ ENV_FILE=${1:-"$REPOSITORY_ROOT/deploy/.env"}
 CERTIFICATE_FILE=${NGINX_CERTIFICATE_FILE:-/etc/nginx/ssl/cloudflare-origin.pem}
 CERTIFICATE_KEY_FILE=${NGINX_CERTIFICATE_KEY_FILE:-/etc/nginx/ssl/cloudflare-origin.key}
 SOCKET_PATH=/run/supabase-manager/nginx-proxy-agent.sock
+AUTH_DIRECTORY=${NGINX_AUTH_DIRECTORY:-/etc/supabase-manager/nginx-auth}
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "environment file not found: $ENV_FILE" >&2
@@ -31,6 +32,10 @@ if [[ ! -f "$CERTIFICATE_FILE" || ! -f "$CERTIFICATE_KEY_FILE" ]]; then
   echo "NGINX certificate or key file is missing; set NGINX_CERTIFICATE_FILE and NGINX_CERTIFICATE_KEY_FILE before installation" >&2
   exit 1
 fi
+if [[ "$AUTH_DIRECTORY" != /* ]]; then
+  echo "NGINX_AUTH_DIRECTORY must be an absolute path" >&2
+  exit 1
+fi
 if ! grep -Eq 'include[[:space:]]+/etc/nginx/sites-enabled/\*;' /etc/nginx/nginx.conf; then
   echo "/etc/nginx/nginx.conf does not include /etc/nginx/sites-enabled/*; configure that standard Nginx include first (this installer will not modify nginx.conf)" >&2
   exit 1
@@ -45,6 +50,7 @@ docker build \
   "$REPOSITORY_ROOT"
 
 install -d -m 0750 /etc/supabase-manager /run/supabase-manager
+install -d -m 0700 "$AUTH_DIRECTORY"
 install -m 0755 "$TEMPORARY_DIRECTORY/nginx-proxy-agent" /usr/local/bin/nginx-proxy-agent
 install -m 0644 "$REPOSITORY_ROOT/deploy/systemd/supabase-manager-nginx-proxy-agent.service" /etc/systemd/system/supabase-manager-nginx-proxy-agent.service
 
@@ -54,6 +60,7 @@ NGINX_PROXY_SOCKET=$SOCKET_PATH
 NGINX_PROXY_TOKEN=$TOKEN
 NGINX_SITES_AVAILABLE=/etc/nginx/sites-available
 NGINX_SITES_ENABLED=/etc/nginx/sites-enabled
+NGINX_AUTH_DIRECTORY=$AUTH_DIRECTORY
 NGINX_CERTIFICATE_FILE=$CERTIFICATE_FILE
 NGINX_CERTIFICATE_KEY_FILE=$CERTIFICATE_KEY_FILE
 NGINX_BINARY=/usr/sbin/nginx

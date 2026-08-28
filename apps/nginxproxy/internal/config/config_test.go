@@ -17,6 +17,7 @@ func TestLoadUsesConfiguredValuesAndSafeDefaults(t *testing.T) {
 		"NGINX_PROXY_SOCKET":         "/run/supabase-manager/agent.sock",
 		"NGINX_SITES_AVAILABLE":      "/etc/nginx/sites-available",
 		"NGINX_SITES_ENABLED":        "/etc/nginx/sites-enabled",
+		"NGINX_AUTH_DIRECTORY":       "/etc/supabase-manager/nginx-auth",
 		"NGINX_BINARY":               "/usr/sbin/nginx",
 		"SYSTEMCTL_BINARY":           "/bin/systemctl",
 	}

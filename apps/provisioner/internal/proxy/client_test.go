@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"os"
@@ -23,15 +24,21 @@ func TestClientCallsTypedApplyAndRemoveOverUnixSocket(t *testing.T) {
 	t.Cleanup(func() { _ = listener.Close() })
 
 	var gotAuthorization, gotPath string
+	var gotRoute Route
 	server := &http.Server{Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		gotAuthorization, gotPath = request.Header.Get("Authorization"), request.URL.Path
+		if request.URL.Path == "/v1/sites/apply" {
+			if err := json.NewDecoder(request.Body).Decode(&gotRoute); err != nil {
+				t.Errorf("decode route: %v", err)
+			}
+		}
 		response.WriteHeader(http.StatusNoContent)
 	})}
 	go server.Serve(listener)
 	t.Cleanup(func() { _ = server.Close() })
 
 	client := NewManagedClient(socket, "agent-token")
-	if err := client.Apply(context.Background(), Route{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true}); err != nil {
+	if err := client.Apply(context.Background(), Route{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true, StudioUsername: "operator", StudioPassword: "studio-password"}); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	if got, want := gotAuthorization, "Bearer agent-token"; got != want {
@@ -39,6 +46,12 @@ func TestClientCallsTypedApplyAndRemoveOverUnixSocket(t *testing.T) {
 	}
 	if got, want := gotPath, "/v1/sites/apply"; got != want {
 		t.Fatalf("path = %q, want %q", got, want)
+	}
+	if got, want := gotRoute.StudioUsername, "operator"; got != want {
+		t.Fatalf("Studio username = %q, want %q", got, want)
+	}
+	if got, want := gotRoute.StudioPassword, "studio-password"; got != want {
+		t.Fatalf("Studio password was not sent across private socket")
 	}
 
 	if err := client.Remove(context.Background(), "bee"); err != nil {

@@ -6,7 +6,7 @@
 
 **Architecture:** The Provisioner extends its typed private Unix-socket route with the configured Studio credentials. The Nginx Agent hashes the password using Apache MD5 (`apr1`), writes one root-only `htpasswd` file per project, and renders `auth_basic` only inside `location /`. Site configuration, enabled link, and credential file are applied and removed atomically with Nginx validation and rollback.
 
-**Tech Stack:** Go 1.27, `golang.org/x/crypto` bcrypt-compatible password primitives where required, native Nginx `auth_basic`, existing Unix-socket Nginx Agent.
+**Tech Stack:** Go 1.27, `crypto/rand` and the Apache `apr1` format used by the official Supabase Nginx template, native Nginx `auth_basic`, existing Unix-socket Nginx Agent.
 
 ---
 
@@ -22,7 +22,7 @@
 func TestRenderApplyProtectsOnlyStudioRoot(t *testing.T) {
     rendered, err := renderer.RenderApply(ApplyRequest{
         Slug: "project", Domain: "project.example.com", APIPort: 18001,
-        StudioPort: 18002, StudioEnabled: true, StudioUsername: "operator",
+        StudioPort: 18002, StudioEnabled: true, StudioUsername: "operator", StudioPassword: "secret",
     })
     if err != nil { t.Fatal(err) }
     for _, want := range []string{
@@ -100,7 +100,7 @@ Expected: FAIL because `routeForProxy` does not receive secrets and `proxy.Route
 
 - [ ] **Step 3: Implement typed private propagation**
 
-Add username/password fields to `proxy.Route` and Agent `ApplyRequest`. Change `routeForProxy` to accept `contracts.ProjectSecrets`, pass `request.Secrets` for the candidate, and preserve the former secret only when recovering the old metadata route. Do not add credentials to logs, errors, file names, or public APIs.
+Add username/password fields to `proxy.Route` and Agent `ApplyRequest`. Change `routeForProxy` to accept `contracts.ProjectSecrets` and pass the canonical request secrets through the authenticated Unix socket. Do not add credentials to logs, errors, file names, or public APIs.
 
 - [ ] **Step 4: Verify the private boundary**
 
@@ -121,7 +121,7 @@ Expected: PASS.
 
 - [ ] **Step 2: Build deployable binaries/images**
 
-Run: `docker compose -f deploy/docker-compose.yml --env-file deploy/.env build manager provisioner nginx-proxy-agent`
+Run: `docker build --file deploy/Dockerfile.provisioner .` and `docker build --file deploy/Dockerfile.nginx-proxy-agent --target export --output type=tar,dest=/dev/null .`
 
 Expected: all selected images build successfully when Docker is available.
 
