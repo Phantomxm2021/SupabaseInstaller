@@ -1373,6 +1373,80 @@ a.auth-template-row:hover {
 .wizard-step-frame[data-direction="backward"] {
   animation-name: wizard-step-backward;
 }
+.service-configuration-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.34fr) minmax(0, 1fr);
+  gap: 24px;
+}
+.service-preset-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-self: start;
+  padding-right: 20px;
+  border-right: 1px solid var(--border);
+}
+.service-preset-option {
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  align-items: flex-start;
+  padding: 10px 12px;
+  text-align: left;
+  white-space: normal;
+}
+.service-preset-description {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.service-configuration-content {
+  min-width: 0;
+}
+.service-configuration-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.service-configuration-summary h2,
+.service-configuration-summary p,
+.service-group-heading {
+  margin: 0;
+}
+.service-group + .service-group {
+  margin-top: 24px;
+}
+.service-group-heading {
+  margin-bottom: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.service-group-controls {
+  display: grid;
+  gap: 8px;
+}
+.service-control {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+@media (max-width: 700px) {
+  .service-configuration-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .service-preset-nav {
+    padding: 0 0 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
 @keyframes wizard-step-forward {
   from {
     opacity: 0;

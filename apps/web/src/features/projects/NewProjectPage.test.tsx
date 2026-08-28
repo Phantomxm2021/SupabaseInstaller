@@ -59,6 +59,56 @@ it('moves through four steps with directional motion and focuses the next headin
   expect(screen.getByText('Step 1 of 4 · Project details')).toBeVisible()
 })
 
+it('groups services under a persistent preset navigation', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+  expect(screen.getByRole('navigation', { name: 'Service presets' })).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'Core services' })).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'Extended services' })).toBeVisible()
+  expect(screen.getByText(/6 of 14 services enabled/)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Lightweight' })).toHaveAttribute('aria-current', 'true')
+})
+
+it('applies Standard services and keeps Custom selected after a service edit', async () => {
+  window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Standard' }))
+
+  expect(screen.getByRole('button', { name: 'Standard' })).toHaveAttribute('aria-current', 'true')
+  expect(screen.getByRole('switch', { name: 'Storage' })).toBeChecked()
+  await user.click(screen.getByRole('switch', { name: 'Edge Functions' }))
+  expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-current', 'true')
+  expect(screen.getByText('Custom keeps your service choices when you continue editing.')).toBeVisible()
+})
+
+it('explains service dependency closure in the grouped configuration', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+  expect(screen.getByText('API Gateway is required by enabled services.')).toBeVisible()
+  await user.click(screen.getByRole('switch', { name: 'Storage' }))
+  expect(screen.getByText('Storage requires PostgREST; disabling Storage also disables Image Transformation.')).toBeVisible()
+  await user.click(screen.getByRole('switch', { name: 'Logs & Analytics' }))
+  expect(screen.getAllByText('Logs & Analytics and Vector are enabled or disabled together.')).toHaveLength(2)
+})
+
 it('keeps an invalid integrations step visible and focuses its first invalid control', async () => {
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   const user = userEvent.setup()

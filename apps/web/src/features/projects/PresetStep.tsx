@@ -1,16 +1,39 @@
 import type { UseFormReturn } from 'react-hook-form'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Field, FieldDescription, FieldError, FieldLabel, FieldGroup } from '@/components/ui/field'
-import { Switch } from '@/components/ui/switch'
-import type { ProjectForm, PresetName } from './projectSchema'
-import { applyPreset, defaultConfiguration } from './projectSchema'
+import type { ProjectForm } from './projectSchema'
 
-const names: Record<keyof ProjectForm['configuration']['services'], string> = { database: 'PostgreSQL', gateway: 'API Gateway', auth: 'Authentication', rest: 'PostgREST', studio: 'Supabase Studio', postgresMeta: 'postgres-meta', realtime: 'Realtime', storage: 'Storage', imgproxy: 'Image Transformation', functions: 'Edge Functions', supavisor: 'Supavisor', logs: 'Logs & Analytics', vector: 'Vector', directDb: 'Direct PostgreSQL port' }
-const presets: Array<[PresetName, string]> = [['LIGHTWEIGHT', 'Core database, gateway, Auth, REST and Studio.'], ['STANDARD', 'Adds Realtime, Storage, Functions and Supavisor.'], ['FULL', 'All official optional services, including Logs and image transformation.'], ['CUSTOM', 'Choose every service individually.']]
+export type ServiceName = keyof ProjectForm['configuration']['services']
+
+export const serviceLabels: Record<ServiceName, string> = { database: 'PostgreSQL', gateway: 'API Gateway', auth: 'Authentication', rest: 'PostgREST', studio: 'Supabase Studio', postgresMeta: 'postgres-meta', realtime: 'Realtime', storage: 'Storage', imgproxy: 'Image Transformation', functions: 'Edge Functions', supavisor: 'Supavisor', logs: 'Logs & Analytics', vector: 'Vector', directDb: 'Direct PostgreSQL port' }
+
+export const serviceGroups = [
+  { label: 'Core services', names: ['database', 'gateway', 'rest', 'auth', 'studio', 'postgresMeta'] as const },
+  { label: 'Extended services', names: ['realtime', 'storage', 'imgproxy', 'functions', 'supavisor', 'logs', 'vector', 'directDb'] as const },
+] as const
+
+export const servicePresets = [
+  { name: 'LIGHTWEIGHT', label: 'Lightweight', description: 'Core database, gateway, Auth, REST and Studio.' },
+  { name: 'STANDARD', label: 'Standard', description: 'Adds Realtime, Storage, Functions and Supavisor.' },
+  { name: 'FULL', label: 'Full', description: 'All official optional services, including Logs and image transformation.' },
+  { name: 'CUSTOM', label: 'Custom', description: 'Choose every service individually.' },
+] as const
+
+export function serviceControlState(services: ProjectForm['configuration']['services'], httpsMode: ProjectForm['configuration']['network']['httpsMode'], name: ServiceName) {
+  const gatewayRequired = services.auth || services.rest || services.studio || services.realtime || services.storage || services.functions || httpsMode === 'caddy'
+  const forced = name === 'database' || (name === 'gateway' && gatewayRequired) || (name === 'rest' && services.storage) || (name === 'postgresMeta' && services.studio) || (name === 'vector' && services.logs)
+  const help = name === 'gateway' && gatewayRequired
+    ? 'API Gateway is required by enabled services.'
+    : name === 'storage'
+      ? 'Storage requires PostgREST; disabling Storage also disables Image Transformation.'
+      : name === 'imgproxy'
+        ? 'Image Transformation requires Storage and enables it automatically.'
+        : name === 'logs' || name === 'vector'
+          ? 'Logs & Analytics and Vector are enabled or disabled together.'
+          : undefined
+  return { forced, help }
+}
 
 /** The only service mutation path used by every wizard step. */
-export function setServiceEnabled(form: UseFormReturn<ProjectForm>, name: keyof ProjectForm['configuration']['services'], enabled: boolean) {
+export function setServiceEnabled(form: UseFormReturn<ProjectForm>, name: ServiceName, enabled: boolean) {
   const current = form.getValues('configuration.services'); const next = { ...current, [name]: enabled }
   if (enabled && name !== 'database') next.database = true
   if (enabled && ['auth', 'rest', 'studio', 'realtime', 'storage', 'functions', 'imgproxy'].includes(name)) next.gateway = true
@@ -27,20 +50,4 @@ export function setServiceEnabled(form: UseFormReturn<ProjectForm>, name: keyof 
   if (name === 'auth') form.setValue('configuration.auth.enabled', enabled, { shouldDirty: true })
   if (name === 'imgproxy' && enabled) next.storage = true
   form.setValue('preset', 'CUSTOM', { shouldDirty: true }); form.setValue('configuration.services', next, { shouldDirty: true, shouldValidate: true })
-}
-
-export function PresetStep({ form }: { form: UseFormReturn<ProjectForm> }) {
-  const preset = form.watch('preset'); const services = form.watch('configuration.services'); const httpsMode = form.watch('configuration.network.httpsMode')
-  const serviceError = (name: keyof ProjectForm['configuration']['services']) => (form.formState.errors.configuration?.services as any)?.[name]?.message as string | undefined
-  const setPreset = (next: PresetName) => {
-    const current = form.getValues('configuration')
-    const reset = defaultConfiguration(next)
-    // Presets are aggregate defaults; preserve only identity fields entered on step 1.
-    reset.general = current.general
-    form.setValue('preset', next, { shouldDirty: true })
-    form.setValue('configuration', reset as ProjectForm['configuration'], { shouldDirty: true, shouldValidate: true })
-  }
-  return <Card><CardHeader><CardTitle>Preset & services</CardTitle><CardDescription>Every switch is typed and dependency-aware. Editing a preset changes it to Custom.</CardDescription></CardHeader><CardContent><FieldGroup className="grid gap-3 md:grid-cols-2">
-    {presets.map(([key, description]) => <Button type="button" variant={preset === key ? 'default' : 'outline'} aria-label={key[0] + key.slice(1).toLowerCase()} key={key} className="h-auto justify-start whitespace-normal p-4 text-left" onClick={() => setPreset(key)}><strong>{key[0] + key.slice(1).toLowerCase()}</strong><FieldDescription>{description}</FieldDescription></Button>)}
-  </FieldGroup><FieldGroup className="mt-6 grid gap-3 md:grid-cols-2">{(Object.keys(names) as Array<keyof typeof names>).map((name) => { const gatewayRequired = services.auth || services.rest || services.studio || services.realtime || services.storage || services.functions || httpsMode === 'caddy'; const forced = name === 'database' || (name === 'gateway' && gatewayRequired) || (name === 'rest' && services.storage) || (name === 'postgresMeta' && services.studio) || (name === 'vector' && services.logs); return <Field key={name} className="rounded-lg border border-border px-3 py-2"><div className="flex items-center justify-between"><FieldLabel htmlFor={`service-${name}`}>{names[name]}{forced ? ' (required)' : ''}</FieldLabel><Switch id={`service-${name}`} checked={services[name]} disabled={forced} onCheckedChange={(checked) => setServiceEnabled(form, name, checked)} /></div><FieldError>{serviceError(name)}</FieldError></Field> })}</FieldGroup></CardContent></Card>
 }
