@@ -110,7 +110,7 @@ export function useProjectIdentityAvailability(
     if (!projectsResolved) return
 
     const timer = window.setTimeout(() => {
-      const next = {
+      const next: ProjectIdentityAvailability = {
         name: !nameValid
           ? idle
           : existingProjects.some(([projectName]) => projectName === normalizedName)
