@@ -572,6 +572,53 @@ func TestReconcileRejectsNonAdvancingOrMismatchedSnapshotRevision(t *testing.T) 
 	}
 }
 
+func TestReconcileAllowsRuntimeToCatchUpWhenManagerRevisionIsAhead(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := NewBackend(root, &fakeReconcileRunner{}, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The manager may have durable revisions that were admitted while the
+	// runtime was unavailable. A full candidate configuration is self-contained,
+	// so a runtime behind the expected revision can safely catch up in one pass.
+	request := reconcileRequest(baseConfig(), 11, 12)
+	request.IdempotencyKey = "catch-up"
+	if _, err := backend.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("runtime catch-up was rejected: %v", err)
+	}
+	metadata, err := root.Metadata("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Revision != 12 {
+		t.Fatalf("metadata revision = %d, want 12", metadata.Revision)
+	}
+}
+
+func TestReconcileRejectsRuntimeAheadOfManagerCandidate(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := NewBackend(root, &fakeReconcileRunner{}, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 1, 2)); err != nil {
+		t.Fatal(err)
+	}
+
+	request := reconcileRequest(baseConfig(), 1, 2)
+	request.IdempotencyKey = "runtime-ahead"
+	if _, err := backend.Reconcile(context.Background(), request); !errors.Is(err, contracts.ErrStaleConfigRevision) {
+		t.Fatalf("runtime-ahead reconcile error = %v, want stale revision", err)
+	}
+}
+
 func TestReconcileFailureIsTypedCachedAndReplayedWithoutDocker(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {

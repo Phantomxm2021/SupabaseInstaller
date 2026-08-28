@@ -39,7 +39,12 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			}
 			return nil
 		}
-		if metadata.Revision != request.ExpectedRevision {
+		// The Manager stores complete immutable configuration snapshots. If its
+		// candidate is ahead of the runtime, the candidate can safely bring the
+		// runtime forward in one reconcile pass (for example after the runtime
+		// was unavailable during earlier admissions). Only reject a runtime that
+		// is ahead of the candidate, which would risk overwriting newer state.
+		if metadata.Revision > request.ExpectedRevision {
 			return contracts.ErrStaleConfigRevision
 		}
 		if request.Fence > 0 && metadata.Fence > request.Fence {
