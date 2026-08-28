@@ -1,4 +1,5 @@
 .worktrees/
+.superpowers/brainstorm/
 node_modules/
 dist/
 !apps/manager/webdist/dist/
