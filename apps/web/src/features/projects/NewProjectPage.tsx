@@ -78,6 +78,6 @@ function stepForError(errors: Record<string, unknown>): number {
   const path = find(errors)?.join('.') ?? ''
   if (/^(name|slug|configuration\.general)/.test(path)) return 0
   if (path.startsWith('configuration.auth') || path.startsWith('configuration.storage') || path.startsWith('configuration.functions')) return 2
-  if (path.startsWith('configuration.database') || path.startsWith('configuration.pooler') || path.startsWith('configuration.network')) return 3
+  if (path.startsWith('configuration.database') || path.startsWith('configuration.realtime') || path.startsWith('configuration.pooler') || path.startsWith('configuration.network')) return 3
   return 1
 }

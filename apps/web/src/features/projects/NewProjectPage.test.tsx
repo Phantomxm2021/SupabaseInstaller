@@ -364,6 +364,24 @@ it('keeps infrastructure settings collapsed until their section is opened', asyn
   expect(screen.getByLabelText('HTTPS mode')).toBeVisible()
 })
 
+it('keeps a Realtime validation error on review and focuses its field', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Database and Realtime settings' }))
+  const realtimeMaxConnections = screen.getAllByRole('spinbutton', { name: 'Max connections' })[1]
+  await user.clear(realtimeMaxConnections)
+  await user.click(screen.getByRole('button', { name: 'Install project' }))
+
+  expect(screen.getByText('Step 4 of 4 · Review & install')).toBeVisible()
+  expect(realtimeMaxConnections).toHaveAttribute('aria-invalid', 'true')
+  await waitFor(() => expect(realtimeMaxConnections).toHaveFocus())
+})
+
 it('redacts dynamic OAuth secrets in the final review summary', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
