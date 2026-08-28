@@ -91,7 +91,11 @@ func TestConfigurationReconcile(t *testing.T) {
 			t.Fatalf("failed candidate changed desired/last-good revision: %v", restored)
 		}
 		afterFailure := inspectContainerIDs(t, composeProject)
-		assertServiceChange(t, before, afterFailure, "auth", false)
+		// The candidate Auth service is recreated before the injected
+		// verification failure. Rollback then restores the prior generation and
+		// recreates Auth again, so a changed container ID is evidence that the
+		// running configuration was actually restored.
+		assertServiceChange(t, before, afterFailure, "auth", true)
 		assertServiceHealthy(t, afterFailure["auth"])
 		assertRuntimeFilesEqual(t, beforeFiles, snapshotRuntimeFiles(t, slug))
 		config = restored
@@ -418,6 +422,9 @@ func requestJSONNoFatal(client *http.Client, method, rawURL string, payload map[
 	var result map[string]any
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s %s status=%d", method, rawURL, response.StatusCode)
+	}
+	if response.StatusCode == http.StatusNoContent {
+		return map[string]any{}, nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		return nil, err

@@ -152,6 +152,12 @@ func renderEnvironment(input Input) (string, string, error) {
 		for field, envKey := range provider.Fields {
 			if value, ok := entry.Fields[field]; ok {
 				values[envKey] = value
+			} else if oauthBooleanField(field) {
+				// GoTrue parses these environment variables strictly as booleans.
+				// The Compose renderer wires every provider field, so leaving an
+				// absent optional value unresolved produces an empty string and
+				// crashes Auth during startup. Make the safe default explicit.
+				values[envKey] = "false"
 			}
 		}
 		for field, value := range entry.Fields {
@@ -191,6 +197,10 @@ func renderEnvironment(input Input) (string, string, error) {
 		return "", "", err
 	}
 	return env, renderDotEnv("", functionValues), nil
+}
+
+func oauthBooleanField(field string) bool {
+	return field == "skipNonceChecks" || field == "allowUsersWithoutEmail"
 }
 
 func mailerEnvironmentValues(mailer contracts.MailerConfig) map[string]string {

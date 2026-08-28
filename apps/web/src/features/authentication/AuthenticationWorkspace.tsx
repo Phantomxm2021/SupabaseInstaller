@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   Navigate,
@@ -37,6 +37,7 @@ import {
   type PendingConfigurationSave,
 } from "../project/configuration/types";
 import { useConfigurationMutation } from "../project/configuration/useConfigurationMutation";
+import { OperationPanel } from "../operations/OperationPanel";
 import { AuthenticationNavigation } from "./navigation";
 import { SignInProvidersPage } from "./SignInProvidersPage";
 import { EmailsPage } from "./EmailsPage";
@@ -70,6 +71,7 @@ export function useAuthenticationWorkspace() {
 
 export function AuthenticationWorkspace() {
   const { projectId = "" } = useParams();
+  const queryClient = useQueryClient();
   const configuration = useQuery({
     queryKey: ["project-configuration", projectId],
     queryFn: () =>
@@ -79,15 +81,20 @@ export function AuthenticationWorkspace() {
   const [pending, setPending] = useState<
     PendingConfigurationSave & { onQueued?: () => void }
   >();
+  const [operation, setOperation] = useState<{
+    projectId: string;
+    operationId: string;
+  }>();
   const normalized = configuration.data
     ? normalizeRedactedConfiguration(configuration.data.configuration)
     : undefined;
   const update = useConfigurationMutation(
     projectId,
     configuration.data?.revision ?? 0,
-    () => {
+    (result) => {
       const next = pending;
       setPending(undefined);
+      setOperation({ projectId: result.projectId, operationId: result.operationId });
       next?.onQueued?.();
       toast.success("Configuration update queued");
     },
@@ -137,11 +144,38 @@ export function AuthenticationWorkspace() {
     services: normalized.services,
     requestSave,
   };
+  const completed = async () => {
+    await queryClient.invalidateQueries({
+      queryKey: ["project-configuration", projectId],
+    });
+    await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    setOperation(undefined);
+  };
   return (
     <section className="authentication-workspace">
       <AuthenticationNavigation />
       <div className="authentication-content">
-        <Outlet context={context} />
+        {operation ? (
+          <main className="page auth-page">
+            <div className="page-heading">
+              <div>
+                <p className="eyebrow">Configuration operation</p>
+                <h1>Applying authentication configuration</h1>
+                <p className="muted">
+                  The runtime status and any failure details are shown here.
+                </p>
+              </div>
+            </div>
+            <OperationPanel
+              operationId={operation.operationId}
+              projectId={operation.projectId}
+              projectName="Authentication configuration"
+              onSucceeded={completed}
+            />
+          </main>
+        ) : (
+          <Outlet context={context} />
+        )}
       </div>
       <AlertDialog
         open={Boolean(pending)}

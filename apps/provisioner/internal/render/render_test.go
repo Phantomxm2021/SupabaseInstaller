@@ -687,6 +687,27 @@ func TestRenderAllOAuthProvidersAndSpecialFields(t *testing.T) {
 	}
 }
 
+func TestRenderOAuthOptionalBooleanFieldsDefaultToFalse(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Auth.OAuth = map[string]contracts.OAuthProviderConfig{
+		"google": {Enabled: true, ClientID: "google-client", SecretSet: true},
+	}
+	out, err := Project(Input{
+		Slug:           "oauth-optional-booleans",
+		APIPort:        18001,
+		Configuration:  cfg,
+		RuntimeSecrets: map[string]string{"oauth.google.secret": "oauth-secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"GOOGLE_SKIP_NONCE_CHECK=false", "GOOGLE_EMAIL_OPTIONAL=false"} {
+		if !strings.Contains(out.Env, line) {
+			t.Fatalf(".env missing explicit OAuth boolean default %q:\n%s", line, out.Env)
+		}
+	}
+}
+
 func TestRenderStorageModesAndR2Endpoint(t *testing.T) {
 	for _, backend := range []contracts.StorageBackend{contracts.StorageBackendLocal, contracts.StorageBackendS3, contracts.StorageBackendAWSS3, contracts.StorageBackendR2} {
 		t.Run(string(backend), func(t *testing.T) {

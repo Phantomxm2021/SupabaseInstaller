@@ -10,7 +10,20 @@ import { Progress, ProgressLabel, ProgressValue } from '@/components/ui/progress
 import { apiFetch } from '../../api/client'
 import type { Operation } from '../../api/types'
 import { useOperationEvents } from './useOperationEvents'
-const labels: Record<string, string> = { VALIDATE_PORTS: 'Validate ports', GENERATE_SECRETS: 'Generate secrets', START_RUNTIME: 'Start runtime', START_AUTH: 'Start Auth', FINAL_HEALTH_CHECK: 'Final health check', MARK_RUNNING: 'Mark project running' }
+const labels: Record<string, string> = {
+  VALIDATE_PORTS: 'Validate ports',
+  GENERATE_SECRETS: 'Generate secrets',
+  START_RUNTIME: 'Start runtime',
+  START_AUTH: 'Start Auth',
+  FINAL_HEALTH_CHECK: 'Final health check',
+  MARK_RUNNING: 'Mark project running',
+  VALIDATE_CONFIGURATION: 'Validate configuration',
+  SAVE_CONFIGURATION: 'Save configuration',
+  RENDER_RUNTIME: 'Render runtime',
+  RECONCILE_SERVICES: 'Reconcile Services',
+  VERIFY_SERVICES: 'Verify services',
+  MARK_CONFIGURATION_GOOD: 'Mark configuration applied',
+}
 type Props = { operationId: string; projectId?: string; projectName: string; onSucceeded?: (projectId: string) => void; onDeleted?: () => void }
 type RecoveryAction = 'retry' | 'rollback' | 'delete'
 export function OperationPanel(props: Props) { const inRouter = useInRouterContext(); return inRouter ? <RoutedOperationPanel {...props} /> : <OperationPanelCore {...props} /> }
@@ -37,7 +50,8 @@ function OperationPanelCore({ operationId, projectId, projectName, onSucceeded, 
   })
   const current = operation.data
   useEffect(() => { const id = current?.projectId || projectId; if (current?.status !== 'SUCCEEDED' || !id || handledSuccess.current === activeOperationId) return; handledSuccess.current = activeOperationId; void (async () => { await queryClient.invalidateQueries({ queryKey: ['projects'] }); if (onSucceeded) onSucceeded(id); else navigate?.(`/projects/${id}/overview`, { replace: true }) })() }, [activeOperationId, current?.projectId, current?.status, navigate, onSucceeded, projectId, queryClient])
-  const failed = current?.status === 'FAILED'; const rolledBack = current?.status === 'ROLLED_BACK'; const succeeded = current?.status === 'SUCCEEDED'; const deletableProjectId = current?.projectId || projectId; const canDelete = current?.type === 'CREATE' && !!deletableProjectId; const step = labels[current?.currentStep ?? ''] ?? current?.currentStep ?? 'Waiting for worker'
-  return <Card className="operation-card" aria-live="polite"><div className="operation-heading"><span className={`operation-icon ${failed ? 'failed' : succeeded ? 'done' : ''}`}>{failed ? <AlertTriangle /> : succeeded ? <Check /> : <LoaderCircle className="spin" />}</span><div><p className="eyebrow">Operation {activeOperationId}</p><h2>{succeeded ? `${projectName} is ready` : failed ? 'Installation needs attention' : rolledBack ? 'Installation rolled back safely' : `Installing ${projectName}`}</h2></div><Badge variant={failed ? 'destructive' : succeeded ? 'default' : 'outline'}>{current?.status ?? 'QUEUED'}</Badge></div><Progress value={current?.progress ?? 0} aria-label="Operation progress" className="my-6"><ProgressLabel>Progress</ProgressLabel><ProgressValue /></Progress><div className="current-step" role="status"><small>Current step</small><strong>{step}</strong></div>{current?.errorMessage && <Alert variant="destructive"><ShieldAlert className="size-4" /><span>{current.errorMessage}</span></Alert>}{(failed || rolledBack) && <div className="operation-actions"><Button variant="secondary" disabled={action.isPending} onClick={() => action.mutate('retry')}><RotateCcw className="size-4" />Retry</Button>{failed && <Button variant="destructive" disabled={action.isPending} onClick={() => action.mutate('rollback')}>Rollback</Button>}{canDelete && <Button variant="destructive" disabled={action.isPending} onClick={() => action.mutate('delete')}><Trash2 className="size-4" />Delete project</Button>}</div>}{action.error && <Alert variant="destructive"><ShieldAlert className="size-4" /><span>{action.error.message}</span></Alert>}</Card>
+  const failed = current?.status === 'FAILED'; const rolledBack = current?.status === 'ROLLED_BACK'; const succeeded = current?.status === 'SUCCEEDED'; const isConfigurationUpdate = current?.type === 'UPDATE_CONFIG'; const deletableProjectId = current?.projectId || projectId; const canDelete = current?.type === 'CREATE' && !!deletableProjectId; const step = labels[current?.currentStep ?? ''] ?? current?.currentStep ?? 'Waiting for worker'
+  const stateTitle = succeeded ? `${projectName} is ready` : failed ? isConfigurationUpdate ? 'Configuration needs attention' : 'Installation needs attention' : rolledBack ? 'Installation rolled back safely' : isConfigurationUpdate ? `Applying ${projectName}` : `Installing ${projectName}`
+  return <Card className="operation-card" aria-live="polite"><div className="operation-heading"><span className={`operation-icon ${failed ? 'failed' : succeeded ? 'done' : ''}`}>{failed ? <AlertTriangle /> : succeeded ? <Check /> : <LoaderCircle className="spin" />}</span><div><p className="eyebrow">Operation {activeOperationId}</p><h2>{stateTitle}</h2></div><Badge variant={failed ? 'destructive' : succeeded ? 'default' : 'outline'}>{current?.status ?? 'QUEUED'}</Badge></div><Progress value={current?.progress ?? 0} aria-label="Operation progress" className="my-6"><ProgressLabel>Progress</ProgressLabel><ProgressValue /></Progress><div className="current-step" role="status"><small>Current step</small><strong>{step}</strong></div>{current?.errorMessage && <Alert variant="destructive"><ShieldAlert className="size-4" /><span>{current.errorMessage}</span></Alert>}{!isConfigurationUpdate && (failed || rolledBack) && <div className="operation-actions"><Button variant="secondary" disabled={action.isPending} onClick={() => action.mutate('retry')}><RotateCcw className="size-4" />Retry</Button>{failed && <Button variant="destructive" disabled={action.isPending} onClick={() => action.mutate('rollback')}>Rollback</Button>}{canDelete && <Button variant="destructive" disabled={action.isPending} onClick={() => action.mutate('delete')}><Trash2 className="size-4" />Delete project</Button>}</div>}{action.error && <Alert variant="destructive"><ShieldAlert className="size-4" /><span>{action.error.message}</span></Alert>}</Card>
 }
 function terminal(status?: Operation['status']) { return status ? ['SUCCEEDED', 'FAILED', 'ROLLED_BACK', 'CANCELLED'].includes(status) : false }

@@ -22,6 +22,7 @@ func TestReconcileRecreatesOnlyAffectedService(t *testing.T) {
 		want   []string
 	}{
 		{name: "smtp", change: func(c *contracts.ProjectConfiguration) { c.Auth.SMTP.SenderName = "Bee" }, want: []string{"auth"}},
+		{name: "auth rate limits", change: func(c *contracts.ProjectConfiguration) { c.Auth.RateLimits.EmailSent = 42 }, want: []string{"auth"}},
 		{name: "google oauth", change: func(c *contracts.ProjectConfiguration) {
 			c.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: false}}
 		}, want: []string{"auth"}},

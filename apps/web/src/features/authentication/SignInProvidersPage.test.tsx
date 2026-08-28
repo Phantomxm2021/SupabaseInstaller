@@ -36,6 +36,7 @@ function renderSignInProviders(oauthOverrides: Record<string, unknown> = {}) {
     if (path.endsWith('/session')) return new Response(JSON.stringify({ username: 'admin', mustChangePassword: false, csrfToken: 'csrf-token' }), { headers: { 'Content-Type': 'application/json' } })
     if (path.endsWith('/configuration')) return new Response(JSON.stringify(configuration(revision, googleEnabled, oauthOverrides)), { headers: { 'Content-Type': 'application/json' } })
     if (path.includes('/configuration/oauth/google')) { revision += 1; googleEnabled = true; return new Response(JSON.stringify({ projectId: 'bee', operationId: 'operation-1', revision }), { headers: { 'Content-Type': 'application/json' } }) }
+    if (path.endsWith('/operations/operation-1')) return new Response(JSON.stringify({ id: 'operation-1', projectId: 'bee', type: 'UPDATE_CONFIG', status: 'SUCCEEDED', currentStep: 'MARK_CONFIGURATION_GOOD', progress: 100 }), { headers: { 'Content-Type': 'application/json' } })
     throw new Error(`Unexpected request: ${path} ${init?.method ?? 'GET'}`)
   })
   vi.stubGlobal('fetch', fetchMock)

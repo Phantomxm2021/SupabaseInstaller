@@ -59,4 +59,32 @@ describe('RateLimitsPage', () => {
     expect(JSON.parse((patch![1] as RequestInit).body as string)).toMatchObject({ expectedRevision: 7, value: { rateLimits: { emailSent: 42, tokenRefresh: 150 }, mfa: { maxEnrolledFactors: 10 } } })
     router.dispose()
   })
+
+  it('shows the queued Auth operation failure instead of only a success toast', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/session')) return new Response(JSON.stringify({ username: 'admin', mustChangePassword: false, csrfToken: 'csrf-token' }), { headers: { 'Content-Type': 'application/json' } })
+      if (path.endsWith('/configuration')) return new Response(JSON.stringify({ projectId: 'bee', revision: 7, lastGoodRevision: 7, configuration: defaultConfiguration() }), { headers: { 'Content-Type': 'application/json' } })
+      if (path.endsWith('/configuration/auth') && init?.method === 'PATCH') return new Response(JSON.stringify({ projectId: 'bee', operationId: 'op-rate-limits', revision: 8 }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+      if (path.endsWith('/operations/op-rate-limits')) return new Response(JSON.stringify({ id: 'op-rate-limits', projectId: 'bee', type: 'UPDATE_CONFIG', status: 'FAILED', currentStep: 'RECONCILE_SERVICES', progress: 70, errorMessage: 'runtime reconciliation failed: auth is unhealthy' }), { headers: { 'Content-Type': 'application/json' } })
+      throw new Error(`Unexpected request: ${path}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', class { close() {} addEventListener() {} } as unknown as typeof EventSource)
+    window.history.pushState({}, '', '/projects/bee/authentication/rate-limits')
+    const router = createAppRouter(new QueryClient({ defaultOptions: { queries: { retry: false } } }))
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><RouterProvider router={router} /></QueryClientProvider>)
+
+    const email = await screen.findByLabelText('Rate limit for sending emails')
+    await user.clear(email)
+    await user.type(email, '42')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    await user.click(await screen.findByRole('button', { name: 'Confirm and apply' }))
+
+    expect(await screen.findByText('runtime reconciliation failed: auth is unhealthy')).toBeVisible()
+    expect(screen.getByText('Reconcile Services')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    router.dispose()
+  })
 })
