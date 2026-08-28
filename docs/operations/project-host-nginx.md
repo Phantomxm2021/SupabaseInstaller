@@ -6,7 +6,7 @@ API Gateway port:
 
 ```text
 manager.example.com              -> 127.0.0.1:8080       (Manager)
-bee.supabase.example.com         -> project API/Studio  (one project host)
+project.supabase.example.com     -> project API/Studio  (one project host)
 ```
 
 The recommended deployment uses the native `nginx-proxy-agent`. It owns only
@@ -20,7 +20,7 @@ Configure the following through Manager before reconciling a project:
 
 | Setting | Example | Meaning |
 | --- | --- | --- |
-| `General.Domain` | `bee.supabase.example.com` | Public Supabase host; hostname only |
+| `General.Domain` | `project.supabase.example.com` | Public Supabase host; hostname only |
 | `General.SiteURL` | `https://app.example.com` | Application redirect URL, not the Supabase host |
 | `Network.APIPort` | allocated by Manager | Loopback API Gateway port |
 | `Network.StudioPort` | allocated by Manager | Loopback Studio port when Studio is enabled |
@@ -120,8 +120,8 @@ sudo nginx -t
 sudo ls -l /etc/nginx/sites-enabled/supabase-manager-*.conf
 ```
 
-For a project named `bee`, its stable managed file is
-`/etc/nginx/sites-available/supabase-manager-bee.conf`. Do not edit that file
+For a project named `project`, its stable managed file is
+`/etc/nginx/sites-available/supabase-manager-project.conf`. Do not edit that file
 manually: the next Manager reconciliation overwrites it. Put any custom Nginx
 policy in a separate operator-owned site file.
 

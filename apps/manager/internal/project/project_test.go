@@ -112,11 +112,11 @@ func TestCreateEncryptsConfiguredStudioPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope, err := database.GetSecret(context.Background(), created.ID, "dashboard-password")
+	envelope, err := database.GetSecret(context.Background(), created.ID, "studio.password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	plaintext, err := cipher.Decrypt(created.ID, "dashboard-password", envelope)
+	plaintext, err := cipher.Decrypt(created.ID, "studio.password", envelope)
 	if err != nil || string(plaintext) != "studio-password" {
 		t.Fatalf("decrypted Studio password = %q, err = %v", plaintext, err)
 	}

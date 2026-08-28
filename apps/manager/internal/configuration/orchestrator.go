@@ -1147,6 +1147,9 @@ func (o *Orchestrator) hydrate(ctx context.Context, projectID string, cfg contra
 		return contracts.ProjectSecrets{}, nil, errors.New("secret cipher is unavailable")
 	}
 	baseKinds := []string{"database-password", "jwt-secret", "anon-key", "service-role-key", "dashboard-password", "secret-key-base", "vault-encryption-key"}
+	if cfg.General.StudioPasswordSet {
+		baseKinds = append(baseKinds, "studio.password")
+	}
 	if cfg.Services.Realtime {
 		baseKinds = append(baseKinds, "realtime-db-encryption-key")
 	}
@@ -1188,6 +1191,9 @@ func (o *Orchestrator) hydrate(ctx context.Context, projectID string, cfg contra
 		seen[kind] = struct{}{}
 		envelope, err := o.store.GetSecret(ctx, projectID, kind)
 		if errors.Is(err, store.ErrNotFound) {
+			if kind == "studio.password" && out.DashboardPassword == "" {
+				return contracts.ProjectSecrets{}, nil, errors.New("configured Studio password is unavailable")
+			}
 			continue
 		}
 		if err != nil {
@@ -1208,6 +1214,8 @@ func (o *Orchestrator) hydrate(ctx context.Context, projectID string, cfg contra
 		case "service-role-key":
 			out.ServiceRoleKey = value
 		case "dashboard-password":
+			out.DashboardPassword = value
+		case "studio.password":
 			out.DashboardPassword = value
 		case "secret-key-base":
 			out.SecretKeyBase = value

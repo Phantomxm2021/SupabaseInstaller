@@ -269,6 +269,33 @@ func TestSameServicesAcceptsConcreteGatewayProjection(t *testing.T) {
 	}
 }
 
+func TestHydrateUsesDedicatedStudioPasswordOverRuntimeDashboardPassword(t *testing.T) {
+	orchestrator, database, _, project, snapshot, _, _ := newRecoveryFixture(t, "UPDATE_CONFIG")
+	cfg := snapshot.Configuration
+	cfg.General.StudioPasswordSet = true
+
+	for kind, value := range map[string]string{
+		"dashboard-password": "runtime-dashboard-password",
+		"studio.password":    "operator-studio-password",
+	} {
+		envelope, err := orchestrator.cipher.Encrypt(project.ID, kind, []byte(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.PutSecret(context.Background(), project.ID, kind, envelope); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	secrets, _, err := orchestrator.hydrate(context.Background(), project.ID, cfg)
+	if err != nil {
+		t.Fatalf("hydrate() error = %v", err)
+	}
+	if secrets.DashboardPassword != "operator-studio-password" {
+		t.Fatalf("DashboardPassword = %q, want dedicated Studio password", secrets.DashboardPassword)
+	}
+}
+
 func TestSameServicesIgnoresRendererHelperServices(t *testing.T) {
 	expected := []string{"db", "api-gw", "auth", "rest", "meta", "studio", "realtime", "storage", "imgproxy", "functions", "supavisor"}
 	actual := append(append([]string(nil), expected...), "auth-templates", "deno-cache", "db-config")

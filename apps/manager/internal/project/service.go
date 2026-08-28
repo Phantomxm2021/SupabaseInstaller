@@ -108,7 +108,7 @@ func (s *Service) encryptConfigurationSecrets(projectID string, cfg *contracts.P
 		input.Value = ""
 		return nil
 	}
-	if err := add("dashboard-password", &cfg.General.StudioPassword, &cfg.General.StudioPasswordSet); err != nil {
+	if err := add("studio.password", &cfg.General.StudioPassword, &cfg.General.StudioPasswordSet); err != nil {
 		return nil, err
 	}
 	if err := add("smtp.password", &cfg.Auth.SMTP.Password, &cfg.Auth.SMTP.PasswordSet); err != nil {

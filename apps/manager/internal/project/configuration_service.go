@@ -261,7 +261,7 @@ func (s *ConfigurationService) secretMutations(ctx context.Context, projectID st
 		input.Action = ""
 		return nil
 	}
-	if err := add("dashboard-password", &cfg.General.StudioPassword, &cfg.General.StudioPasswordSet); err != nil {
+	if err := add("studio.password", &cfg.General.StudioPassword, &cfg.General.StudioPasswordSet); err != nil {
 		return nil, err
 	}
 	if err := add("smtp.password", &cfg.Auth.SMTP.Password, &cfg.Auth.SMTP.PasswordSet); err != nil {

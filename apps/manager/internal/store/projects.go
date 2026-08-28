@@ -23,7 +23,7 @@ func (s *Store) CreateProject(ctx context.Context, project contracts.Project, co
 }
 
 func configurationHasReplacement(cfg contracts.ProjectConfiguration) bool {
-	if cfg.Auth.SMTP.Password.Action == "replace" || cfg.Auth.Phone.Secret.Action == "replace" || cfg.Storage.SecretAccessKey.Action == "replace" {
+	if cfg.General.StudioPassword.Action == "replace" || cfg.Auth.SMTP.Password.Action == "replace" || cfg.Auth.Phone.Secret.Action == "replace" || cfg.Storage.SecretAccessKey.Action == "replace" {
 		return true
 	}
 	for _, oauth := range cfg.Auth.OAuth {

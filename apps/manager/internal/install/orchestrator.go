@@ -75,19 +75,28 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 	if err != nil {
 		return orchestrator.rollback(ctx, project, current.ID, "LOAD_SECRETS", err)
 	}
-	if !persisted {
-		generated, err = orchestrator.generator.Generate()
-		if err != nil {
-			return orchestrator.rollback(ctx, project, current.ID, "GENERATE_SECRETS", err)
+	completeSecretSet := len(persisted) == len(persistedProjectSecretSpecs())
+	if !completeSecretSet {
+		fresh, generateErr := orchestrator.generator.Generate()
+		if generateErr != nil {
+			return orchestrator.rollback(ctx, project, current.ID, "GENERATE_SECRETS", generateErr)
+		}
+		for _, spec := range persistedProjectSecretSpecs() {
+			if _, exists := persisted[spec.kind]; !exists {
+				spec.set(&generated, spec.get(fresh))
+			}
 		}
 	}
 	if err := orchestrator.step(ctx, current.ID, "GENERATE_SECRETS", 15, func() error {
-		if persisted {
+		if completeSecretSet {
 			return nil
 		}
-		return orchestrator.persistSecrets(ctx, project.ID, generated)
+		return orchestrator.persistSecrets(ctx, project.ID, generated, persisted)
 	}); err != nil {
 		return orchestrator.rollback(ctx, project, current.ID, "GENERATE_SECRETS", err)
+	}
+	if err := orchestrator.applyConfiguredStudioPassword(ctx, project.ID, configuration, &generated); err != nil {
+		return orchestrator.rollback(ctx, project, current.ID, "HYDRATE_SECRETS", err)
 	}
 
 	runtimeSecrets, hydrationErr := orchestrator.hydrateConfiguredSecrets(ctx, project.ID, configuration)
@@ -254,7 +263,7 @@ func (orchestrator *Orchestrator) rollback(ctx context.Context, project contract
 	return latest, cause
 }
 
-func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID string, generated contracts.ProjectSecrets) error {
+func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID string, generated contracts.ProjectSecrets, existing map[string]struct{}) error {
 	values := map[string]string{
 		"database-password":          generated.DatabasePassword,
 		"jwt-secret":                 generated.JWTSecret,
@@ -267,6 +276,9 @@ func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID 
 		"s3-protocol-access-key-id": generated.S3ProtocolAccessKeyID, "s3-protocol-access-key-secret": generated.S3ProtocolAccessKeySecret, "pooler-tenant-id": generated.PoolerTenantID,
 	}
 	for kind, plaintext := range values {
+		if _, exists := existing[kind]; exists {
+			continue
+		}
 		envelope, err := orchestrator.cipher.Encrypt(projectID, kind, []byte(plaintext))
 		if err != nil {
 			return err
@@ -278,52 +290,78 @@ func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID 
 	return nil
 }
 
+type persistedProjectSecretSpec struct {
+	kind string
+	set  func(*contracts.ProjectSecrets, string)
+	get  func(contracts.ProjectSecrets) string
+}
+
+func persistedProjectSecretSpecs() []persistedProjectSecretSpec {
+	return []persistedProjectSecretSpec{
+		{"database-password", func(secrets *contracts.ProjectSecrets, value string) { secrets.DatabasePassword = value }, func(secrets contracts.ProjectSecrets) string { return secrets.DatabasePassword }},
+		{"jwt-secret", func(secrets *contracts.ProjectSecrets, value string) { secrets.JWTSecret = value }, func(secrets contracts.ProjectSecrets) string { return secrets.JWTSecret }},
+		{"anon-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.AnonKey = value }, func(secrets contracts.ProjectSecrets) string { return secrets.AnonKey }},
+		{"service-role-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.ServiceRoleKey = value }, func(secrets contracts.ProjectSecrets) string { return secrets.ServiceRoleKey }},
+		{"dashboard-password", func(secrets *contracts.ProjectSecrets, value string) { secrets.DashboardPassword = value }, func(secrets contracts.ProjectSecrets) string { return secrets.DashboardPassword }},
+		{"secret-key-base", func(secrets *contracts.ProjectSecrets, value string) { secrets.SecretKeyBase = value }, func(secrets contracts.ProjectSecrets) string { return secrets.SecretKeyBase }},
+		{"vault-encryption-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.VaultEncryptionKey = value }, func(secrets contracts.ProjectSecrets) string { return secrets.VaultEncryptionKey }},
+		{"realtime-db-encryption-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.RealtimeDBEncryptionKey = value }, func(secrets contracts.ProjectSecrets) string { return secrets.RealtimeDBEncryptionKey }},
+		{"logflare-public-access-token", func(secrets *contracts.ProjectSecrets, value string) { secrets.LogflarePublicAccessToken = value }, func(secrets contracts.ProjectSecrets) string { return secrets.LogflarePublicAccessToken }},
+		{"logflare-private-access-token", func(secrets *contracts.ProjectSecrets, value string) { secrets.LogflarePrivateAccessToken = value }, func(secrets contracts.ProjectSecrets) string { return secrets.LogflarePrivateAccessToken }},
+		{"s3-protocol-access-key-id", func(secrets *contracts.ProjectSecrets, value string) { secrets.S3ProtocolAccessKeyID = value }, func(secrets contracts.ProjectSecrets) string { return secrets.S3ProtocolAccessKeyID }},
+		{"s3-protocol-access-key-secret", func(secrets *contracts.ProjectSecrets, value string) { secrets.S3ProtocolAccessKeySecret = value }, func(secrets contracts.ProjectSecrets) string { return secrets.S3ProtocolAccessKeySecret }},
+		{"pooler-tenant-id", func(secrets *contracts.ProjectSecrets, value string) { secrets.PoolerTenantID = value }, func(secrets contracts.ProjectSecrets) string { return secrets.PoolerTenantID }},
+	}
+}
+
 // loadPersistedSecrets returns the stable project credentials created during
 // the first installation. Reconcile/retry must reuse these credentials because
 // PostgreSQL stores role passwords in its persistent data volume; generating a
 // new POSTGRES_PASSWORD on every retry makes auth, rest, and storage unable to
 // authenticate against an existing database.
-func (orchestrator *Orchestrator) loadPersistedSecrets(ctx context.Context, projectID string) (contracts.ProjectSecrets, bool, error) {
-	type secretSpec struct {
-		kind string
-		set  func(*contracts.ProjectSecrets, string)
-	}
-	specs := []secretSpec{
-		{"database-password", func(secrets *contracts.ProjectSecrets, value string) { secrets.DatabasePassword = value }},
-		{"jwt-secret", func(secrets *contracts.ProjectSecrets, value string) { secrets.JWTSecret = value }},
-		{"anon-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.AnonKey = value }},
-		{"service-role-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.ServiceRoleKey = value }},
-		{"dashboard-password", func(secrets *contracts.ProjectSecrets, value string) { secrets.DashboardPassword = value }},
-		{"secret-key-base", func(secrets *contracts.ProjectSecrets, value string) { secrets.SecretKeyBase = value }},
-		{"vault-encryption-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.VaultEncryptionKey = value }},
-		{"realtime-db-encryption-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.RealtimeDBEncryptionKey = value }},
-		{"logflare-public-access-token", func(secrets *contracts.ProjectSecrets, value string) { secrets.LogflarePublicAccessToken = value }},
-		{"logflare-private-access-token", func(secrets *contracts.ProjectSecrets, value string) { secrets.LogflarePrivateAccessToken = value }},
-		{"s3-protocol-access-key-id", func(secrets *contracts.ProjectSecrets, value string) { secrets.S3ProtocolAccessKeyID = value }},
-		{"s3-protocol-access-key-secret", func(secrets *contracts.ProjectSecrets, value string) { secrets.S3ProtocolAccessKeySecret = value }},
-		{"pooler-tenant-id", func(secrets *contracts.ProjectSecrets, value string) { secrets.PoolerTenantID = value }},
-	}
+func (orchestrator *Orchestrator) loadPersistedSecrets(ctx context.Context, projectID string) (contracts.ProjectSecrets, map[string]struct{}, error) {
 	var result contracts.ProjectSecrets
-	found := false
-	for _, spec := range specs {
+	found := make(map[string]struct{})
+	for _, spec := range persistedProjectSecretSpecs() {
 		envelope, err := orchestrator.store.GetSecret(ctx, projectID, spec.kind)
 		if errors.Is(err, store.ErrNotFound) {
-			if found {
-				return contracts.ProjectSecrets{}, true, fmt.Errorf("persisted secret %q is unavailable", spec.kind)
-			}
 			continue
 		}
 		if err != nil {
-			return contracts.ProjectSecrets{}, false, err
+			return contracts.ProjectSecrets{}, nil, err
 		}
-		found = true
+		found[spec.kind] = struct{}{}
 		plain, err := orchestrator.cipher.Decrypt(projectID, spec.kind, envelope)
 		if err != nil {
-			return contracts.ProjectSecrets{}, true, fmt.Errorf("decrypt persisted secret %q: %w", spec.kind, err)
+			return contracts.ProjectSecrets{}, nil, fmt.Errorf("decrypt persisted secret %q: %w", spec.kind, err)
 		}
 		spec.set(&result, string(plain))
 	}
 	return result, found, nil
+}
+
+func (orchestrator *Orchestrator) applyConfiguredStudioPassword(ctx context.Context, projectID string, cfg contracts.ProjectConfiguration, secrets *contracts.ProjectSecrets) error {
+	if !cfg.General.StudioPasswordSet {
+		return nil
+	}
+	envelope, err := orchestrator.store.GetSecret(ctx, projectID, "studio.password")
+	if errors.Is(err, store.ErrNotFound) {
+		// Projects created before Studio credentials were separated stored this
+		// value under dashboard-password. Keep that legacy credential usable.
+		if secrets.DashboardPassword != "" {
+			return nil
+		}
+		return errors.New("configured Studio password is unavailable")
+	}
+	if err != nil {
+		return err
+	}
+	plain, err := orchestrator.cipher.Decrypt(projectID, "studio.password", envelope)
+	if err != nil {
+		return fmt.Errorf("decrypt configured Studio password: %w", err)
+	}
+	secrets.DashboardPassword = string(plain)
+	return nil
 }
 
 func enabledComposeServices(services contracts.Services) []string {

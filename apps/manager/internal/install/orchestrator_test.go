@@ -47,6 +47,77 @@ func TestInstallPersistsEncryptedUniqueSecretsBeforePrepare(t *testing.T) {
 	}
 }
 
+func TestInstallCompletesRuntimeSecretsWhenStudioPasswordAlreadyExists(t *testing.T) {
+	orchestrator, provisioner, project := newTestOrchestrator(t)
+	snapshot, err := orchestrator.store.GetDesiredConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Configuration.General.StudioPasswordSet = true
+	payload, err := json.Marshal(snapshot.Configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orchestrator.store.DB().Exec(`UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=1`, string(payload), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orchestrator.store.DB().Exec(`UPDATE project_configuration SET config_json=? WHERE project_id=?`, string(payload), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := orchestrator.cipher.Encrypt(project.ID, "dashboard-password", []byte("operator-selected-password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orchestrator.store.PutSecret(context.Background(), project.ID, "dashboard-password", envelope); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := orchestrator.Install(context.Background(), project)
+	if err != nil || result.Status != operation.Succeeded {
+		t.Fatalf("Install() = %#v, %v", result, err)
+	}
+	if provisioner.reconcile.Secrets.DashboardPassword != "operator-selected-password" {
+		t.Fatalf("DashboardPassword = %q, want operator-selected-password", provisioner.reconcile.Secrets.DashboardPassword)
+	}
+	if _, err := orchestrator.store.GetSecret(context.Background(), project.ID, "secret-key-base"); err != nil {
+		t.Fatalf("generated secret-key-base was not persisted: %v", err)
+	}
+}
+
+func TestInstallUsesSeparatelyPersistedStudioPassword(t *testing.T) {
+	orchestrator, provisioner, project := newTestOrchestrator(t)
+	snapshot, err := orchestrator.store.GetDesiredConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Configuration.General.StudioPasswordSet = true
+	payload, err := json.Marshal(snapshot.Configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orchestrator.store.DB().Exec(`UPDATE project_configs SET config_json=? WHERE project_id=? AND section='aggregate' AND revision=1`, string(payload), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orchestrator.store.DB().Exec(`UPDATE project_configuration SET config_json=? WHERE project_id=?`, string(payload), project.ID); err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := orchestrator.cipher.Encrypt(project.ID, "studio.password", []byte("operator-selected-password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orchestrator.store.PutSecret(context.Background(), project.ID, "studio.password", envelope); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := orchestrator.Install(context.Background(), project)
+	if err != nil || result.Status != operation.Succeeded {
+		t.Fatalf("Install() = %#v, %v", result, err)
+	}
+	if provisioner.reconcile.Secrets.DashboardPassword != "operator-selected-password" {
+		t.Fatalf("DashboardPassword = %q, want operator-selected-password", provisioner.reconcile.Secrets.DashboardPassword)
+	}
+}
+
 func TestInstallRetryReusesPersistedDatabaseSecrets(t *testing.T) {
 	orchestrator, provisioner, project := newTestOrchestrator(t)
 	generator := &changingGenerator{}

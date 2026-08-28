@@ -16,19 +16,20 @@ it('does not render the setup tab navigation while creating a project', () => {
   expect(screen.getByRole('button', { name: /Continue/ })).toBeVisible()
 })
 
-it('derives the project address from the slug and base domain', async () => {
-  const user = userEvent.setup()
+it('shows only the five Basic project fields', () => {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}>
       <MemoryRouter><NewProjectPage /></MemoryRouter>
     </QueryClientProvider>,
   )
 
-  await user.type(screen.getByLabelText('Project name'), 'Bee Game')
-  await user.type(screen.getByLabelText('Site URL hostname'), 'beegame.studio')
-
-  expect(screen.queryByLabelText('Domain')).not.toBeInTheDocument()
-  expect(screen.getByLabelText('Project URL')).toHaveValue('https://bee-game.beegame.studio')
+  expect(screen.getByLabelText('Project name')).toBeVisible()
+  expect(screen.getByLabelText('Site URL hostname')).toBeVisible()
+  expect(screen.getByLabelText('Studio username')).toBeVisible()
+  expect(screen.getByLabelText('Studio password')).toBeVisible()
+  expect(screen.getByLabelText('Pinned Supabase version')).toBeVisible()
+  expect(screen.queryByLabelText('Project slug')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Project URL')).not.toBeInTheDocument()
 })
 
 it('installs Lightweight after name and base site URL', async () => {
@@ -44,15 +45,15 @@ it('installs Lightweight after name and base site URL', async () => {
     </QueryClientProvider>,
   )
 
-  await user.type(screen.getByLabelText('Project name'), 'Bee')
-  expect(screen.getByLabelText('Project slug')).toHaveValue('bee')
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  expect(screen.queryByLabelText('Project slug')).not.toBeInTheDocument()
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Review' }))
   expect(screen.getByText('Lightweight')).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Install project' }))
 
   expect(createBody.preset).toBe('LIGHTWEIGHT')
-  expect(screen.getByRole('heading', { level: 1, name: 'Installing Bee' })).toBeVisible()
+  expect(screen.getByRole('heading', { level: 1, name: 'Installing Production API' })).toBeVisible()
 })
 
 it('prefixes the Basic-step Site URL with HTTPS before submitting', async () => {
@@ -64,7 +65,7 @@ it('prefixes the Basic-step Site URL with HTTPS before submitting', async () => 
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Bee')
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
   expect(screen.getByText('https://')).toBeVisible()
   await user.type(screen.getByLabelText('Site URL hostname'), 'app.example.com')
   await user.click(screen.getByRole('button', { name: 'Review' }))
@@ -82,7 +83,7 @@ it('collects Studio username and password during project creation', async () => 
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Bee')
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
 
   expect(screen.getByLabelText('Studio username')).toBeVisible()
@@ -112,7 +113,7 @@ it('posts the complete aggregate after navigating every wizard step', async () =
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ projectId: 'project-2', operationId: 'operation-2' }), { status: 202, headers: { 'Content-Type': 'application/json' } }) }))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Bee')
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   for (let index = 0; index < 5; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Install project' }))
@@ -136,7 +137,7 @@ it('uses Standard aggregate controls and closes Direct DB through Custom without
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ projectId: 'project-3', operationId: 'operation-3' }), { status: 202, headers: { 'Content-Type': 'application/json' } }) }))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Bee')
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Standard' }))
@@ -162,7 +163,7 @@ it('restores the full dependency closure when a feature is enabled again', async
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Bee')
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('switch', { name: 'Authentication' }))
@@ -179,7 +180,7 @@ it('enabling Storage or Image Transformation atomically restores database, REST,
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Bee')
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('switch', { name: 'PostgREST' }))
@@ -197,7 +198,7 @@ it('renders nested OAuth secret value errors at the secret control', async () =>
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Bee')
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))
