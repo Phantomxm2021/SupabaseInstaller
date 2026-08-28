@@ -22,7 +22,20 @@ func TestStartRunsDatabaseBeforeDependentServices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lifecycle() error = %v", err)
 	}
-	if strings.Join(runner.calls, ",") != "db,verify-bootstrap,sync-db-roles,services:auth|rest|meta|studio|api-gw" {
+	if strings.Join(runner.calls, ",") != "db,verify-bootstrap,sync-db-roles,services:auth|auth-templates|rest|meta|studio|api-gw" {
+		t.Fatalf("lifecycle calls = %#v", runner.calls)
+	}
+}
+
+func TestRestartEnsuresAuthTemplatesIsRunning(t *testing.T) {
+	runner := &recordingRunner{}
+	root, _ := projectfs.New(t.TempDir())
+	backend := NewBackend(root, runner, staticInspector{})
+
+	if err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{Slug: "bee", Action: contracts.LifecycleRestart}); err != nil {
+		t.Fatalf("Lifecycle() error = %v", err)
+	}
+	if strings.Join(runner.calls, ",") != "restart,services:auth-templates" {
 		t.Fatalf("lifecycle calls = %#v", runner.calls)
 	}
 }
@@ -128,6 +141,7 @@ func (runner *recordingRunner) UpServices(_ context.Context, _ compose.ProjectRe
 }
 func (runner *recordingRunner) Stop(context.Context, compose.ProjectRef) error { return nil }
 func (runner *recordingRunner) Restart(context.Context, compose.ProjectRef, ...string) error {
+	runner.calls = append(runner.calls, "restart")
 	return nil
 }
 func (runner *recordingRunner) DownRuntime(context.Context, compose.ProjectRef) error { return nil }

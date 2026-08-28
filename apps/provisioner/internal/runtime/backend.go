@@ -76,11 +76,17 @@ func (backend *Backend) Lifecycle(ctx context.Context, request contracts.Lifecyc
 		if err := backend.runner.SynchronizeDatabaseRolePasswords(ctx, project); err != nil {
 			return err
 		}
-		return backend.runner.UpServices(ctx, project, "auth", "rest", "meta", "studio", "api-gw")
+		return backend.runner.UpServices(ctx, project, "auth", "auth-templates", "rest", "meta", "studio", "api-gw")
 	case contracts.LifecycleStop:
 		return backend.runner.Stop(ctx, project)
 	case contracts.LifecycleRestart:
-		return backend.runner.Restart(ctx, project)
+		if err := backend.runner.Restart(ctx, project); err != nil {
+			return err
+		}
+		// Compose restart only affects containers that already exist. Ensure the
+		// auth template helper is recreated when an older runtime or manual
+		// cleanup removed it.
+		return backend.runner.UpServices(ctx, project, "auth-templates")
 	case contracts.LifecycleDeleteRuntime:
 		return backend.runner.DownRuntime(ctx, project)
 	case contracts.LifecycleDeleteData:
