@@ -59,6 +59,7 @@ func TestRenderApplyProtectsOnlyStudioRoot(t *testing.T) {
 	for _, want := range []string{
 		`auth_basic "Supabase Studio";`,
 		"auth_basic_user_file /etc/supabase-manager/nginx-auth/supabase-manager-studio.htpasswd;",
+		`proxy_set_header Authorization "";`,
 		"proxy_pass http://127.0.0.1:18002;",
 	} {
 		if !strings.Contains(rendered.Contents, want) {

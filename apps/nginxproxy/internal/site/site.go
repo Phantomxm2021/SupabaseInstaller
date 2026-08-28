@@ -69,7 +69,7 @@ func (r Renderer) RenderApply(request ApplyRequest) (RenderedSite, error) {
 		if err != nil {
 			return RenderedSite{}, err
 		}
-		studioLocation = fmt.Sprintf("location / {\n        auth_basic \"Supabase Studio\";\n        auth_basic_user_file %s;\n        proxy_pass http://127.0.0.1:%d;\n    }", filepath.Join(r.tls.AuthDirectory, authFileName), request.StudioPort)
+		studioLocation = fmt.Sprintf("location / {\n        auth_basic \"Supabase Studio\";\n        auth_basic_user_file %s;\n        proxy_set_header Authorization \"\";\n        proxy_pass http://127.0.0.1:%d;\n    }", filepath.Join(r.tls.AuthDirectory, authFileName), request.StudioPort)
 	}
 
 	availableName, err := ManagedSiteName(request.Slug)
