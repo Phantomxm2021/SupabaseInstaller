@@ -827,15 +827,16 @@ export interface ProjectForm {
   preset: PresetName;
   configuration: ProjectConfigurationForm;
 }
+export const projectSlugSchema = z
+  .string()
+  .regex(
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/,
+    "Use lowercase letters, numbers, and hyphens",
+  );
 export const projectSchema = z
   .object({
     name: z.string().trim().min(1, "Project name is required").max(80),
-    slug: z
-      .string()
-      .regex(
-        /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/,
-        "Use lowercase letters, numbers, and hyphens",
-      ),
+    slug: projectSlugSchema,
     preset: z.enum(PRESETS),
     configuration: projectConfigurationSchema,
   })
