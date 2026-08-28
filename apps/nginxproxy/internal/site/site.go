@@ -12,11 +12,11 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // ApplyRequest is the complete, typed routing state for one project.
 type ApplyRequest struct {
-	Slug          string
-	Domain        string
-	APIPort       int
-	StudioPort    int
-	StudioEnabled bool
+	Slug          string `json:"slug"`
+	Domain        string `json:"domain"`
+	APIPort       int    `json:"apiPort"`
+	StudioPort    int    `json:"studioPort"`
+	StudioEnabled bool   `json:"studioEnabled"`
 }
 
 // TLSPaths is installed by the host operator and is not project-controlled.
@@ -53,8 +53,12 @@ func (r Renderer) RenderApply(request ApplyRequest) (RenderedSite, error) {
 		studioLocation = fmt.Sprintf("location / {\n        proxy_pass http://127.0.0.1:%d;\n    }", request.StudioPort)
 	}
 
+	availableName, err := ManagedSiteName(request.Slug)
+	if err != nil {
+		return RenderedSite{}, err
+	}
 	return RenderedSite{
-		AvailableName: "supabase-manager-" + request.Slug + ".conf",
+		AvailableName: availableName,
 		Contents: fmt.Sprintf(`server {
     listen 80;
     listen [::]:80;
@@ -110,8 +114,8 @@ server {
 }
 
 func validateRequest(request ApplyRequest) error {
-	if !slugPattern.MatchString(request.Slug) {
-		return fmt.Errorf("invalid project slug")
+	if _, err := ManagedSiteName(request.Slug); err != nil {
+		return err
 	}
 	if !validHostname(request.Domain) {
 		return fmt.Errorf("invalid project domain")
@@ -123,6 +127,16 @@ func validateRequest(request ApplyRequest) error {
 		return fmt.Errorf("invalid Studio port")
 	}
 	return nil
+}
+
+// ManagedSiteName is the sole mapping from a project slug to a host config.
+// The stable file name is intentional: changing a project domain replaces this
+// exact file instead of leaving stale virtual hosts behind.
+func ManagedSiteName(slug string) (string, error) {
+	if !slugPattern.MatchString(slug) {
+		return "", fmt.Errorf("invalid project slug")
+	}
+	return "supabase-manager-" + slug + ".conf", nil
 }
 
 func validateTLSPaths(paths TLSPaths) error {
