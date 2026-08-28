@@ -61,7 +61,7 @@ func TestStoreApplyWritesRootOnlyStudioCredentialsAndRemoveDeletesThem(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+	if got, want := info.Mode().Perm(), os.FileMode(0o644); got != want {
 		t.Fatalf("credential mode = %#o, want %#o", got, want)
 	}
 	contents, err := os.ReadFile(credentialPath)

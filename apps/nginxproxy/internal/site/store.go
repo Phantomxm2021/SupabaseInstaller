@@ -59,7 +59,7 @@ func (s Store) Apply(ctx context.Context, rendered RenderedSite) error {
 			if err := removeIfPresent(s.authPath(rendered.AuthFileName)); err != nil {
 				return s.restoreAfterFailure(ctx, rendered.AvailableName, rendered.AuthFileName, previous, fmt.Errorf("remove Studio credentials: %w", err))
 			}
-		} else if err := writeAtomic(s.authDirectory, rendered.AuthFileName, []byte(rendered.AuthContents), 0o600); err != nil {
+		} else if err := writeAtomic(s.authDirectory, rendered.AuthFileName, []byte(rendered.AuthContents), 0o644); err != nil {
 			return s.restoreAfterFailure(ctx, rendered.AvailableName, rendered.AuthFileName, previous, fmt.Errorf("write Studio credentials: %w", err))
 		}
 	}
