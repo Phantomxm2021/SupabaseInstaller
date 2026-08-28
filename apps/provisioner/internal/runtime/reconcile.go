@@ -16,6 +16,7 @@ import (
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/apps/provisioner/internal/proxy"
 	"supabase-manager/apps/provisioner/internal/redact"
 	"supabase-manager/apps/provisioner/internal/render"
 	"supabase-manager/internal/contracts"
@@ -72,6 +73,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			return outcome
 		}
 		previousConfig := metadata.Configuration
+		previousProxyRoute, previousProxyManaged := routeForProxy(request.Slug, previousConfig)
 		previousServices := append([]string(nil), metadata.EnabledServices...)
 		if len(previousServices) == 0 && metadata.Revision > 0 {
 			previousServices = enabledServices(previousConfig)
@@ -96,6 +98,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		currentRef, _ := backend.projectFS.CurrentRuntimeFiles(request.Slug)
 		currentProject := compose.ProjectRef{Slug: request.Slug, Dir: currentRef.ProjectDir, ComposeFile: currentRef.ComposeFile, EnvFile: currentRef.EnvFile}
 		newServices := append([]string(nil), rendered.EnabledComposeServices...)
+		var proxyChanged bool
 		disabled := difference(previousServices, newServices)
 		added := difference(newServices, previousServices)
 		rollback := func(cause error) error {
@@ -157,6 +160,22 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			}
 			if cleanupErr != nil || recoveryErr != nil {
 				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr, recoveryErr), RollbackSucceeded: false, RuntimeChanged: published}
+			}
+			if proxyChanged {
+				if previousProxyManaged {
+					if err := action(func(actionCtx context.Context) error {
+						return backend.proxy.Apply(actionCtx, previousProxyRoute)
+					}); err != nil {
+						recoveryErr = err
+					}
+				} else if err := action(func(actionCtx context.Context) error {
+					return backend.proxy.Remove(actionCtx, request.Slug)
+				}); err != nil {
+					recoveryErr = err
+				}
+			}
+			if recoveryErr != nil {
+				return &contracts.ReconcileFailure{Cause: errors.Join(cause, recoveryErr), RollbackSucceeded: false, RuntimeChanged: published}
 			}
 			return &contracts.ReconcileFailure{Cause: cause, RollbackSucceeded: true, RuntimeChanged: published}
 		}
@@ -230,6 +249,17 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if err := backend.waitHealthy(ctx, request.Slug, newServices); err != nil {
 			return fail(rollback(err))
 		}
+		if currentProxyRoute, managed := routeForProxy(request.Slug, request.Configuration); managed {
+			if err := backend.proxy.Apply(ctx, currentProxyRoute); err != nil {
+				return fail(rollback(fmt.Errorf("apply managed nginx site: %w", err)))
+			}
+			proxyChanged = true
+		} else if previousProxyManaged {
+			if err := backend.proxy.Remove(ctx, request.Slug); err != nil {
+				return fail(rollback(fmt.Errorf("remove managed nginx site: %w", err)))
+			}
+			proxyChanged = true
+		}
 		result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: applyRevision, EnabledServices: newServices, RecreatedServices: intersect(affectedServices(previousConfig, request.Configuration), newServices)}
 		encoded, _ := json.Marshal(result)
 		metadata.ProjectID, metadata.ProjectName, metadata.Revision = request.ProjectID, request.ProjectName, applyRevision
@@ -267,6 +297,19 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 	slog.Info("runtime reconciliation completed", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "revision", metadata.Revision, "recreated_services", result.RecreatedServices)
 	result.Revision = metadata.Revision
 	return result, nil
+}
+
+func routeForProxy(slug string, configuration contracts.ProjectConfiguration) (proxy.Route, bool) {
+	if configuration.Network.HTTPSMode != contracts.HTTPSModeExternal || configuration.General.Domain == "" || configuration.Network.APIPort == 0 {
+		return proxy.Route{}, false
+	}
+	return proxy.Route{
+		Slug:          slug,
+		Domain:        configuration.General.Domain,
+		APIPort:       configuration.Network.APIPort,
+		StudioPort:    configuration.Network.StudioPort,
+		StudioEnabled: configuration.Services.Studio,
+	}, true
 }
 
 func pointFunctionsEnvAtCandidate(ref projectfs.RuntimeRef, original string) error {

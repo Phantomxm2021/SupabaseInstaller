@@ -14,6 +14,7 @@ import (
 	provisionerconfig "supabase-manager/apps/provisioner/internal/config"
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/apps/provisioner/internal/proxy"
 	provisionerruntime "supabase-manager/apps/provisioner/internal/runtime"
 	provisionerserver "supabase-manager/apps/provisioner/internal/server"
 )
@@ -35,7 +36,11 @@ func main() {
 		slog.Error("initialize Docker client", "error", err)
 		os.Exit(1)
 	}
-	backend := provisionerruntime.NewBackend(root, compose.NewRunner(compose.OSExecutor{}), health.NewInspector(dockerSource))
+	proxyClient := proxy.Client(proxy.DisabledClient{})
+	if cfg.NginxProxyMode == "managed" {
+		proxyClient = proxy.NewManagedClient(cfg.NginxProxySocket, cfg.NginxProxyToken)
+	}
+	backend := provisionerruntime.NewBackend(root, compose.NewRunner(compose.OSExecutor{}), health.NewInspector(dockerSource), proxyClient)
 	if cfg.AcceptanceInspectorFailOnce {
 		backend.EnableAcceptanceInspectorFailure()
 	}

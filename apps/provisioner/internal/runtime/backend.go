@@ -10,6 +10,7 @@ import (
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/apps/provisioner/internal/proxy"
 	"supabase-manager/internal/contracts"
 )
 
@@ -36,6 +37,7 @@ type Backend struct {
 	projectFS                   *projectfs.Root
 	runner                      LifecycleRunner
 	inspector                   HealthInspector
+	proxy                       proxy.Client
 	acceptanceInspectorFailOnce atomic.Bool
 }
 
@@ -44,8 +46,12 @@ const (
 	rollbackActionBudget = 90 * time.Second
 )
 
-func NewBackend(projectFS *projectfs.Root, runner LifecycleRunner, inspector HealthInspector) *Backend {
-	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector}
+func NewBackend(projectFS *projectfs.Root, runner LifecycleRunner, inspector HealthInspector, proxyClients ...proxy.Client) *Backend {
+	proxyClient := proxy.Client(proxy.DisabledClient{})
+	if len(proxyClients) > 0 && proxyClients[0] != nil {
+		proxyClient = proxyClients[0]
+	}
+	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector, proxy: proxyClient}
 }
 
 // EnableAcceptanceInspectorFailure is only wired by the disposable acceptance
@@ -111,6 +117,9 @@ func (backend *Backend) Lifecycle(ctx context.Context, request contracts.Lifecyc
 		}
 		if err := backend.runner.DownRuntime(ctx, project); err != nil {
 			return err
+		}
+		if err := backend.proxy.Remove(ctx, request.Slug); err != nil {
+			return fmt.Errorf("remove managed nginx site: %w", err)
 		}
 		return backend.projectFS.DeleteProjectData(request.Slug)
 	default:

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/apps/provisioner/internal/proxy"
 	"supabase-manager/apps/provisioner/internal/render"
 	"supabase-manager/internal/contracts"
 )
@@ -55,6 +57,25 @@ func TestReconcileRecreatesOnlyAffectedService(t *testing.T) {
 				t.Fatalf("result recreated = %#v, want %#v", result.RecreatedServices, tc.want)
 			}
 		})
+	}
+}
+
+func TestReconcileAppliesProxyOnlyAfterHealthyRuntime(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	proxyClient := &recordingProxy{}
+	backend := NewBackend(root, runner, &sequenceInspector{}, proxyClient)
+	configuration := baseConfig()
+	configuration.Network.StudioPort = 18002
+
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(configuration, 0, 1)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if got, want := proxyClient.applied, []proxy.Route{{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("proxy routes = %#v, want %#v", got, want)
 	}
 }
 
@@ -702,6 +723,39 @@ func TestReconcileMetadataWriteFailureRestoresRuntimeBeforeReturning(t *testing.
 	}
 }
 
+func TestReconcileMetadataWriteFailureRestoresPreviousManagedProxy(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	proxyClient := &recordingProxy{}
+	backend := NewBackend(root, runner, &sequenceInspector{}, proxyClient)
+	initial := baseConfig()
+	initial.Network.StudioPort = 18002
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(initial, 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	root.SetMetadataWriteHookForTest(func(string, projectfs.Metadata) error {
+		return errors.New("injected metadata write failure")
+	})
+	changed := initial
+	changed.General.Domain = "new.example.com"
+	changed.General.SiteURL = "https://new.example.com"
+	result, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil || !result.RolledBack {
+		t.Fatalf("result=%#v err=%v, want rollback", result, err)
+	}
+	want := []proxy.Route{
+		{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true},
+		{Slug: "bee", Domain: "new.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true},
+		{Slug: "bee", Domain: "bee.example.com", APIPort: 18001, StudioPort: 18002, StudioEnabled: true},
+	}
+	if got := proxyClient.applied; !reflect.DeepEqual(got, want) {
+		t.Fatalf("proxy routes = %#v, want %#v", got, want)
+	}
+}
+
 func TestReconcileMetadataWriteAndRuntimeRollbackFailureReportsChanged(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
@@ -746,6 +800,21 @@ type fakeReconcileRunner struct {
 	calls            []string
 	onUpDatabase     func() error
 	bootstrapError   error
+}
+
+type recordingProxy struct {
+	applied []proxy.Route
+	removed []string
+}
+
+func (p *recordingProxy) Apply(_ context.Context, route proxy.Route) error {
+	p.applied = append(p.applied, route)
+	return nil
+}
+
+func (p *recordingProxy) Remove(_ context.Context, slug string) error {
+	p.removed = append(p.removed, slug)
+	return nil
 }
 
 type captureComposeExecutor struct{ calls [][]string }

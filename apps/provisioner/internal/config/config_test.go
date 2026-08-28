@@ -55,3 +55,31 @@ func TestLoadEnablesInspectorFailpointOnlyWhenExplicitlyRequested(t *testing.T) 
 		t.Fatal("explicit acceptance inspector failpoint was not loaded")
 	}
 }
+
+func TestLoadManagedNginxProxyRequiresSocketAndToken(t *testing.T) {
+	t.Setenv("MANAGER_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("NGINX_PROXY_MODE", "managed")
+	t.Setenv("NGINX_PROXY_SOCKET", "")
+	t.Setenv("NGINX_PROXY_TOKEN", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "NGINX_PROXY") {
+		t.Fatalf("Load() error = %v, want managed proxy validation", err)
+	}
+
+	t.Setenv("NGINX_PROXY_SOCKET", "/run/supabase-manager/nginx-proxy-agent.sock")
+	t.Setenv("NGINX_PROXY_TOKEN", "separate-agent-token")
+	config, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := config.NginxProxyMode, "managed"; got != want {
+		t.Fatalf("NginxProxyMode = %q, want %q", got, want)
+	}
+}
+
+func TestLoadRejectsUnknownNginxProxyMode(t *testing.T) {
+	t.Setenv("MANAGER_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("NGINX_PROXY_MODE", "sometimes")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "NGINX_PROXY_MODE") {
+		t.Fatalf("Load() error = %v, want mode validation", err)
+	}
+}

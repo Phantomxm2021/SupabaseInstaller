@@ -4,12 +4,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/projectfs"
+	"supabase-manager/apps/provisioner/internal/proxy"
 	"supabase-manager/internal/contracts"
 )
 
@@ -57,7 +59,8 @@ func TestDeleteDataRemovesOnlyConfirmedContainedProject(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "bee", "data.marker"), []byte("data"), 0o600); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
-	backend := NewBackend(root, &recordingRunner{}, staticInspector{})
+	proxyClient := &recordingLifecycleProxy{}
+	backend := NewBackend(root, &recordingRunner{}, staticInspector{}, proxyClient)
 
 	err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{Slug: "bee", Action: contracts.LifecycleDeleteData, ConfirmProjectName: "Bee"})
 	if err != nil {
@@ -68,6 +71,9 @@ func TestDeleteDataRemovesOnlyConfirmedContainedProject(t *testing.T) {
 	}
 	if _, err := os.Stat(base); err != nil {
 		t.Fatalf("project root was removed: %v", err)
+	}
+	if got, want := proxyClient.removed, []string{"bee"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("removed proxy sites = %#v, want %#v", got, want)
 	}
 }
 
@@ -118,6 +124,14 @@ func TestDeleteDataAllowsMissingProvisionerMetadataAfterManagerConfirmation(t *t
 }
 
 type recordingRunner struct{ calls []string }
+
+type recordingLifecycleProxy struct{ removed []string }
+
+func (*recordingLifecycleProxy) Apply(context.Context, proxy.Route) error { return nil }
+func (p *recordingLifecycleProxy) Remove(_ context.Context, slug string) error {
+	p.removed = append(p.removed, slug)
+	return nil
+}
 
 func (runner *recordingRunner) UpDatabase(context.Context, compose.ProjectRef) error {
 	runner.calls = append(runner.calls, "db")

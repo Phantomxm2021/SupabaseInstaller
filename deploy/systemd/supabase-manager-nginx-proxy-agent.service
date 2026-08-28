@@ -1,0 +1,16 @@
+[Unit]
+Description=Supabase Manager managed Nginx site agent
+Requires=nginx.service
+After=nginx.service network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/supabase-manager/nginx-proxy-agent.env
+ExecStart=/usr/local/bin/nginx-proxy-agent
+Restart=on-failure
+RestartSec=2s
+UMask=0007
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
