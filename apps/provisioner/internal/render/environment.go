@@ -44,8 +44,9 @@ func renderEnvironment(input Input) (string, string, error) {
 	domain := cfg.General.Domain
 	values := map[string]string{
 		"ANON_KEY": input.Secrets.AnonKey, "API_EXTERNAL_URL": "https://" + domain + "/auth/v1",
-		"DASHBOARD_USERNAME": firstNonempty(strings.TrimSpace(cfg.General.StudioUsername), "supabase"),
-		"DASHBOARD_PASSWORD": input.Secrets.DashboardPassword, "JWT_SECRET": input.Secrets.JWTSecret,
+		"DASHBOARD_USERNAME":     firstNonempty(strings.TrimSpace(cfg.General.StudioUsername), "supabase"),
+		"STUDIO_DEFAULT_PROJECT": firstNonempty(input.ProjectName, "Default Project"),
+		"DASHBOARD_PASSWORD":     input.Secrets.DashboardPassword, "JWT_SECRET": input.Secrets.JWTSecret,
 		"POSTGRES_PASSWORD": input.Secrets.DatabasePassword, "SECRET_KEY_BASE": input.Secrets.SecretKeyBase,
 		"SERVICE_ROLE_KEY": input.Secrets.ServiceRoleKey, "SITE_URL": "https://" + domain,
 		"SUPABASE_PUBLIC_URL": "https://" + domain, "VAULT_ENC_KEY": input.Secrets.VaultEncryptionKey,

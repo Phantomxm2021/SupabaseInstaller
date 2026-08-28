@@ -82,6 +82,21 @@ func TestRenderUsesConfiguredStudioCredentials(t *testing.T) {
 	}
 }
 
+func TestRenderUsesConfiguredStudioProjectName(t *testing.T) {
+	cfg := testConfiguration()
+	out, err := Project(Input{
+		ProjectName: "Analytics Platform", Slug: "analytics", APIPort: 18001,
+		Configuration: cfg,
+		Secrets:       provisionersecrets.ProjectSecrets{DashboardPassword: "studio-password"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "STUDIO_DEFAULT_PROJECT=Analytics Platform\n") {
+		t.Fatalf("rendered env missing configured Studio project name: %s", out.Env)
+	}
+}
+
 func TestRepresentativeComposeConfig(t *testing.T) {
 	root := t.TempDir()
 	cases := []struct {

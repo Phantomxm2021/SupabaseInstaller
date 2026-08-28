@@ -80,7 +80,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		}
 		slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "render")
 		rendered, err := render.Project(render.Input{
-			ProjectID: request.ProjectID, Slug: request.Slug, APIPort: request.APIPort,
+			ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.APIPort,
 			Configuration: request.Configuration, Secrets: request.Secrets, RuntimeSecrets: request.RuntimeSecrets,
 		})
 		if err != nil {

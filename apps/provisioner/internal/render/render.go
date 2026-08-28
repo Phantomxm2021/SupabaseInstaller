@@ -16,6 +16,7 @@ import (
 // Input is the complete desired state plus private values needed to render it.
 type Input struct {
 	ProjectID       string
+	ProjectName     string
 	Slug            string
 	APIPort         int
 	Configuration   contracts.ProjectConfiguration
