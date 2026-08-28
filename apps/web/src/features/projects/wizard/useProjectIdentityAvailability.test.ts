@@ -52,6 +52,20 @@ describe('useProjectIdentityAvailability', () => {
     expect(result.current.slug).toMatchObject({ status: 'unavailable' })
   })
 
+  it('keeps valid identities checking while the project list is unresolved', () => {
+    vi.useFakeTimers()
+    const { result } = renderHook(() =>
+      useProjectIdentityAvailability('Development API', 'development-api'),
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(result.current.name.status).toBe('checking')
+    expect(result.current.slug.status).toBe('checking')
+  })
+
   it('returns idle for empty or locally invalid identities', () => {
     const { result } = renderHook(() =>
       useProjectIdentityAvailability('   ', 'PRODUCTION-API', []),

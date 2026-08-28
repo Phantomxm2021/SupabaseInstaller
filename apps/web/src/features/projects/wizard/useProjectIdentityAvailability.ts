@@ -74,11 +74,12 @@ export function useProjectIdentityAvailability(
   const normalizedSlug = normalize(slug)
   const nameValid = isValidName(normalizedName)
   const slugValid = isValidSlug(slug)
-  const projectSignature = JSON.stringify(
-    (projects ?? []).map((project) => [normalize(project.name), normalize(project.slug)]),
-  )
+  const projectsResolved = projects !== undefined
+  const projectSignature = projects === undefined
+    ? undefined
+    : JSON.stringify(projects.map((project) => [normalize(project.name), normalize(project.slug)]))
   const existingProjects = useMemo(
-    () => JSON.parse(projectSignature) as Array<[string, string]>,
+    () => projectSignature ? JSON.parse(projectSignature) as Array<[string, string]> : [],
     [projectSignature],
   )
   const [availability, setAvailability] = useState(() =>
@@ -106,6 +107,8 @@ export function useProjectIdentityAvailability(
       slug: checking(slugValid),
     }
     setAvailability((current) => sameAvailability(current, pending) ? current : pending)
+    if (!projectsResolved) return
+
     const timer = window.setTimeout(() => {
       const next = {
         name: !nameValid
@@ -123,7 +126,7 @@ export function useProjectIdentityAvailability(
     }, debounceMs)
 
     return () => window.clearTimeout(timer)
-  }, [error, existingProjects, nameValid, normalizedName, normalizedSlug, slugValid, trimmedName])
+  }, [error, existingProjects, nameValid, normalizedName, normalizedSlug, projectsResolved, slugValid, trimmedName])
 
   return availability
 }
