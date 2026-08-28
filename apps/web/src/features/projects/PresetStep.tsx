@@ -55,7 +55,7 @@ export function setServiceEnabled(form: UseFormReturn<ProjectForm>, name: Servic
       anonymousSignIn: false,
       oauth: {},
       phone: { ...auth.phone, enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} },
-      smtp: { ...auth.smtp, enabled: false },
+      smtp: { enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' },
     }, { shouldDirty: true })
   }
   if (name === 'imgproxy' && enabled) next.storage = true
