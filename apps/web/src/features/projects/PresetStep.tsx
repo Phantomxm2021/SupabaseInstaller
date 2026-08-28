@@ -47,7 +47,17 @@ export function setServiceEnabled(form: UseFormReturn<ProjectForm>, name: Servic
   if (name === 'logs') next.vector = enabled
   if (name === 'vector') next.logs = enabled
   if (name === 'directDb') { next.directDb = enabled; form.setValue('configuration.database.directPort', enabled, { shouldDirty: true }); form.setValue('configuration.database.directPortNumber', 0, { shouldDirty: true }); form.setValue('configuration.network.directDatabasePort', 0, { shouldDirty: true }) }
-  if (name === 'auth') form.setValue('configuration.auth.enabled', enabled, { shouldDirty: true })
+  if (name === 'auth') {
+    const auth = form.getValues('configuration.auth')
+    form.setValue('configuration.auth', enabled ? { ...auth, enabled } : {
+      ...auth,
+      enabled: false,
+      anonymousSignIn: false,
+      oauth: {},
+      phone: { ...auth.phone, enabled: false, provider: '', secretSet: false, secret: { action: '' }, fields: {} },
+      smtp: { ...auth.smtp, enabled: false },
+    }, { shouldDirty: true })
+  }
   if (name === 'imgproxy' && enabled) next.storage = true
   form.setValue('preset', 'CUSTOM', { shouldDirty: true }); form.setValue('configuration.services', next, { shouldDirty: true, shouldValidate: true })
 }

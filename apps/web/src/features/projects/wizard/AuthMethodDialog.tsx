@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -44,6 +44,11 @@ export function AuthMethodDialog({
 }) {
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<Category>('all')
+  useEffect(() => {
+    if (!open) return
+    setQuery('')
+    setCategory('all')
+  }, [open])
   const choices = useMemo(() => {
     const oauthChoices: Choice[] = OAUTH_PROVIDERS
       .filter((provider) => !addedOAuth.includes(provider))

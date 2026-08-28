@@ -476,3 +476,29 @@ it('submits dynamically added OAuth credentials through the existing aggregate c
 
   await waitFor(() => expect(body?.configuration.auth.oauth.google).toMatchObject({ enabled: true, clientId: 'google-client', secret: { action: 'replace', value: 'google-secret' } }))
 })
+
+it('clears incomplete dynamically added OAuth configuration when Authentication is disabled', async () => {
+  let body: Record<string, any> | undefined
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
+    body = JSON.parse(String(init.body))
+    return new Response(JSON.stringify({ projectId: 'project-auth-disabled', operationId: 'operation-auth-disabled' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Add authentication method' }))
+  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
+  await user.click(screen.getByRole('button', { name: 'Google' }))
+  await user.click(screen.getByRole('switch', { name: 'Authentication' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  expect(screen.getByText('Step 4 of 4 · Review & install')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Install project' }))
+
+  await waitFor(() => expect(body?.configuration.auth).toMatchObject({ enabled: false, oauth: {} }))
+})

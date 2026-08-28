@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
@@ -25,3 +26,22 @@ it('filters providers and omits OAuth providers that have already been added', a
   expect(screen.queryByRole('button', { name: 'Google' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'GitHub' })).toBeVisible()
 })
+
+it('resets the search and category when reopened', async () => {
+  const user = userEvent.setup()
+  render(<DialogHarness />)
+
+  await user.click(screen.getByRole('button', { name: 'Open dialog' }))
+  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
+  await user.type(screen.getByLabelText('Search authentication methods'), 'git')
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await user.click(screen.getByRole('button', { name: 'Open dialog' }))
+
+  expect(screen.getByLabelText('Search authentication methods')).toHaveValue('')
+  expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
+})
+
+function DialogHarness() {
+  const [open, setOpen] = useState(false)
+  return <><button type="button" onClick={() => setOpen(true)}>Open dialog</button><AuthMethodDialog open={open} onOpenChange={setOpen} addedOAuth={[]} onSelect={vi.fn()} /></>
+}
