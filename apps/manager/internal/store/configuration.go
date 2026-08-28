@@ -154,6 +154,38 @@ func (s *Store) AdmitConfiguration(ctx context.Context, input ConfigurationAdmis
 			return fmt.Errorf("%w: expected %d, current %d", ErrStaleConfiguration, input.ExpectedRevision, current)
 		}
 		next := input.ExpectedRevision + 1
+		// A failed admission can leave its immutable candidate snapshot behind
+		// after the desired revision is restored. Reusing that revision is safe
+		// only when the old operation is terminal; an active operation must keep
+		// ownership of its candidate and block a competing update.
+		var candidateCount int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=?`, input.ProjectID, next).Scan(&candidateCount); err != nil {
+			return fmt.Errorf("check existing configuration candidate: %w", err)
+		}
+		var existingOperationID, existingStatus string
+		existingErr := tx.QueryRowContext(ctx, `
+SELECT oc.operation_id, o.status
+FROM operation_configurations oc
+JOIN operations o ON o.id = oc.operation_id
+WHERE oc.project_id=? AND oc.revision=?
+LIMIT 1`, input.ProjectID, next).Scan(&existingOperationID, &existingStatus)
+		if existingErr == nil && candidateCount > 0 {
+			if existingStatus == string(contracts.OperationQueued) || existingStatus == string(contracts.OperationRunning) || existingStatus == string(contracts.OperationRollingBack) {
+				return ErrConfigurationBusy
+			}
+		} else if existingErr != nil && !errors.Is(existingErr, sql.ErrNoRows) {
+			return fmt.Errorf("check existing configuration candidate: %w", existingErr)
+		}
+		if candidateCount > 0 {
+			for table := range map[string]struct{}{"project_configs": {}, "project_secret_versions": {}, "project_secret_snapshot_markers": {}} {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE project_id=? AND revision=?`, input.ProjectID, next); err != nil {
+					return fmt.Errorf("reclaim stale configuration candidate: %w", err)
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=? AND revision=?`, input.ProjectID, next); err != nil {
+				return fmt.Errorf("reclaim stale configuration reservations: %w", err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO operations(id, project_id, type, status, progress, created_at) VALUES (?, ?, ?, ?, 0, ?)`, input.Operation.ID, input.ProjectID, input.Operation.Type, input.Operation.Status, formatTime(input.Operation.CreatedAt)); err != nil {
 			return fmt.Errorf("create admitted operation: %w", err)
 		}

@@ -137,6 +137,71 @@ func TestAdmitConfigurationReplacesFailedSameProjectReservations(t *testing.T) {
 	}
 }
 
+func TestAdmitConfigurationReclaimsOrphanedCandidateRevision(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	orphan := configurationFixture()
+	orphan.General.Domain = "orphan.example.com"
+	first := contracts.Operation{ID: "op-orphan", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	_, lease, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: first, ProjectID: project.ID, Owner: first.ID, ExpectedRevision: 1, Configuration: orphan, OperationKind: "UPDATE_CONFIG", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, first.ID, lease.Fence); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a failed historical operation whose Manager revision was
+	// restored, while its immutable candidate row was left behind.
+	if _, err := s.DB().Exec(`UPDATE operations SET status=? WHERE id=?`, contracts.OperationFailed, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE projects SET config_revision=1, last_good_revision=1 WHERE id=?`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	next := configurationFixture()
+	next.General.Domain = "next.example.com"
+	second := contracts.Operation{ID: "op-next-after-orphan", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now.Add(time.Second)}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: second, ProjectID: project.ID, Owner: second.ID, ExpectedRevision: 1, Configuration: next, OperationKind: "UPDATE_CONFIG", Now: now.Add(time.Second)}); err != nil {
+		t.Fatalf("admission with orphaned candidate = %v, want success", err)
+	}
+	var count int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM project_configs WHERE project_id=? AND section='aggregate' AND revision=2`, project.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("revision 2 candidate count = %d, want 1", count)
+	}
+}
+
+func TestAdmitConfigurationBlocksActiveCandidateRevision(t *testing.T) {
+	s := openTestStore(t)
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	first := contracts.Operation{ID: "op-active-candidate", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now}
+	_, lease, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: first, ProjectID: project.ID, Owner: first.ID, ExpectedRevision: 1, Configuration: configurationFixture(), OperationKind: "UPDATE_CONFIG", Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseConfigurationLeaseOwned(context.Background(), project.ID, first.ID, lease.Fence); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE projects SET config_revision=1, last_good_revision=1 WHERE id=?`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	second := contracts.Operation{ID: "op-blocked-by-active", ProjectID: project.ID, Type: contracts.OperationUpdateConfig, Status: contracts.OperationQueued, CreatedAt: now.Add(time.Second)}
+	if _, _, err := s.AdmitConfiguration(context.Background(), ConfigurationAdmission{Operation: second, ProjectID: project.ID, Owner: second.ID, ExpectedRevision: 1, Configuration: configurationFixture(), OperationKind: "UPDATE_CONFIG", Now: now.Add(time.Second)}); !errors.Is(err, ErrConfigurationBusy) {
+		t.Fatalf("admission with active candidate = %v, want ErrConfigurationBusy", err)
+	}
+}
+
 func TestRestoreConfigurationStateOwnedDoesNotEraseSuccessor(t *testing.T) {
 	s := openTestStore(t)
 	project := projectFixture()
