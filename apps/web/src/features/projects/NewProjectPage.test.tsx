@@ -1,5 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach } from 'vitest'
@@ -32,6 +34,12 @@ it('does not render the setup tab navigation while creating a project', () => {
   expect(screen.queryByRole('tab', { name: /1\. Basic/ })).not.toBeInTheDocument()
   expect(screen.getByText('Step 1 of 4 · Project details')).toBeVisible()
   expect(screen.getByRole('button', { name: /Continue/ })).toBeVisible()
+})
+
+it('disables directional transforms when reduced motion is requested', () => {
+  const styles = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
+
+  expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s+\.wizard-step-frame\[data-direction\] \{\s+animation-duration: 1ms !important;\s+animation-name: wizard-step-fade;\s+transform: none;/)
 })
 
 it('moves through four steps with directional motion and focuses the next heading', async () => {

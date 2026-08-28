@@ -1398,8 +1398,8 @@ a.auth-template-row:hover {
   to { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .wizard-step-frame {
-    animation-duration: 1ms;
+  .wizard-step-frame[data-direction] {
+    animation-duration: 1ms !important;
     animation-name: wizard-step-fade;
     transform: none;
   }
