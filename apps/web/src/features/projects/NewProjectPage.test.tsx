@@ -63,6 +63,26 @@ it('shows available project identity feedback before enabling Continue', async (
   expect(screen.getAllByRole('status')[0]).toHaveAttribute('aria-live', 'polite')
 })
 
+it('associates identity validation errors with their inputs', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  const name = screen.getByLabelText('Project name')
+  const slug = screen.getByLabelText('Project slug')
+  await user.type(name, 'x'.repeat(81))
+  await user.clear(slug)
+  await user.type(slug, 'Invalid slug')
+
+  await waitFor(() => {
+    expect(name).toHaveAttribute('aria-invalid', 'true')
+    expect(slug).toHaveAttribute('aria-invalid', 'true')
+  })
+  expect(name).toHaveAttribute('aria-describedby', 'name-form-item-message')
+  expect(slug).toHaveAttribute('aria-describedby', 'slug-form-item-message')
+  expect(document.getElementById('name-form-item-message')).toBeVisible()
+  expect(document.getElementById('slug-form-item-message')).toBeVisible()
+})
+
 it('blocks a duplicate project identity before progression', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => projectListResponse([{ name: 'Production API', slug: 'production-api' }])))
   const user = userEvent.setup()

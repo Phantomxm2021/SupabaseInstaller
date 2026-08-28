@@ -62,7 +62,7 @@ export function BasicStep({
             render={({ field }) => (
               <FormItem>
                 <FormLabel htmlFor="project-name">Project name</FormLabel>
-                <Input id="project-name" autoFocus placeholder="Production API" {...field} aria-invalid={!!nameError || availability.name.status === 'conflict'} />
+                <Input id="project-name" autoFocus placeholder="Production API" {...field} aria-describedby={nameError ? 'name-form-item-message' : undefined} aria-invalid={!!nameError || availability.name.status === 'conflict'} />
                 <FormMessage />
                 <AvailabilityFeedback availability={availability.name} retry={onRetryAvailability} />
               </FormItem>
@@ -75,7 +75,7 @@ export function BasicStep({
             render={({ field }) => (
               <FormItem>
                 <FormLabel htmlFor="project-slug">Project slug</FormLabel>
-                <Input id="project-slug" placeholder="production-api" {...field} aria-invalid={!!slugError || availability.slug.status === 'conflict'} />
+                <Input id="project-slug" placeholder="production-api" {...field} aria-describedby={slugError ? 'slug-form-item-message' : undefined} aria-invalid={!!slugError || availability.slug.status === 'conflict'} />
                 <FormMessage />
                 <AvailabilityFeedback availability={availability.slug} retry={onRetryAvailability} />
               </FormItem>
