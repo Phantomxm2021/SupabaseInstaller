@@ -73,7 +73,7 @@ export function useProjectIdentityAvailability(
   const normalizedName = normalize(name)
   const normalizedSlug = normalize(slug)
   const nameValid = isValidName(normalizedName)
-  const slugValid = isValidSlug(normalizedSlug)
+  const slugValid = isValidSlug(slug)
   const projectSignature = JSON.stringify(
     (projects ?? []).map((project) => [normalize(project.name), normalize(project.slug)]),
   )

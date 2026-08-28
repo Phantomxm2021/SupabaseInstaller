@@ -18,7 +18,7 @@ describe('useProjectIdentityAvailability', () => {
     vi.useFakeTimers()
     const projects = [project('Production API', 'production-api')]
     const { result } = renderHook(() =>
-      useProjectIdentityAvailability(' Production API ', 'PRODUCTION-API', projects),
+      useProjectIdentityAvailability(' Production API ', 'production-api', projects),
     )
 
     expect(result.current.name.status).toBe('checking')
@@ -54,7 +54,7 @@ describe('useProjectIdentityAvailability', () => {
 
   it('returns idle for empty or locally invalid identities', () => {
     const { result } = renderHook(() =>
-      useProjectIdentityAvailability('   ', 'invalid_slug', []),
+      useProjectIdentityAvailability('   ', 'PRODUCTION-API', []),
     )
 
     expect(result.current.name.status).toBe('idle')
