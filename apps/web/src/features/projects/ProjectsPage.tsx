@@ -1,21 +1,109 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, Box, Cpu, Database, HardDrive, MemoryStick, Plus, RotateCw } from 'lucide-react'
-import { useState } from 'react'
+import { ArrowRight, Cpu, Database, HardDrive, MemoryStick, Plus, RotateCw, Search } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { AsyncState } from '@/components/app/AsyncState'
+import { PageHeader } from '@/components/app/PageHeader'
 import { Badge } from '@/components/ui/badge'
-import { Alert } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { apiFetch } from '../../api/client'
 import type { HostResources, Project } from '../../api/types'
+
 export function ProjectsPage() {
+  const [search, setSearch] = useState('')
   const query = useQuery({ queryKey: ['projects'], queryFn: () => apiFetch<{ projects: Project[] }>('/api/projects') })
   const resources = useQuery({ queryKey: ['host-resources'], queryFn: () => apiFetch<HostResources>('/api/host/resources'), staleTime: 30_000, retry: false })
-  const host = resources.data
   const projects = query.data?.projects ?? []
-  return <main className="page"><div className="page-heading"><div><p className="eyebrow">Runtime orchestration</p><h1>Projects</h1><p className="muted">Independent official Supabase stacks on this server.</p></div><Link className={buttonVariants()} to="/projects/new"><Plus className="size-4" /> New project</Link></div><section className="host-grid" aria-label="Host resources"><Metric icon={<Cpu />} label="CPU" value={host ? `${Math.round(host.cpuPercent)}%` : '—'} detail={host ? `${host.cpuCores} cores` : 'Live metrics unavailable'} /><Metric icon={<MemoryStick />} label="Memory" value={host ? `${formatBytes(host.memoryUsedBytes)} / ${formatBytes(host.memoryTotalBytes)}` : '—'} detail={host ? `${usagePercent(host.memoryUsedBytes, host.memoryTotalBytes)}% used` : 'Available memory'} /><Metric icon={<HardDrive />} label="Disk" value={host ? `${formatBytes(host.diskUsedBytes)} / ${formatBytes(host.diskTotalBytes)}` : '—'} detail={host ? `${usagePercent(host.diskUsedBytes, host.diskTotalBytes)}% used` : 'Project data volume'} /></section><Card data-testid="projects-card"><CardHeader><CardTitle>All projects</CardTitle><CardDescription>{projects.length} configured runtimes</CardDescription></CardHeader><CardContent className="p-0">{query.isLoading && <div className="empty-state">Loading projects…</div>}{query.error && <Alert variant="destructive" className="rounded-none border-x-0 border-t-0">{query.error.message}</Alert>}{!query.isLoading && !query.error && projects.length === 0 && <div className="empty-state"><Box className="size-7" /><h3>No projects yet</h3><p>Create a complete project from the guided configuration wizard.</p></div>}{projects.length > 0 && <Table><TableHeader><TableRow><TableHead>Project</TableHead><TableHead>Health</TableHead><TableHead>Version</TableHead><TableHead className="text-right">Open</TableHead></TableRow></TableHeader><TableBody>{projects.map((project) => <TableRow key={project.id}><TableCell><Link className="flex items-center gap-3" to={`/projects/${project.id}/overview`}><span className="inline-flex size-8 items-center justify-center rounded-md border text-primary"><Database className="size-4" /></span><span><strong className="block">{project.name}</strong><small className="text-muted-foreground">https://{project.domain}</small></span></Link></TableCell><TableCell><Badge variant={project.health === 'HEALTHY' ? 'default' : project.health === 'UNHEALTHY' ? 'destructive' : 'outline'}>{labelHealth(project.health)}</Badge></TableCell><TableCell className="font-mono text-xs text-muted-foreground">{project.supabaseVersion}</TableCell><TableCell><div className="flex items-center justify-end gap-2"><RetryProjectButton project={project} /><Link aria-label={`Open ${project.name}`} to={`/projects/${project.id}/overview`}><ArrowRight className="ml-auto size-4" /></Link></div></TableCell></TableRow>)}</TableBody></Table>}</CardContent></Card></main>
+  const filteredProjects = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    return term ? projects.filter((project) => `${project.name} ${project.domain}`.toLowerCase().includes(term)) : projects
+  }, [projects, search])
+
+  return (
+    <main className="page space-y-5">
+      <div className="page-heading mb-0">
+        <PageHeader
+          eyebrow="Runtime orchestration"
+          title="Projects"
+          description="Independent official Supabase stacks on this server."
+          actions={<Link className={buttonVariants()} to="/projects/new"><Plus data-icon="inline-start" />New project</Link>}
+        />
+      </div>
+
+      <section className="host-grid mb-0" aria-label="Host resources">
+        <Metric icon={<Cpu />} label="CPU" loading={resources.isLoading} value={resources.data ? `${Math.round(resources.data.cpuPercent)}%` : 'Unavailable'} detail={resources.data ? `${resources.data.cpuCores} cores` : 'Live metrics unavailable'} />
+        <Metric icon={<MemoryStick />} label="Memory" loading={resources.isLoading} value={resources.data ? `${formatBytes(resources.data.memoryUsedBytes)} / ${formatBytes(resources.data.memoryTotalBytes)}` : 'Unavailable'} detail={resources.data ? `${usagePercent(resources.data.memoryUsedBytes, resources.data.memoryTotalBytes)}% used` : 'Available memory'} />
+        <Metric icon={<HardDrive />} label="Disk" loading={resources.isLoading} value={resources.data ? `${formatBytes(resources.data.diskUsedBytes)} / ${formatBytes(resources.data.diskTotalBytes)}` : 'Unavailable'} detail={resources.data ? `${usagePercent(resources.data.diskUsedBytes, resources.data.diskTotalBytes)}% used` : 'Project data volume'} />
+      </section>
+
+      <Card data-testid="projects-card">
+        <CardHeader className="border-b">
+          <CardTitle>All projects</CardTitle>
+          <CardDescription>{projects.length} configured runtimes</CardDescription>
+          <CardAction className="w-full sm:w-64">
+            <div className="relative">
+              <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input aria-label="Search projects" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by project or domain" className="pl-8" />
+            </div>
+          </CardAction>
+        </CardHeader>
+        <CardContent className="p-0">
+          {query.isLoading ? <AsyncState variant="loading" className="h-52 p-4" /> : null}
+          {query.error ? <AsyncState variant="error" title="Projects unavailable" description={query.error.message} onRetry={() => { void query.refetch() }} className="m-4" /> : null}
+          {!query.isLoading && !query.error && projects.length === 0 ? (
+            <AsyncState
+              variant="empty"
+              title="No projects yet"
+              description="Create a complete project from the guided configuration wizard."
+              action={<Link className={buttonVariants()} to="/projects/new"><Plus data-icon="inline-start" />Create project</Link>}
+              className="items-center px-6 text-center"
+            />
+          ) : null}
+          {!query.isLoading && !query.error && projects.length > 0 ? <ProjectsTable projects={filteredProjects} /> : null}
+        </CardContent>
+      </Card>
+    </main>
+  )
 }
+
+function ProjectsTable({ projects }: { projects: Project[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead className="pl-5">Project</TableHead>
+          <TableHead>Health</TableHead>
+          <TableHead>Version</TableHead>
+          <TableHead className="pr-5 text-right">Actions</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {projects.length === 0 ? <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">No projects match your search.</TableCell></TableRow> : null}
+        {projects.map((project) => (
+          <TableRow key={project.id}>
+            <TableCell className="pl-5">
+              <Link className="flex items-center gap-3" to={`/projects/${project.id}/overview`}>
+                <span className="inline-flex size-9 items-center justify-center rounded-lg border bg-muted/40 text-primary"><Database className="size-4" /></span>
+                <span className="min-w-0">
+                  <strong className="block truncate font-medium">{project.name}</strong>
+                  <span className="block truncate text-xs text-muted-foreground">https://{project.domain}</span>
+                </span>
+              </Link>
+            </TableCell>
+            <TableCell><div className="flex items-center gap-2"><span className={`size-1.5 rounded-full ${healthDotClass(project.health)}`} aria-hidden="true" /><Badge variant={healthBadgeVariant(project.health)}>{labelHealth(project.health)}</Badge></div></TableCell>
+            <TableCell className="font-mono text-xs text-muted-foreground">{project.supabaseVersion}</TableCell>
+            <TableCell className="pr-5"><div className="flex items-center justify-end gap-2"><RetryProjectButton project={project} /><Button variant="ghost" size="icon-sm" aria-label={`Open ${project.name}`} nativeButton={false} render={<Link to={`/projects/${project.id}/overview`} />}><ArrowRight /></Button></div></TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
 function RetryProjectButton({ project }: { project: Project }) {
   const queryClient = useQueryClient()
   const [message, setMessage] = useState('')
@@ -29,9 +117,15 @@ function RetryProjectButton({ project }: { project: Project }) {
     onError: () => setMessage(''),
   })
   if (project.status !== 'FAILED') return null
-  return <div className="flex items-center gap-2"><Button variant="secondary" size="sm" aria-label={`Retry ${project.name}`} disabled={retry.isPending} onClick={() => retry.mutate()}><RotateCw className="size-3.5" />{retry.isPending ? 'Retrying…' : 'Retry'}</Button>{message && <span className="sr-only" role="status">{message}</span>}</div>
+  return <div className="flex items-center gap-2"><Button variant="secondary" size="sm" aria-label={`Retry ${project.name}`} disabled={retry.isPending} onClick={() => retry.mutate()}>{retry.isPending ? <RotateCw className="animate-spin" /> : <RotateCw />}{retry.isPending ? 'Retrying…' : 'Retry'}</Button>{message && <span className="sr-only" role="status">{message}</span>}</div>
 }
-function Metric({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail: string }) { return <Card size="sm"><CardContent className="flex items-center gap-3"><span className="inline-flex size-9 items-center justify-center rounded-md bg-muted text-muted-foreground">{icon}</span><div><small className="block text-xs uppercase text-muted-foreground">{label}</small><strong className="block text-lg">{value}</strong><p className="m-0 text-xs text-muted-foreground">{detail}</p></div></CardContent></Card> }
+
+function Metric({ icon, label, loading, value, detail }: { icon: ReactNode; label: string; loading: boolean; value: string; detail: string }) {
+  return <Card size="sm"><CardContent className="flex items-center gap-3"><span className="inline-flex size-9 items-center justify-center rounded-md bg-muted text-muted-foreground">{icon}</span><div className="min-w-0"><span className="block text-xs font-medium tracking-wide text-muted-foreground uppercase">{label}</span>{loading ? <><Skeleton data-testid="resource-skeleton" className="mt-1 h-5 w-24" /><Skeleton className="mt-1 h-3 w-16" /></> : <><strong className="block truncate text-base">{value}</strong><p className="m-0 text-xs text-muted-foreground">{detail}</p></>}</div></CardContent></Card>
+}
+
 function formatBytes(bytes: number) { if (!Number.isFinite(bytes) || bytes < 0) return '—'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; let value = bytes; let unit = 0; while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1 } return `${unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}` }
 function usagePercent(used: number, total: number) { if (!Number.isFinite(used) || !Number.isFinite(total) || total <= 0) return '—'; return Math.min(100, Math.max(0, (used / total) * 100)).toFixed(0) }
 function labelHealth(health: Project['health']) { return health.charAt(0) + health.slice(1).toLowerCase() }
+function healthBadgeVariant(health: Project['health']) { return health === 'HEALTHY' ? 'default' : health === 'UNHEALTHY' ? 'destructive' : 'outline' }
+function healthDotClass(health: Project['health']) { return health === 'HEALTHY' ? 'bg-primary' : health === 'UNHEALTHY' ? 'bg-destructive' : 'bg-muted-foreground' }
