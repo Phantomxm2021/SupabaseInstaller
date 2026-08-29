@@ -47,7 +47,7 @@ func (s *Service) Create(ctx context.Context, draft Draft) (Project, error) {
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if project.ID == "" {
-		return Project{}, fmt.Errorf("project ID generator returned an empty ID")
+		return Project{}, fmt.Errorf("server ID generator returned an empty ID")
 	}
 	persistedConfiguration, err := cloneConfiguration(configuration)
 	if err != nil {
@@ -100,7 +100,7 @@ func (s *Service) encryptConfigurationSecrets(projectID string, cfg *contracts.P
 			mutations = append(mutations, store.SecretMutation{Kind: kind, Envelope: envelope})
 			*set = true
 		case "retain", "remove":
-			return fmt.Errorf("%s cannot use %s during project creation", kind, input.Action)
+			return fmt.Errorf("%s cannot use %s during server creation", kind, input.Action)
 		default:
 			return fmt.Errorf("%s: unknown secret action %q", kind, input.Action)
 		}

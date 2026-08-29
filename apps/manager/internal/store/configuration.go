@@ -14,9 +14,9 @@ import (
 	"supabase-manager/internal/contracts"
 )
 
-var ErrStaleConfiguration = errors.New("stale project configuration revision")
-var ErrConfigurationConflict = errors.New("project configuration conflicts with another project")
-var ErrConfigurationBusy = errors.New("project configuration operation is busy")
+var ErrStaleConfiguration = errors.New("stale server configuration revision")
+var ErrConfigurationConflict = errors.New("server configuration conflicts with another server")
+var ErrConfigurationBusy = errors.New("server configuration operation is busy")
 var ErrSecretSnapshotUnavailable = errors.New("encrypted secret snapshot is unavailable")
 
 type ConfigurationSnapshot struct {
@@ -207,7 +207,7 @@ LIMIT 1`, input.ProjectID, next).Scan(&existingOperationID, &existingStatus)
 		// conflict. The new lease above serializes this replacement; reservations
 		// belonging to other projects were already checked and remain protected.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=?`, input.ProjectID); err != nil {
-			return fmt.Errorf("replace prior project configuration reservations: %w", err)
+			return fmt.Errorf("replace prior server configuration reservations: %w", err)
 		}
 		for kind, key := range resources {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO configuration_reservations(resource_kind,resource_key,project_id,operation_id,revision,created_at) VALUES(?,?,?,?,?,?)`, kind, key, input.ProjectID, input.Operation.ID, input.ExpectedRevision+1, formatTime(input.Now)); err != nil {

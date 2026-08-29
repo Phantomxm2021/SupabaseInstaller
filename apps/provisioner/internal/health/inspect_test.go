@@ -2,6 +2,8 @@ package health
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"supabase-manager/internal/contracts"
@@ -32,8 +34,18 @@ func TestProjectIsUnhealthyWhenDatabaseIsUnhealthy(t *testing.T) {
 	}
 }
 
-type staticSource struct{ containers []Container }
+func TestProjectUsesServerTerminologyWhenContainerInspectionFails(t *testing.T) {
+	_, err := NewInspector(staticSource{err: errors.New("docker unavailable")}).Project(context.Background(), ProjectRef{Slug: "bee"})
+	if err == nil || !strings.Contains(err.Error(), "list server containers") {
+		t.Fatalf("Project() error = %v, want server terminology", err)
+	}
+}
+
+type staticSource struct {
+	containers []Container
+	err        error
+}
 
 func (source staticSource) Containers(context.Context, string) ([]Container, error) {
-	return source.containers, nil
+	return source.containers, source.err
 }

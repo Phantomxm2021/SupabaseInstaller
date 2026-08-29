@@ -1085,7 +1085,7 @@ func runtimeVerificationError(result contracts.ReconcileProjectResponse, operati
 		mismatches = append(mismatches, fmt.Sprintf("operation ID received=%q expected=%q", result.OperationID, operationID))
 	}
 	if result.ProjectID != projectID {
-		mismatches = append(mismatches, fmt.Sprintf("project ID received=%q expected=%q", result.ProjectID, projectID))
+		mismatches = append(mismatches, fmt.Sprintf("server ID received=%q expected=%q", result.ProjectID, projectID))
 	}
 	if revision >= 0 && result.Revision != revision {
 		mismatches = append(mismatches, fmt.Sprintf("revision received=%d expected=%d", result.Revision, revision))

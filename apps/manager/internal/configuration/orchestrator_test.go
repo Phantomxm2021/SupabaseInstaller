@@ -315,6 +315,13 @@ func TestSameServicesIgnoresRendererHelperServices(t *testing.T) {
 	}
 }
 
+func TestRuntimeVerificationUsesServerTerminologyForIDMismatch(t *testing.T) {
+	err := runtimeVerificationError(contracts.ReconcileProjectResponse{OperationID: "op-1", ProjectID: "unexpected", Revision: 1}, "op-1", "server-1", 1, contracts.ProjectConfiguration{})
+	if err == nil || !strings.Contains(err.Error(), "server ID received") {
+		t.Fatalf("runtimeVerificationError() = %v, want server terminology", err)
+	}
+}
+
 func TestEnabledServicesExcludesRendererHelperServices(t *testing.T) {
 	cfg := contracts.ProjectConfiguration{Services: contracts.Services{Database: true, Gateway: true, Auth: true, Functions: true, Supavisor: true, Logs: true}}
 	for _, service := range enabledServices(cfg) {
