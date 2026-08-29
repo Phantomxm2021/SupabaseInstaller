@@ -28,6 +28,10 @@ printf 'agent %s\n' "$*" >>"$SUPABASE_MANAGER_TEST_LOG"
 SCRIPT
 chmod 0755 "$TEST_REPOSITORY/scripts/install-nginx-proxy-agent.sh"
 
+HELP_OUTPUT=$(bash "$TEST_REPOSITORY/scripts/install-supabase-manager.sh" --help)
+printf '%s\n' "$HELP_OUTPUT" | grep -F -- 'Existing valid secrets and server data are kept.'
+printf '%s\n' "$HELP_OUTPUT" | grep -F -- '--project-root ABSOLUTE_PATH    Host directory for Supabase server data.'
+
 cat >"$TEST_BIN/docker" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail

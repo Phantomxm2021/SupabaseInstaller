@@ -1,12 +1,12 @@
-# Project Supabase host behind Nginx and Cloudflare
+# Server Supabase host behind Nginx and Cloudflare
 
-Each managed project has one public hostname. Its Studio UI is proxied from
-the root path and its Supabase API paths are proxied to the project's loopback
+Each managed server has one public hostname. Its Studio UI is proxied from
+the root path and its Supabase API paths are proxied to the server's loopback
 API Gateway port:
 
 ```text
 manager.example.com              -> 127.0.0.1:8080       (Manager)
-project.supabase.example.com     -> project API/Studio  (one project host)
+server.supabase.example.com      -> server API/Studio   (one server host)
 ```
 
 The recommended deployment uses the native `nginx-proxy-agent`. It owns only
@@ -16,24 +16,24 @@ The recommended deployment uses the native `nginx-proxy-agent`. It owns only
 authenticated Unix socket; neither Manager nor Provisioner has access to
 `/etc/nginx`.
 
-## Project values
+## Server values
 
-Configure the following through Manager before reconciling a project:
+Configure the following through Manager before reconciling a server:
 
 | Setting | Example | Meaning |
 | --- | --- | --- |
-| `General.Domain` | `project.supabase.example.com` | Public Supabase host; hostname only |
+| `General.Domain` | `server.supabase.example.com` | Public Supabase host; hostname only |
 | `General.SiteURL` | `https://app.example.com` | Application redirect URL, not the Supabase host |
 | `Network.APIPort` | allocated by Manager | Loopback API Gateway port |
 | `Network.StudioPort` | allocated by Manager | Loopback Studio port when Studio is enabled |
 
 The agent renders the fixed host routing template. It does not accept raw
-Nginx text from a project and it never publishes API or Studio ports outside
+Nginx text from a server and it never publishes API or Studio ports outside
 `127.0.0.1`.
 
 ## Cloudflare DNS and TLS
 
-Create one record per project or a wildcard record:
+Create one record per server or a wildcard record:
 
 ```text
 *.supabase.example.com  A  <host-public-ip>  Proxied
@@ -59,25 +59,25 @@ sudo ./scripts/install-supabase-manager.sh \
 ```
 
 The installer never edits unrelated Nginx sites and never removes Supabase
-project data. Rerun it after upgrading the repository; no separate Agent or
+server data. Rerun it after upgrading the repository; no separate Agent or
 Compose override command is required.
 
 ## Lifecycle behavior
 
 In managed mode, a successful reconcile performs these steps:
 
-1. Render and validate the project runtime.
+1. Render and validate the server runtime.
 2. Start/recreate the runtime and wait for its health checks.
 3. Atomically write the slug-stable Nginx site file and the root-only Studio
    credential hash, validate with `nginx -t`, then reload Nginx.
-4. Persist the project configuration.
+4. Persist the server configuration.
 
 If Nginx validation/reload fails, the agent restores its prior site file,
 enabled link, and credential hash. If a later Manager metadata write fails, Provisioner restores
 the prior runtime and prior proxy route. Updating `General.Domain` overwrites
 the same slug-named site file, so it cannot leave an obsolete hostname file.
-Deleting a project stops its runtime, removes its managed site and enabled
-link, and only then removes project data.
+Deleting a server stops its runtime, removes its managed site and enabled
+link, and only then removes server data.
 
 The generated template requires the configured Studio username and password
 for `/` (or returns `404` when Studio is disabled), and routes `/auth`,
@@ -94,7 +94,7 @@ sudo nginx -t
 sudo ls -l /etc/nginx/sites-enabled/supabase-manager-*.conf
 ```
 
-For a project named `project`, its stable managed file is
+For a server named `project`, its stable managed file is
 `/etc/nginx/sites-available/supabase-manager-project.conf`. Do not edit that file
 manually: the next Manager reconciliation overwrites it. Put any custom Nginx
 policy in a separate operator-owned site file.

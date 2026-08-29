@@ -1,9 +1,9 @@
-# Project configuration operations
+# Server configuration operations
 
-The Configuration page edits one canonical project configuration. Manager
+The Configuration page edits one canonical server configuration. Manager
 SQLite is the source of truth; a PATCH writes that value, then queues one
 runtime apply operation. The Provisioner renders the complete configuration
-and runs Docker Compose against the project directory. The operation panel
+and runs Docker Compose against the server directory. The operation panel
 reports validation, Compose, health verification, and the concrete terminal
 error when an apply fails.
 
@@ -74,7 +74,7 @@ reserves and validates all selected ports atomically.
 
 Gateway mode, HTTPS mode, API/Studio/direct database/pooler ports, and public
 network settings are validated as one unit. Host ports are allocated without
-cross-project collisions and are released when their owner is disabled.
+cross-server collisions and are released when their owner is disabled.
 
 ## Secrets and recovery
 
@@ -95,7 +95,7 @@ credential; ordinary settings do not use that protocol.
 ## Restart, recreate, and rollback
 
 Restarting Manager or Provisioner resumes durable queued/running operations by
-re-reading the canonical configuration. Runtime recreate keeps project volumes
+re-reading the canonical configuration. Runtime recreate keeps server volumes
 and only changes the services affected by the rendered configuration. Retry is
 safe because no numeric revision comparison is used by the normal apply path.
 
@@ -118,9 +118,9 @@ rollback remain auditable.
 
 ## Reverse proxy expectations
 
-The Manager control plane and each project Supabase host use separate proxy
+The Manager control plane and each server Supabase host use separate proxy
 entries. Set `PUBLIC_ORIGIN` to the Manager URL, keep Provisioner private, and
-route each project's public domain to its loopback-bound Studio and API Gateway
+route each server's public domain to its loopback-bound Studio and API Gateway
 ports. Runtime service ports must not be independently published. See the
-[project host Nginx and Cloudflare guide](project-host-nginx.md) for the exact
+[server host Nginx and Cloudflare guide](project-host-nginx.md) for the exact
 path routing, WebSocket headers, TLS, DNS, and validation procedure.
