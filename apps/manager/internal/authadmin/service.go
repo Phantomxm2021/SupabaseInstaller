@@ -145,21 +145,21 @@ func (s *Service) request(ctx context.Context, projectID, method, path string, i
 	}
 	snapshot, err := s.store.GetConfiguration(ctx, projectID)
 	if errors.Is(err, store.ErrNotFound) {
-		return &Error{Status: http.StatusNotFound, Code: "PROJECT_NOT_FOUND", Message: "Project was not found"}
+		return &Error{Status: http.StatusNotFound, Code: "PROJECT_NOT_FOUND", Message: "Server was not found"}
 	}
 	if err != nil {
-		return &Error{Status: http.StatusInternalServerError, Code: "CONFIGURATION_GET_FAILED", Message: "Unable to read project configuration"}
+		return &Error{Status: http.StatusInternalServerError, Code: "CONFIGURATION_GET_FAILED", Message: "Unable to read server configuration"}
 	}
 	if !snapshot.Configuration.Services.Auth || snapshot.Configuration.Network.APIPort == 0 {
-		return &Error{Status: http.StatusServiceUnavailable, Code: "AUTH_UNAVAILABLE", Message: "Authentication is not running for this project"}
+		return &Error{Status: http.StatusServiceUnavailable, Code: "AUTH_UNAVAILABLE", Message: "Authentication is not running for this server"}
 	}
 	envelope, err := s.store.GetSecret(ctx, projectID, "service-role-key")
 	if err != nil {
-		return &Error{Status: http.StatusServiceUnavailable, Code: "AUTH_ADMIN_UNAVAILABLE", Message: "Project administrator credentials are unavailable"}
+		return &Error{Status: http.StatusServiceUnavailable, Code: "AUTH_ADMIN_UNAVAILABLE", Message: "Server administrator credentials are unavailable"}
 	}
 	key, err := s.cipher.Decrypt(projectID, "service-role-key", envelope)
 	if err != nil {
-		return &Error{Status: http.StatusInternalServerError, Code: "AUTH_ADMIN_UNAVAILABLE", Message: "Project administrator credentials are unavailable"}
+		return &Error{Status: http.StatusInternalServerError, Code: "AUTH_ADMIN_UNAVAILABLE", Message: "Server administrator credentials are unavailable"}
 	}
 	var body io.Reader
 	if input != nil {
@@ -186,7 +186,7 @@ func (s *Service) request(ctx context.Context, projectID, method, path string, i
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		code, message := "AUTH_ADMIN_REQUEST_FAILED", "Authentication administration request failed"
 		if strings.Contains(path, "/admin/oauth/") && response.StatusCode == http.StatusNotFound {
-			code, message = "OAUTH_SERVER_DISABLED", "OAuth Server is disabled for this project"
+			code, message = "OAUTH_SERVER_DISABLED", "OAuth Server is disabled for this server"
 		}
 		return &Error{Status: response.StatusCode, Code: code, Message: message}
 	}

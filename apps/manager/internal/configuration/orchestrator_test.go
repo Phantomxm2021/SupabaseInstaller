@@ -43,6 +43,17 @@ func TestResumeAfterCommittedPublicationOnlyCompletesOperation(t *testing.T) {
 	}
 }
 
+func TestResumeMissingProjectUsesServerTerminology(t *testing.T) {
+	orchestrator, _, operations, _, _, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
+	if err := orchestrator.Resume(context.Background(), func(context.Context, string) (contracts.Project, error) { return contracts.Project{}, errors.New("missing") }); err != nil {
+		t.Fatal(err)
+	}
+	got := waitRecoveryOperation(t, operations, op.ID)
+	if got.Status != operation.Failed || !strings.Contains(got.ErrorMessage, "Server unavailable during operation resume") {
+		t.Fatalf("resumed missing operation = %s/%q, want failed server-unavailable message", got.Status, got.ErrorMessage)
+	}
+}
+
 func TestQueuePatchIgnoresClientRevision(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {

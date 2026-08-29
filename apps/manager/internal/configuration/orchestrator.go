@@ -938,7 +938,7 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 			if queued.Status == operation.Queued {
 				_ = o.operations.Start(ctx, queued.ID)
 			}
-			_ = o.operations.Fail(ctx, queued.ID, "RESUME", errors.New("project unavailable during operation resume"))
+			_ = o.operations.Fail(ctx, queued.ID, "RESUME", errors.New("Server unavailable during operation resume"))
 			continue
 		}
 		snapshot, err := o.store.GetOperationConfiguration(ctx, queued.ID)

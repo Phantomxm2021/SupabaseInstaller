@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,8 +37,20 @@ func TestDeleteDataRequiresExactProjectName(t *testing.T) {
 	if err == nil {
 		t.Fatal("Queue() accepted wrong-case project name")
 	}
+	if !strings.Contains(err.Error(), "exact server name confirmation is required") {
+		t.Fatalf("Queue() error = %q, want server terminology", err)
+	}
 	if provisioner.lastAction != "" {
 		t.Fatalf("Provisioner action = %s, want none", provisioner.lastAction)
+	}
+}
+
+func TestForceDeleteRequiresExactServerName(t *testing.T) {
+	service, database, _ := newLifecycleService(t)
+	project, _ := database.GetProject(context.Background(), "bee")
+	err := service.ForceDelete(context.Background(), project, ActionDeleteData, "bee")
+	if err == nil || !strings.Contains(err.Error(), "exact server name confirmation is required") {
+		t.Fatalf("ForceDelete() error = %v, want server terminology", err)
 	}
 }
 

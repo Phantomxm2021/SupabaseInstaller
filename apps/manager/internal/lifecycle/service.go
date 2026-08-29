@@ -37,7 +37,7 @@ func NewService(store *store.Store, operations *operation.Service, provisioner P
 
 func (service *Service) Queue(ctx context.Context, project contracts.Project, action Action, confirmation string) (operation.Operation, error) {
 	if action == ActionDeleteData && confirmation != project.Name {
-		return operation.Operation{}, fmt.Errorf("exact project name confirmation is required")
+		return operation.Operation{}, fmt.Errorf("exact server name confirmation is required")
 	}
 	var operationType operation.Type
 	switch action {
@@ -65,7 +65,7 @@ func (service *Service) ForceDelete(ctx context.Context, project contracts.Proje
 		return fmt.Errorf("unsupported delete action %q", action)
 	}
 	if action == ActionDeleteData && confirmation != project.Name {
-		return fmt.Errorf("exact project name confirmation is required")
+		return fmt.Errorf("exact server name confirmation is required")
 	}
 	operationID := fmt.Sprintf("force-delete-%s-%d", project.ID, time.Now().UnixNano())
 	request := contracts.LifecycleRequest{
