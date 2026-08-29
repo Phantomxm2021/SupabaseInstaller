@@ -8,6 +8,8 @@ coverage/
 *.tsbuildinfo
 apps/web/vite.config.js
 apps/web/vite.config.d.ts
+apps/web/pnpm-lock.yaml
+apps/web/pnpm-workspace.yaml
 *.db
 *.db-shm
 *.db-wal
