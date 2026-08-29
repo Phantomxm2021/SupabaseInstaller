@@ -2,6 +2,7 @@ import type { UseFormReturn } from 'react-hook-form'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel, FieldGroup } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { InputGroup, InputGroupAddon } from '@/components/ui/input-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -84,18 +85,18 @@ export function BasicStep({
 
           <Field>
             <FieldLabel htmlFor="project-site-url-hostname">Site URL</FieldLabel>
-            <div className="flex h-8 overflow-hidden rounded-lg border border-input bg-transparent focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
-              <span aria-hidden="true" className="flex items-center border-r border-input px-2.5 text-sm text-muted-foreground">{httpsPrefix}</span>
+            <InputGroup>
+              <InputGroupAddon aria-hidden="true">{httpsPrefix}</InputGroupAddon>
               <Input
                 id="project-site-url-hostname"
                 aria-label="Site URL hostname"
-                className="h-full rounded-none border-0 bg-transparent focus-visible:border-0 focus-visible:ring-0"
+                className="border-0 bg-transparent focus-visible:border-0 focus-visible:ring-0"
                 placeholder="platform.example.com"
                 aria-invalid={!!error('configuration.general.siteUrl')}
                 value={hostnameFromSiteURL(siteURL)}
                 onChange={(event) => form.setValue('configuration.general.siteUrl', siteURLFromHostname(event.target.value), { shouldDirty: true, shouldValidate: true })}
               />
-            </div>
+            </InputGroup>
             <FieldError>{error('configuration.general.siteUrl')}</FieldError>
           </Field>
 

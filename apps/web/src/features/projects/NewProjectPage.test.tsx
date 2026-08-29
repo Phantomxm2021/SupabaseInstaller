@@ -290,6 +290,31 @@ it('installs Lightweight after name and base site URL', async () => {
   expect(screen.getByRole('heading', { level: 1, name: 'Installing Production API' })).toBeVisible()
 })
 
+it('disables the installation action and announces progress while creation is pending', async () => {
+  let resolveCreate: ((response: Response) => void) | undefined
+  vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return Promise.resolve(projectListResponse())
+    return new Promise<Response>((resolve) => { resolveCreate = resolve })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Install project' }))
+
+  const action = await screen.findByRole('button', { name: /Creating operation/ })
+  expect(action).toBeDisabled()
+  expect(action).toHaveAttribute('aria-busy', 'true')
+  expect(screen.getByRole('status', { name: 'Creating operation' })).toBeVisible()
+  expect(action.querySelector('[data-slot="spinner"][data-icon="inline-start"]')).toBeInTheDocument()
+
+  resolveCreate?.(new Response(JSON.stringify({ projectId: 'project-pending', operationId: 'operation-pending' }), { status: 202, headers: { 'Content-Type': 'application/json' } }))
+  expect(await screen.findByRole('heading', { level: 1, name: 'Installing Production API' })).toBeVisible()
+})
+
 it('prefixes the Basic-step Site URL with HTTPS before submitting', async () => {
   let body: Record<string, any> | undefined
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
