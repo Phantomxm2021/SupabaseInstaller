@@ -47,8 +47,17 @@ func TestDeleteDataIsRejectedWithoutManagerConfirmedPath(t *testing.T) {
 	_, _ = root.UpdateMetadata("bee", func(metadata *projectfs.Metadata) error { metadata.ProjectName = "Bee"; return nil })
 	backend := NewBackend(root, &recordingRunner{}, staticInspector{})
 	err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{Slug: "bee", Action: contracts.LifecycleDeleteData, ConfirmProjectName: "bee"})
-	if err == nil || !strings.Contains(err.Error(), "exact project name") {
+	if err == nil || !strings.Contains(err.Error(), "exact server name") {
 		t.Fatalf("Lifecycle() error = %v, want destructive-operation rejection", err)
+	}
+}
+
+func TestDeleteDataUsesServerTerminologyWhenMetadataAndNameAreMissing(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	backend := NewBackend(root, &recordingRunner{}, staticInspector{})
+	err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{Slug: "bee", Action: contracts.LifecycleDeleteData})
+	if err == nil || !strings.Contains(err.Error(), "server metadata is missing") {
+		t.Fatalf("Lifecycle() error = %v, want server terminology", err)
 	}
 }
 

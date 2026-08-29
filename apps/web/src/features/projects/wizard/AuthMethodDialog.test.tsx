@@ -4,44 +4,39 @@ import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import { AuthMethodDialog } from './AuthMethodDialog'
 
-it('filters a single-column authentication method list and adds an available OAuth provider', async () => {
+it('offers only unconfigured third-party OAuth providers from its accessible picker', async () => {
   const user = userEvent.setup()
   const onSelect = vi.fn()
-  render(<AuthMethodDialog open onOpenChange={vi.fn()} addedOAuth={[]} onSelect={onSelect} />)
+  const onOpenChange = vi.fn()
+  render(<AuthMethodDialog open onOpenChange={onOpenChange} addedOAuth={[]} onSelect={onSelect} />)
 
-  expect(screen.getByRole('heading', { name: 'Add authentication method' })).toBeVisible()
-  await user.type(screen.getByLabelText('Search authentication methods'), 'git')
-  expect(screen.getByRole('button', { name: 'GitHub' })).toBeVisible()
-  expect(screen.queryByRole('button', { name: 'Google' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Add authentication provider' }))
+  expect(screen.getByRole('menuitem', { name: 'Google' })).toBeVisible()
+  expect(screen.queryByRole('menuitem', { name: /Email password|Magic Link|Custom SMTP|Phone Auth|Anonymous sign-in/ })).not.toBeInTheDocument()
 
-  await user.click(screen.getByRole('button', { name: 'GitHub' }))
-  expect(onSelect).toHaveBeenCalledWith({ kind: 'oauth', provider: 'github' })
+  await user.click(screen.getByRole('menuitem', { name: 'Google' }))
+  expect(onSelect).toHaveBeenCalledWith({ kind: 'oauth', provider: 'google' })
+  expect(onOpenChange).toHaveBeenCalledWith(false)
 })
 
-it('filters providers and omits OAuth providers that have already been added', async () => {
+it('omits OAuth providers that have already been added', async () => {
   const user = userEvent.setup()
   render(<AuthMethodDialog open onOpenChange={vi.fn()} addedOAuth={['google']} onSelect={vi.fn()} />)
 
-  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
-  expect(screen.queryByRole('button', { name: 'Google' })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'GitHub' })).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Add authentication provider' }))
+  expect(screen.queryByRole('menuitem', { name: 'Google' })).not.toBeInTheDocument()
+  expect(screen.getByRole('menuitem', { name: 'GitHub' })).toBeVisible()
 })
 
-it('resets the search and category when reopened', async () => {
+it('opens when its trigger is activated', async () => {
   const user = userEvent.setup()
-  render(<DialogHarness />)
+  render(<PickerHarness />)
 
-  await user.click(screen.getByRole('button', { name: 'Open dialog' }))
-  await user.click(screen.getByRole('button', { name: 'OAuth providers' }))
-  await user.type(screen.getByLabelText('Search authentication methods'), 'git')
-  await user.click(screen.getByRole('button', { name: 'Cancel' }))
-  await user.click(screen.getByRole('button', { name: 'Open dialog' }))
-
-  expect(screen.getByLabelText('Search authentication methods')).toHaveValue('')
-  expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByRole('button', { name: 'Add authentication provider' }))
+  expect(await screen.findByRole('menuitem', { name: 'Google' })).toBeVisible()
 })
 
-function DialogHarness() {
+function PickerHarness() {
   const [open, setOpen] = useState(false)
-  return <><button type="button" onClick={() => setOpen(true)}>Open dialog</button><AuthMethodDialog open={open} onOpenChange={setOpen} addedOAuth={[]} onSelect={vi.fn()} /></>
+  return <AuthMethodDialog open={open} onOpenChange={setOpen} addedOAuth={[]} onSelect={vi.fn()} />
 }

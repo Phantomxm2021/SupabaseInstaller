@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,6 +15,23 @@ import (
 	"supabase-manager/apps/manager/internal/store"
 	"supabase-manager/internal/contracts"
 )
+
+func TestListUsersForMissingProjectReturnsServerTerminology(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cipher, err := managersecrets.NewCipher(bytes.Repeat([]byte{6}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(database, cipher, nil, nil).ListUsers(context.Background(), "missing", "")
+	var authErr *Error
+	if !errors.As(err, &authErr) || authErr.Code != "PROJECT_NOT_FOUND" || authErr.Message != "Server was not found" {
+		t.Fatalf("ListUsers() error = %#v, want PROJECT_NOT_FOUND with server terminology", err)
+	}
+}
 
 func TestListUsersUsesProjectServiceRoleKeyWithoutReturningIt(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))

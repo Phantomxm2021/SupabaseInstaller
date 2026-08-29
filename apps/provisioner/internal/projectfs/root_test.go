@@ -17,6 +17,8 @@ func TestProjectPathRejectsTraversalAndAbsoluteInput(t *testing.T) {
 	for _, slug := range []string{"../escape", "/tmp/escape", "bee/../../escape", "Bee", "bee_api"} {
 		if _, err := root.ProjectPath(slug); err == nil {
 			t.Errorf("ProjectPath(%q) succeeded, want rejection", slug)
+		} else if !strings.Contains(err.Error(), "server slug") {
+			t.Errorf("ProjectPath(%q) error = %q, want server terminology", slug, err)
 		}
 	}
 }
@@ -295,6 +297,9 @@ func TestStageRuntimeFilesRefusesHydrationOverExistingUserTree(t *testing.T) {
 	_, _, err = root.StageRuntimeFiles("owned", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")})
 	if err == nil {
 		t.Fatal("incomplete user tree unexpectedly hydrated")
+	}
+	if !strings.Contains(err.Error(), "server template is incomplete") {
+		t.Fatalf("StageRuntimeFiles() error = %q, want server terminology", err)
 	}
 	got, readErr := os.ReadFile(userFile)
 	if readErr != nil || string(got) != "user function" {

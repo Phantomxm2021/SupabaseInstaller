@@ -938,7 +938,7 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 			if queued.Status == operation.Queued {
 				_ = o.operations.Start(ctx, queued.ID)
 			}
-			_ = o.operations.Fail(ctx, queued.ID, "RESUME", errors.New("project unavailable during operation resume"))
+			_ = o.operations.Fail(ctx, queued.ID, "RESUME", errors.New("Server unavailable during operation resume"))
 			continue
 		}
 		snapshot, err := o.store.GetOperationConfiguration(ctx, queued.ID)
@@ -1085,7 +1085,7 @@ func runtimeVerificationError(result contracts.ReconcileProjectResponse, operati
 		mismatches = append(mismatches, fmt.Sprintf("operation ID received=%q expected=%q", result.OperationID, operationID))
 	}
 	if result.ProjectID != projectID {
-		mismatches = append(mismatches, fmt.Sprintf("project ID received=%q expected=%q", result.ProjectID, projectID))
+		mismatches = append(mismatches, fmt.Sprintf("server ID received=%q expected=%q", result.ProjectID, projectID))
 	}
 	if revision >= 0 && result.Revision != revision {
 		mismatches = append(mismatches, fmt.Sprintf("revision received=%d expected=%d", result.Revision, revision))

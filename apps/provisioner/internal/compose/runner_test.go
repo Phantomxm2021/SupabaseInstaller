@@ -241,6 +241,25 @@ func TestResetDatabaseConfigRemovesOnlyScopedVolume(t *testing.T) {
 	}
 }
 
+func TestResetDatabaseConfigUsesServerTerminologyForVolumeFailures(t *testing.T) {
+	executor := &sequenceExecutor{results: []executorResult{{err: errors.New("docker unavailable")}}}
+	err := NewRunner(executor).ResetDatabaseConfig(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"})
+	if err == nil || !strings.Contains(err.Error(), "list server database configuration volume") {
+		t.Fatalf("ResetDatabaseConfig() error = %v, want server terminology", err)
+	}
+}
+
+func TestDownRuntimeUsesServerTerminologyForFallbackFailures(t *testing.T) {
+	executor := &sequenceExecutor{results: []executorResult{
+		{err: errors.New("compose failed")},
+		{err: errors.New("docker unavailable")},
+	}}
+	err := NewRunner(executor).DownRuntime(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"})
+	if err == nil || !strings.Contains(err.Error(), "server-scoped cleanup failed") || !strings.Contains(err.Error(), "list server containers") {
+		t.Fatalf("DownRuntime() error = %v, want server terminology", err)
+	}
+}
+
 func TestRunnerUsesStableProjectDirAndCurrentConfig(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)

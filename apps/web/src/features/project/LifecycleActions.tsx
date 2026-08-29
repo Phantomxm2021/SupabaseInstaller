@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
-import { Pause, Play, RotateCw, Trash2 } from 'lucide-react'
+import { ChevronDown, Pause, Play, RotateCw, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../api/client'
 import type { Project } from '../../api/types'
@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { Button } from '@/components/ui/button'
 import { Alert } from '@/components/ui/alert'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 
 type LifecycleAction = 'start' | 'stop' | 'restart'
 
@@ -21,9 +22,9 @@ export async function refreshProjectQueriesAfterDelete(queryClient: Pick<QueryCl
 }
 
 const actionLabels: Record<LifecycleAction, string> = {
-  start: 'Starting project',
-  stop: 'Stopping project',
-  restart: 'Restarting project',
+  start: 'Starting Server',
+  stop: 'Stopping Server',
+  restart: 'Restarting Server',
 }
 
 export function LifecycleActions({ project }: { project: Project }) {
@@ -38,18 +39,18 @@ export function LifecycleActions({ project }: { project: Project }) {
   })
   const retry = useMutation({
     mutationFn: () => apiFetch<{ projectId: string; operationId: string }>(`/api/projects/${project.id}/retry`, { method: 'POST' }),
-    onMutate: () => setMessage('Retrying project…'),
+    onMutate: () => setMessage('Retrying Server…'),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['project', project.id] })
       await queryClient.invalidateQueries({ queryKey: ['projects'] })
-      setMessage('Retry queued')
+      setMessage('Server retry queued')
     },
   })
   const remove = useMutation({
     mutationFn: ({ mode, confirmation }: { mode: 'runtime' | 'data'; confirmation: string }) => apiFetch(`/api/projects/${project.id}`, { method: 'DELETE', body: JSON.stringify({ mode, confirmation }) }),
     onSuccess: async () => {
       await refreshProjectQueriesAfterDelete(queryClient, project.id)
-      toast.success('Project deleted')
+      toast.success('Server deleted')
       navigate('/projects', { replace: true })
     },
     onError: (error) => toast.error(error.message),
@@ -58,13 +59,21 @@ export function LifecycleActions({ project }: { project: Project }) {
   return (
     <div className="lifecycle-wrap">
       <div className="lifecycle-actions">
-        {project.status === 'FAILED' && <Button variant="secondary" aria-label="Retry project" disabled={retry.isPending} onClick={() => retry.mutate()}><RotateCw className="size-4" /> {retry.isPending ? 'Retrying…' : 'Retry project'}</Button>}
-        {project.status === 'STOPPED' && <Button disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('start')}><Play className="size-4" /> {lifecycle.isPending ? 'Starting…' : 'Start project'}</Button>}
-        {['RUNNING', 'DEGRADED'].includes(project.status) && <>
-          <Button variant="secondary" disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('stop')}><Pause className="size-4" /> Stop</Button>
-          <Button variant="secondary" disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('restart')}><RotateCw className="size-4" /> Restart</Button>
-        </>}
-        <Button variant="destructive" type="button" onClick={() => setDeleteOpen(true)}><Trash2 className="size-4" /> Delete</Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button type="button" variant="secondary" aria-label="Actions" />}>
+            Actions <ChevronDown className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={8}>
+            {project.status === 'FAILED' && <DropdownMenuItem disabled={retry.isPending} onClick={() => retry.mutate()}><RotateCw /> {retry.isPending ? 'Retrying Server…' : 'Retry Server'}</DropdownMenuItem>}
+            {project.status === 'STOPPED' && <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('start')}><Play /> {lifecycle.isPending ? 'Starting Server…' : 'Start Server'}</DropdownMenuItem>}
+            {['RUNNING', 'DEGRADED'].includes(project.status) && <>
+              <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('stop')}><Pause /> {lifecycle.isPending ? 'Stopping Server…' : 'Stop Server'}</DropdownMenuItem>
+              <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('restart')}><RotateCw /> {lifecycle.isPending ? 'Restarting Server…' : 'Restart Server'}</DropdownMenuItem>
+            </>}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}><Trash2 /> Delete Server</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {message && <span className="action-status" role="status">{message}</span>}
       {(lifecycle.error || retry.error || remove.error) && <Alert variant="destructive">{(lifecycle.error ?? retry.error ?? remove.error)?.message}</Alert>}

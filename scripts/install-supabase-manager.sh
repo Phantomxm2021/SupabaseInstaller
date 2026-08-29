@@ -16,14 +16,14 @@ usage() {
 Usage: sudo ./scripts/install-supabase-manager.sh [options]
 
 Install or upgrade Supabase Manager, its private Provisioner, and the managed
-Nginx proxy agent on Ubuntu. Existing valid secrets and project data are kept.
+Nginx proxy agent on Ubuntu. Existing valid secrets and server data are kept.
 
 Options:
   --non-interactive               Require all configuration values as flags.
   --public-origin URL             Public Manager URL, such as https://manager.example.com.
   --certificate-file PATH         Cloudflare Origin Certificate PEM path.
   --certificate-key-file PATH     Cloudflare Origin Certificate private-key path.
-  --project-root ABSOLUTE_PATH    Host directory for Supabase project data.
+  --project-root ABSOLUTE_PATH    Host directory for Supabase server data.
   --force                         Replace conflicting explicit non-secret settings.
   --help                          Show this help text.
 EOF

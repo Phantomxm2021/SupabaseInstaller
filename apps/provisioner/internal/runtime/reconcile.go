@@ -444,7 +444,7 @@ func reconcileFailure(cause error, rolledBack bool) error {
 
 func redactedReconcileDiagnostic(request contracts.ReconcileProjectRequest, cause error) string {
 	if cause == nil {
-		return "Project runtime reconciliation failed"
+		return "Server runtime reconciliation failed"
 	}
 	var failure *contracts.ReconcileFailure
 	if errors.As(cause, &failure) && failure.Cause != nil {

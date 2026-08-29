@@ -69,11 +69,11 @@ func RegisterProjectRoutes(mux *http.ServeMux, options ProjectOptions) {
 func (handlers projectHandlers) retry(response http.ResponseWriter, request *http.Request) {
 	found, err := handlers.options.Projects.Get(request.Context(), request.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
+		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Server was not found")
 		return
 	}
 	if err != nil {
-		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read project")
+		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read server")
 		return
 	}
 	retryOperation, err := handlers.options.Installer.CreateOperation(request.Context(), found.ID)
@@ -117,16 +117,16 @@ func (handlers projectHandlers) delete(response http.ResponseWriter, request *ht
 		return
 	}
 	if handlers.options.Lifecycle == nil {
-		writeError(response, http.StatusServiceUnavailable, "LIFECYCLE_UNAVAILABLE", "Project lifecycle is unavailable")
+		writeError(response, http.StatusServiceUnavailable, "LIFECYCLE_UNAVAILABLE", "Server lifecycle is unavailable")
 		return
 	}
 	found, err := handlers.options.Projects.Get(request.Context(), request.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
+		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Server was not found")
 		return
 	}
 	if err != nil {
-		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read project")
+		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read server")
 		return
 	}
 	if err := handlers.options.Lifecycle.ForceDelete(request.Context(), found, action, input.Confirmation); err != nil {
@@ -138,16 +138,16 @@ func (handlers projectHandlers) delete(response http.ResponseWriter, request *ht
 
 func (handlers projectHandlers) queueLifecycle(response http.ResponseWriter, request *http.Request, action lifecycle.Action, confirmation string) {
 	if handlers.options.Lifecycle == nil {
-		writeError(response, http.StatusServiceUnavailable, "LIFECYCLE_UNAVAILABLE", "Project lifecycle is unavailable")
+		writeError(response, http.StatusServiceUnavailable, "LIFECYCLE_UNAVAILABLE", "Server lifecycle is unavailable")
 		return
 	}
 	found, err := handlers.options.Projects.Get(request.Context(), request.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
+		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Server was not found")
 		return
 	}
 	if err != nil {
-		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read project")
+		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read server")
 		return
 	}
 	queued, err := handlers.options.Lifecycle.Queue(request.Context(), found, action, confirmation)
@@ -172,7 +172,7 @@ func (handlers projectHandlers) create(response http.ResponseWriter, request *ht
 	created, err := handlers.options.Projects.Create(request.Context(), draft)
 	switch {
 	case errors.Is(err, project.ErrConflict):
-		writeError(response, http.StatusConflict, "PROJECT_CONFLICT", "Project slug or domain already exists")
+		writeError(response, http.StatusConflict, "PROJECT_CONFLICT", "Server slug or domain already exists")
 		return
 	case err != nil:
 		writeError(response, http.StatusUnprocessableEntity, "INVALID_PROJECT", err.Error())
@@ -194,7 +194,7 @@ func (handlers projectHandlers) create(response http.ResponseWriter, request *ht
 func (handlers projectHandlers) list(response http.ResponseWriter, request *http.Request) {
 	projects, err := handlers.options.Projects.List(request.Context())
 	if err != nil {
-		writeError(response, http.StatusInternalServerError, "PROJECT_LIST_FAILED", "Unable to list projects")
+		writeError(response, http.StatusInternalServerError, "PROJECT_LIST_FAILED", "Unable to list servers")
 		return
 	}
 	for index := range projects {
@@ -206,11 +206,11 @@ func (handlers projectHandlers) list(response http.ResponseWriter, request *http
 func (handlers projectHandlers) get(response http.ResponseWriter, request *http.Request) {
 	found, err := handlers.options.Projects.Get(request.Context(), request.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
+		writeError(response, http.StatusNotFound, "PROJECT_NOT_FOUND", "Server was not found")
 		return
 	}
 	if err != nil {
-		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read project")
+		writeError(response, http.StatusInternalServerError, "PROJECT_GET_FAILED", "Unable to read server")
 		return
 	}
 	found = handlers.refreshHealth(request.Context(), found)

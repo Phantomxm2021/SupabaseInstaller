@@ -213,6 +213,13 @@ func TestReconcileValidatesStagedCandidateOnStableProjectDir(t *testing.T) {
 	}
 }
 
+func TestRedactedReconcileDiagnosticUsesServerTerminologyWithoutCause(t *testing.T) {
+	message := redactedReconcileDiagnostic(contracts.ReconcileProjectRequest{}, nil)
+	if message != "Server runtime reconciliation failed" {
+		t.Fatalf("redactedReconcileDiagnostic() = %q", message)
+	}
+}
+
 func TestReconcilePollsStartingHealthBeforeAdvancingRevision(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {

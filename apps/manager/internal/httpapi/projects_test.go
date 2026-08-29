@@ -57,6 +57,21 @@ func TestCreateProjectRejectsLegacyTopLevelProjections(t *testing.T) {
 	}
 }
 
+func TestGetMissingProjectReturnsServerTerminology(t *testing.T) {
+	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	defer database.Close()
+	mux := http.NewServeMux()
+	RegisterProjectRoutes(mux, ProjectOptions{Projects: project.NewService(database, func() string { return "project-1" }, time.Now), Installer: &fakeInstaller{}})
+	request := httptest.NewRequest(http.MethodGet, "/api/projects/missing", nil)
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"message":"Server was not found"`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestLifecycleEndpointReturnsDurableOperation(t *testing.T) {
 	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	defer database.Close()

@@ -166,7 +166,7 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 		}
 		// Runtime errors are deliberately generic: rendered environment files
 		// and secret values must never cross this private API boundary.
-		writeError(response, http.StatusUnprocessableEntity, "RECONCILE_FAILED", "Project runtime reconciliation failed")
+		writeError(response, http.StatusUnprocessableEntity, "RECONCILE_FAILED", "Server runtime reconciliation failed")
 		return
 	}
 	s.logger.Info("project runtime reconciliation completed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "revision", result.Revision, "recreated_services", result.RecreatedServices)
@@ -184,7 +184,7 @@ func (s *server) logReconcileFailure(input contracts.ReconcileProjectRequest, er
 
 func redactedReconcileDiagnostic(input contracts.ReconcileProjectRequest, cause error) string {
 	if cause == nil {
-		return "Project runtime reconciliation failed"
+		return "Server runtime reconciliation failed"
 	}
 	secrets := input.Secrets
 	values := []string{
@@ -217,7 +217,7 @@ func (s *server) rotateDatabasePassword(response http.ResponseWriter, request *h
 	}
 	result, err := backend.RotateDatabasePassword(request.Context(), input)
 	if errors.Is(err, contracts.ErrStaleConfigRevision) {
-		writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
+		writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Server configuration revision is stale")
 		return
 	}
 	if errors.Is(err, contracts.ErrInvalidReconcileRevision) {
@@ -253,7 +253,7 @@ func (s *server) rollbackDatabasePassword(response http.ResponseWriter, request 
 	}
 	if err := backend.RollbackDatabasePassword(request.Context(), input); err != nil {
 		if errors.Is(err, contracts.ErrStaleConfigRevision) {
-			writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
+			writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Server configuration revision is stale")
 			return
 		}
 		writeJSON(response, http.StatusUnprocessableEntity, contracts.RotateDatabasePasswordResponse{OperationID: input.OperationID, ProjectID: input.ProjectID, Revision: input.ExpectedRevision, RolledBack: false, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rollback failed"}})
@@ -279,7 +279,7 @@ func (s *server) confirmDatabasePasswordRotation(response http.ResponseWriter, r
 	}
 	if err := backend.ConfirmDatabasePasswordRotation(request.Context(), input); err != nil {
 		if errors.Is(err, contracts.ErrStaleConfigRevision) {
-			writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Project configuration revision is stale")
+			writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Server configuration revision is stale")
 			return
 		}
 		writeError(response, http.StatusUnprocessableEntity, "ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation confirmation failed")

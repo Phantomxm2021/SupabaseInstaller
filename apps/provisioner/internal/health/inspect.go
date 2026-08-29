@@ -80,7 +80,7 @@ func (i *Inspector) Project(ctx context.Context, project ProjectRef) (Report, er
 		containers, err = i.source.Containers(probeCtx, "supabase-manager-"+project.Slug)
 	}
 	if err != nil {
-		return Report{}, fmt.Errorf("list project containers: %w", err)
+		return Report{}, fmt.Errorf("list server containers: %w", err)
 	}
 	byService := make(map[string]Container, len(containers))
 	for _, container := range containers {

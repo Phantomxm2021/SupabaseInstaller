@@ -140,7 +140,7 @@ func validateRequest(request ApplyRequest) error {
 		return err
 	}
 	if !validHostname(request.Domain) {
-		return fmt.Errorf("invalid project domain")
+		return fmt.Errorf("invalid server domain")
 	}
 	if !validPort(request.APIPort) {
 		return fmt.Errorf("invalid API port")
@@ -156,7 +156,7 @@ func validateRequest(request ApplyRequest) error {
 // exact file instead of leaving stale virtual hosts behind.
 func ManagedSiteName(slug string) (string, error) {
 	if !slugPattern.MatchString(slug) {
-		return "", fmt.Errorf("invalid project slug")
+		return "", fmt.Errorf("invalid server slug")
 	}
 	return "supabase-manager-" + slug + ".conf", nil
 }
@@ -165,7 +165,7 @@ func ManagedSiteName(slug string) (string, error) {
 // htpasswd file used only by the Studio location of that same project.
 func ManagedCredentialName(slug string) (string, error) {
 	if !slugPattern.MatchString(slug) {
-		return "", fmt.Errorf("invalid project slug")
+		return "", fmt.Errorf("invalid server slug")
 	}
 	return "supabase-manager-" + slug + ".htpasswd", nil
 }

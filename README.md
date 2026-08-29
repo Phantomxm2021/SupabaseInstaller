@@ -1,12 +1,12 @@
 # Supabase Manager Installer
 
 Supabase Manager is a two-container control plane for isolated, pinned
-Self-hosted Supabase projects. Manager is the only public HTTP endpoint;
+Self-hosted Supabase servers. Manager is the only public HTTP endpoint;
 Provisioner is private and is the only process with Docker Socket access.
 
 ## Ubuntu installation
 
-For an Ubuntu server with managed Nginx project hosts, use the single supported
+For an Ubuntu server with managed Nginx hosts for servers, use the single supported
 deployment command. It installs missing host prerequisites, creates and
 preserves deployment secrets, starts Manager and Provisioner, and installs then
 restarts the native Nginx Agent.
@@ -21,13 +21,13 @@ sudo ./scripts/install-supabase-manager.sh \
 Cloudflare DNS records and a valid Cloudflare Origin Certificate are operator
 prerequisites. The installer does not issue certificates or create DNS records.
 Rerun the same command after pulling an upgrade; it keeps valid secrets and
-project data while rebuilding the control plane and explicitly restarting the
+server data while rebuilding the control plane and explicitly restarting the
 Nginx Agent.
 
 ## Docker Desktop development
 
 Use Docker Engine 27+ and Docker Compose v2. Allocate at least 8 GB to Docker
-Desktop for a Lightweight project (12 GB is recommended for concurrent work).
+Desktop for a Lightweight server (12 GB is recommended for concurrent work).
 On Docker Desktop, `PROJECT_ROOT` must be an absolute shared host path.
 
 ## Start manually
@@ -56,9 +56,9 @@ For a disposable end-to-end run, execute `scripts/run-acceptance.sh`. It
 creates a fresh control-plane volume and temporary administrator automatically
 (or uses `SUPABASE_MANAGER_E2E_USERNAME` and
 `SUPABASE_MANAGER_E2E_PASSWORD` when explicitly provided), starts an isolated
-Compose project on port 18081, creates a complete Custom project with SMTP and
-Functions, exercises OAuth and Functions updates, and removes only that
-disposable project on exit. It never prints generated secrets.
+Compose environment on port 18081, creates a complete Custom server with SMTP
+and Functions, exercises OAuth and Functions updates, and removes only that
+disposable server on exit. It never prints generated secrets.
 
 ## Security boundary
 
@@ -67,12 +67,12 @@ plaintext is decrypted only for a typed private Provisioner request and is not
 stored in SQLite, operation events, logs, browser storage, or backups. Raw
 `.env` and Compose editing are intentionally unavailable.
 
-## Project operations
+## Server operations
 
-Create a project from the Custom wizard or Lightweight preset, then use the
-project Configuration workspace for safe changes. Every change is an audited
+Create a server from the Custom wizard or Lightweight preset, then use the
+Server Configuration workspace for safe changes. Every change is an audited
 operation with revision checks, health verification, and rollback where
-possible. See [project configuration](docs/operations/project-configuration.md)
+possible. See [server configuration](docs/operations/project-configuration.md)
 for section semantics, restart impact, and recovery behavior.
 
 ## Inspect and stop
@@ -83,8 +83,8 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs --tail=2
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env down
 ```
 
-`down` does not delete Manager data or project data. Delete runtime/data from
-the UI after confirming the exact project name; do not use `down -v` unless
+`down` does not delete Manager data or server data. Delete runtime/data from
+the UI after confirming the exact server name; do not use `down -v` unless
 removing the control-plane database is intentional.
 
 ## Reverse proxy
@@ -93,5 +93,5 @@ Publish only Manager through the reverse proxy. Set `PUBLIC_ORIGIN` to the
 external HTTPS origin and `SECURE_COOKIES=true`; preserve Host and X-Forwarded-
 Proto, and do not proxy the private Provisioner network.
 
-For managed per-project Nginx hosts on Ubuntu, use the one-command installer
+For managed per-server Nginx hosts on Ubuntu, use the one-command installer
 above rather than a separate Compose override or Agent command.

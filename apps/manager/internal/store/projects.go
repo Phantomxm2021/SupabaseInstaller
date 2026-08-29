@@ -65,7 +65,7 @@ INSERT INTO projects (
 			string(servicesJSON), formatTime(project.CreatedAt), formatTime(project.UpdatedAt),
 		)
 		if err != nil {
-			return fmt.Errorf("create project: %w", err)
+			return fmt.Errorf("create server: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO project_configs(project_id, section, revision, config_json, created_at) VALUES (?, 'aggregate', 1, ?, ?)`, project.ID, string(configurationJSON), formatTime(project.CreatedAt)); err != nil {
 			return fmt.Errorf("create initial configuration: %w", err)
@@ -163,7 +163,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]contracts.Project, error) {
 func (s *Store) UpdateProjectStatus(ctx context.Context, id string, status contracts.ProjectStatus, health contracts.HealthStatus) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE projects SET status = ?, health = ?, updated_at = ? WHERE id = ?`, status, health, formatTime(time.Now()), id)
 	if err != nil {
-		return fmt.Errorf("update project status: %w", err)
+		return fmt.Errorf("update server status: %w", err)
 	}
 	count, err := result.RowsAffected()
 	if err != nil {
@@ -178,7 +178,7 @@ func (s *Store) UpdateProjectStatus(ctx context.Context, id string, status contr
 func (s *Store) DeleteProject(ctx context.Context, id string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
 	if err != nil {
-		return fmt.Errorf("delete project metadata: %w", err)
+		return fmt.Errorf("delete server metadata: %w", err)
 	}
 	count, _ := result.RowsAffected()
 	if count == 0 {

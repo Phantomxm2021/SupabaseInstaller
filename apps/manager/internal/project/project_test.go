@@ -48,6 +48,16 @@ func TestNormalizeProjectAddressRejectsNonHostnameBaseURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeProjectAddressUsesServerTerminologyForSubdomainValidation(t *testing.T) {
+	label := strings.Repeat("a", 63)
+	general := contracts.GeneralConfig{SiteURL: "https://" + strings.Join([]string{label, label, label, strings.Repeat("a", 60)}, ".")}
+
+	err := NormalizeProjectAddress("bee", &general)
+	if err == nil || !strings.Contains(err.Error(), "server subdomain") {
+		t.Fatalf("NormalizeProjectAddress() error = %v, want server subdomain terminology", err)
+	}
+}
+
 func TestConfigurationPresetsApplyDependencyClosure(t *testing.T) {
 	cases := []struct {
 		preset contracts.Preset

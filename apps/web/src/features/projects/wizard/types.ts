@@ -1,5 +1,5 @@
 export const wizardSteps = [
-  { id: 'identity', label: 'Project details' },
+  { id: 'identity', label: 'Server details' },
   { id: 'services', label: 'Services' },
   { id: 'integrations', label: 'Security & integrations' },
   { id: 'review', label: 'Review & install' },

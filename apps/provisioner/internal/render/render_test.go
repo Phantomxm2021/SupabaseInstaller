@@ -97,6 +97,17 @@ func TestRenderUsesConfiguredStudioProjectName(t *testing.T) {
 	}
 }
 
+func TestRenderUsesServerDefaultStudioName(t *testing.T) {
+	cfg := testConfiguration()
+	out, err := Project(Input{Slug: "default-studio", APIPort: 18001, Configuration: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "STUDIO_DEFAULT_PROJECT=Default Server\n") {
+		t.Fatalf("rendered env missing server-default Studio name: %s", out.Env)
+	}
+}
+
 func TestRepresentativeComposeConfig(t *testing.T) {
 	root := t.TempDir()
 	cases := []struct {

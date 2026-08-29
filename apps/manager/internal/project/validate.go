@@ -60,7 +60,7 @@ func NormalizeProjectAddress(slug string, general *contracts.GeneralConfig) erro
 	host := strings.TrimPrefix(baseURL, "https://")
 	domain := strings.ToLower(slug) + "." + host
 	if !validDomain(domain) {
-		return FieldError{Field: "configuration.general.siteUrl", Message: "must contain a DNS hostname suitable for a project subdomain"}
+		return FieldError{Field: "configuration.general.siteUrl", Message: "must contain a DNS hostname suitable for a server subdomain"}
 	}
 	general.SiteURL = baseURL
 	general.Domain = domain

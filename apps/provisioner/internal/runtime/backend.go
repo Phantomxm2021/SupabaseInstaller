@@ -110,10 +110,10 @@ func (backend *Backend) Lifecycle(ctx context.Context, request contracts.Lifecyc
 			expectedName = request.ProjectName
 		}
 		if metadataMissing && request.ProjectName == "" {
-			return fmt.Errorf("project metadata is missing and Manager project name was not provided")
+			return fmt.Errorf("server metadata is missing and Manager server name was not provided")
 		}
 		if request.ConfirmProjectName == "" || request.ConfirmProjectName != expectedName {
-			return fmt.Errorf("exact project name confirmation is required")
+			return fmt.Errorf("exact server name confirmation is required")
 		}
 		if err := backend.runner.DownRuntime(ctx, project); err != nil {
 			return err

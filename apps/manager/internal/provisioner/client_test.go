@@ -38,16 +38,26 @@ func TestReconcileWireRequestOmitsRetiredRevisionProtocol(t *testing.T) {
 	}
 }
 
-func TestClientReturnsProvisionerErrorCode(t *testing.T) {
+func TestClientCanonicalizesOperationErrorsWithServerTerminology(t *testing.T) {
+	var code string
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "STALE_CONFIG_REVISION", Message: "stale"}})
+		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: code}})
 		return &http.Response{StatusCode: http.StatusConflict, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
-
-	_, err := client.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
-	if err == nil || !strings.Contains(err.Error(), "STALE_CONFIG_REVISION") {
-		t.Fatalf("Reconcile() error = %v, want provisioner error code", err)
+	for candidate, want := range map[string]string{
+		"STALE_CONFIG_REVISION":   "Server configuration revision is stale",
+		"INVALID_CONFIG_REVISION": "Server configuration revision is invalid",
+		"RECONCILE_FAILED":        "Server runtime reconciliation failed",
+		"LIFECYCLE_FAILED":        "Server lifecycle operation failed",
+		"INSPECT_FAILED":          "Server inspection failed",
+	} {
+		code = candidate
+		_, err := client.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+		var clientErr *ClientError
+		if !errors.As(err, &clientErr) || clientErr.Message != want {
+			t.Fatalf("Reconcile(%s) error = %#v, want message %q", candidate, err, want)
+		}
 	}
 }
 

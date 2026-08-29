@@ -108,3 +108,18 @@ func TestRenderApplyRejectsUnsafeInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestValidationUsesServerTerminology(t *testing.T) {
+	renderer := NewRenderer(TLSPaths{
+		CertificateFile:    "/etc/nginx/ssl/cloudflare-origin.pem",
+		CertificateKeyFile: "/etc/nginx/ssl/cloudflare-origin.key",
+	})
+	if _, err := renderer.RenderApply(ApplyRequest{Slug: "bee", Domain: "invalid domain", APIPort: 18001}); err == nil || !strings.Contains(err.Error(), "invalid server domain") {
+		t.Fatalf("RenderApply() error = %v, want server terminology", err)
+	}
+	for _, name := range []func(string) (string, error){ManagedSiteName, ManagedCredentialName} {
+		if _, err := name("../escape"); err == nil || !strings.Contains(err.Error(), "invalid server slug") {
+			t.Fatalf("managed name error = %v, want server terminology", err)
+		}
+	}
+}

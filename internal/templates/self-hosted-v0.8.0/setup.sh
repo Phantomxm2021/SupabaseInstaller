@@ -41,7 +41,7 @@ print_help() {
 Usage: setup.sh [options]
 
 Options:
-  -p, --project-dir <name>  Name of the project directory (default: supabase-project)
+  -p, --project-dir <name>  Name of the server directory (default: supabase-project)
       --skip-deps           Skip installation of system packages
       --with-aws            Install the AWS CLI v2
       --ref <tag|branch>    Clone docker/ from this git ref instead of the
@@ -363,7 +363,7 @@ fi
 # A clone has docker-compose.yml + utils/ but only .env.example;
 # a set-up project also has a real .env.
 if [ -f .env ] && [ -f docker-compose.yml ] && [ -d utils ]; then
-    log "Already in a Supabase project directory; skipping bootstrap."
+    log "Already in a Supabase server directory; skipping bootstrap."
     exit 0
 fi
 
@@ -374,7 +374,7 @@ if [ -e "$target" ]; then
     die "Target $target already exists. Pick a different name with --project-dir"
 fi
 
-log "Creating project at $target"
+log "Creating server at $target"
 mkdir -p "$target"
 cp -rf "$SRC_DIR/." "$target/"
 if [ -f "$target/.env.example" ] && [ ! -f "$target/.env" ]; then
@@ -442,7 +442,7 @@ else
 fi
 
 echo ""
-echo "Setup complete. Project ready at: $(pwd)"
+echo "Setup complete. Server ready at: $(pwd)"
 echo ""
 echo "Next steps:"
 echo "  cd $(pwd)"

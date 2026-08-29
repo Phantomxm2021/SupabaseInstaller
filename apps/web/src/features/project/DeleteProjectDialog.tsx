@@ -45,7 +45,7 @@ export function DeleteProjectDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete {project.name}</AlertDialogTitle>
-          <AlertDialogDescription>Choose whether to remove only the containers or also erase the project data.</AlertDialogDescription>
+          <AlertDialogDescription>Choose whether to remove only the containers or also erase the server data.</AlertDialogDescription>
         </AlertDialogHeader>
         <RadioGroup aria-label="Delete mode" name="delete-mode" value={mode} onValueChange={(value) => setMode(value as DeleteMode)} className="gap-2">
           <Field orientation="horizontal" className="items-center rounded-lg border p-3"><RadioGroupItem id="delete-runtime" value="runtime" /><FieldLabel htmlFor="delete-runtime">Delete runtime only</FieldLabel></Field>

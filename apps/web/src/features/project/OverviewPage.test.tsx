@@ -32,7 +32,7 @@ it('uses the Supabase-style overview hierarchy while keeping local project data'
   expect(screen.getByTestId('overview-services-card')).toBeVisible()
 })
 
-it('starts a stopped project through a durable operation', async () => {
+it('starts a stopped server through the Actions menu', async () => {
   let mutationPath = ''
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
@@ -45,15 +45,16 @@ it('starts a stopped project through a durable operation', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/overview']}><Routes><Route path="/projects/:projectId/overview" element={<OverviewPage />} /></Routes></MemoryRouter></QueryClientProvider>)
 
-  await user.click(await screen.findByRole('button', { name: 'Start project' }))
+  await user.click(await screen.findByRole('button', { name: 'Actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Start Server' }))
 
   expect(mutationPath).toBe('/api/projects/bee/start')
-  expect(await screen.findByText('Starting project')).toBeVisible()
+  expect(await screen.findByText('Starting Server')).toBeVisible()
   expect(screen.getByTestId('overview-services-card')).toHaveAttribute('data-slot', 'card')
   expect(screen.getByRole('table')).toHaveAttribute('data-slot', 'table')
 })
 
-it('retries a failed project from the project homepage', async () => {
+it('retries a failed server from the Actions menu', async () => {
   let mutationPath = ''
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
@@ -66,8 +67,9 @@ it('retries a failed project from the project homepage', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/overview']}><Routes><Route path="/projects/:projectId/overview" element={<OverviewPage />} /></Routes></MemoryRouter></QueryClientProvider>)
 
-  await user.click(await screen.findByRole('button', { name: 'Retry project' }))
+  await user.click(await screen.findByRole('button', { name: 'Actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Retry Server' }))
 
   await waitFor(() => expect(mutationPath).toBe('/api/projects/bee/retry'))
-  expect(await screen.findByText('Retry queued')).toBeVisible()
+  expect(await screen.findByText('Server retry queued')).toBeVisible()
 })

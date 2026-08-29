@@ -48,16 +48,16 @@ type configurationHandlers struct{ options ConfigurationOptions }
 
 func (h configurationHandlers) get(w http.ResponseWriter, r *http.Request) {
 	if h.options.Orchestrator == nil {
-		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Project configuration is unavailable")
+		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Server configuration is unavailable")
 		return
 	}
 	snapshot, err := h.options.Orchestrator.Get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
+		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "Server was not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "CONFIGURATION_GET_FAILED", "Unable to read project configuration")
+		writeError(w, http.StatusInternalServerError, "CONFIGURATION_GET_FAILED", "Unable to read server configuration")
 		return
 	}
 	// Project URL is derived from the typed public domain. Key material,
@@ -103,7 +103,7 @@ func (h configurationHandlers) patch(w http.ResponseWriter, r *http.Request) {
 
 func (h configurationHandlers) patchOAuth(w http.ResponseWriter, r *http.Request) {
 	if h.options.Orchestrator == nil {
-		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Project configuration is unavailable")
+		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Server configuration is unavailable")
 		return
 	}
 	var envelope sectionPatch
@@ -269,7 +269,7 @@ func decodeRaw(raw []byte, target any) error {
 
 func (h configurationHandlers) queue(w http.ResponseWriter, r *http.Request, patch contracts.ConfigurationPatch) {
 	if h.options.Orchestrator == nil {
-		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Project configuration is unavailable")
+		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Server configuration is unavailable")
 		return
 	}
 	queued, snapshot, err := h.options.Orchestrator.QueuePatch(r.Context(), r.PathValue("id"), patch)
@@ -300,11 +300,11 @@ func (h configurationHandlers) handleConfigError(w http.ResponseWriter, err erro
 		return
 	}
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project was not found")
+		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "Server was not found")
 		return
 	}
 	if errors.Is(err, store.ErrConfigurationConflict) {
-		writeError(w, http.StatusConflict, "CONFIGURATION_CONFLICT", "Configuration conflicts with another project")
+		writeError(w, http.StatusConflict, "CONFIGURATION_CONFLICT", "Configuration conflicts with another server")
 		return
 	}
 	writeValidationError(w, err)
@@ -344,7 +344,7 @@ func (h configurationHandlers) reveal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if h.options.Orchestrator == nil {
-		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Project configuration is unavailable")
+		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Server configuration is unavailable")
 		return
 	}
 	value, err := h.options.Orchestrator.Reveal(r.Context(), r.PathValue("id"), r.PathValue("kind"))
@@ -364,7 +364,7 @@ func (h configurationHandlers) rotate(w http.ResponseWriter, r *http.Request) {
 	// implementation is supplied by the configuration orchestrator when the
 	// runtime supports database password changes.
 	if h.options.Orchestrator == nil {
-		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Project configuration is unavailable")
+		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Server configuration is unavailable")
 		return
 	}
 	identity, ok := IdentityFromContext(r.Context())

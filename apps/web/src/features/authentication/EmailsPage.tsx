@@ -381,7 +381,7 @@ function SMTPSettings({
               form={form}
               name="senderName"
               label="Sender name"
-              placeholder="Your project"
+              placeholder="Your server"
             />
           </div>
         </SettingsRow>

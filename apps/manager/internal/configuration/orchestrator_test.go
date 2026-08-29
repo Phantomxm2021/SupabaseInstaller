@@ -43,6 +43,17 @@ func TestResumeAfterCommittedPublicationOnlyCompletesOperation(t *testing.T) {
 	}
 }
 
+func TestResumeMissingProjectUsesServerTerminology(t *testing.T) {
+	orchestrator, _, operations, _, _, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
+	if err := orchestrator.Resume(context.Background(), func(context.Context, string) (contracts.Project, error) { return contracts.Project{}, errors.New("missing") }); err != nil {
+		t.Fatal(err)
+	}
+	got := waitRecoveryOperation(t, operations, op.ID)
+	if got.Status != operation.Failed || !strings.Contains(got.ErrorMessage, "Server unavailable during operation resume") {
+		t.Fatalf("resumed missing operation = %s/%q, want failed server-unavailable message", got.Status, got.ErrorMessage)
+	}
+}
+
 func TestQueuePatchIgnoresClientRevision(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
@@ -301,6 +312,13 @@ func TestSameServicesIgnoresRendererHelperServices(t *testing.T) {
 	actual := append(append([]string(nil), expected...), "auth-templates", "deno-cache", "db-config")
 	if !sameServices(actual, expected) {
 		t.Fatalf("renderer helper services must not make runtime verification fail: actual=%v expected=%v", actual, expected)
+	}
+}
+
+func TestRuntimeVerificationUsesServerTerminologyForIDMismatch(t *testing.T) {
+	err := runtimeVerificationError(contracts.ReconcileProjectResponse{OperationID: "op-1", ProjectID: "unexpected", Revision: 1}, "op-1", "server-1", 1, contracts.ProjectConfiguration{})
+	if err == nil || !strings.Contains(err.Error(), "server ID received") {
+		t.Fatalf("runtimeVerificationError() = %v, want server terminology", err)
 	}
 }
 

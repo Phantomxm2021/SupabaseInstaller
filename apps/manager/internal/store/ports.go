@@ -79,7 +79,7 @@ func (s *Store) TryReservePorts(ctx context.Context, projectID string, reservati
 func (s *Store) ReleaseProjectPorts(ctx context.Context, projectID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM port_allocations WHERE project_id = ?`, projectID)
 	if err != nil {
-		return fmt.Errorf("release project ports: %w", err)
+		return fmt.Errorf("release server ports: %w", err)
 	}
 	return nil
 }

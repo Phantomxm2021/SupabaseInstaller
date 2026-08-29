@@ -19,7 +19,7 @@ import (
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
-var ErrNotFound = errors.New("project metadata not found")
+var ErrNotFound = errors.New("server metadata not found")
 
 type Metadata struct {
 	ProjectID       string                         `json:"projectId"`
@@ -75,10 +75,10 @@ func (r *Root) DeleteProjectData(slug string) error {
 	}
 	defer unlock()
 	if projectPath == r.base {
-		return fmt.Errorf("refusing to remove project root")
+		return fmt.Errorf("refusing to remove server root")
 	}
 	if err := os.RemoveAll(projectPath); err != nil {
-		return fmt.Errorf("remove confirmed project data: %w", err)
+		return fmt.Errorf("remove confirmed server data: %w", err)
 	}
 	return nil
 }
@@ -250,7 +250,7 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 	if _, err := os.Stat(projectPath); errors.Is(err, os.ErrNotExist) {
 		staging, err := os.MkdirTemp(r.base, "."+slug+"-staging-")
 		if err != nil {
-			return RuntimeRef{}, nil, nil, fmt.Errorf("create project staging directory: %w", err)
+			return RuntimeRef{}, nil, nil, fmt.Errorf("create server staging directory: %w", err)
 		}
 		if err := copyEmbeddedTemplate(staging); err != nil {
 			_ = os.RemoveAll(staging)
@@ -258,10 +258,10 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 		}
 		if err := os.Rename(staging, projectPath); err != nil {
 			_ = os.RemoveAll(staging)
-			return RuntimeRef{}, nil, nil, fmt.Errorf("publish project directory: %w", err)
+			return RuntimeRef{}, nil, nil, fmt.Errorf("publish server directory: %w", err)
 		}
 	} else if err != nil {
-		return RuntimeRef{}, nil, nil, fmt.Errorf("inspect project directory: %w", err)
+		return RuntimeRef{}, nil, nil, fmt.Errorf("inspect server directory: %w", err)
 	} else {
 		// Metadata may have been durably written before a render/stage failure
 		// on a brand-new project. Hydrate only an empty tree or the explicit
@@ -271,16 +271,16 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 		if _, markerErr := os.Stat(marker); errors.Is(markerErr, os.ErrNotExist) {
 			owned, ownershipErr := managerOwnedIncompleteTree(projectPath)
 			if ownershipErr != nil {
-				return RuntimeRef{}, nil, nil, fmt.Errorf("inspect incomplete project template: %w", ownershipErr)
+				return RuntimeRef{}, nil, nil, fmt.Errorf("inspect incomplete server template: %w", ownershipErr)
 			}
 			if !owned {
-				return RuntimeRef{}, nil, nil, errors.New("project template is incomplete and contains existing user data")
+				return RuntimeRef{}, nil, nil, errors.New("server template is incomplete and contains existing user data")
 			}
 			if err := copyEmbeddedTemplate(projectPath); err != nil {
-				return RuntimeRef{}, nil, nil, fmt.Errorf("hydrate incomplete project template: %w", err)
+				return RuntimeRef{}, nil, nil, fmt.Errorf("hydrate incomplete server template: %w", err)
 			}
 		} else if markerErr != nil {
-			return RuntimeRef{}, nil, nil, fmt.Errorf("inspect project template: %w", markerErr)
+			return RuntimeRef{}, nil, nil, fmt.Errorf("inspect server template: %w", markerErr)
 		}
 	}
 	legacyFiles, err := identifyLegacyRuntimeFiles(projectPath)
@@ -1072,12 +1072,12 @@ func (r *Root) cleanupAbandonedRuntimeCandidatesAtStartup() error {
 
 func (r *Root) ProjectPath(slug string) (string, error) {
 	if !slugPattern.MatchString(slug) {
-		return "", fmt.Errorf("invalid project slug")
+		return "", fmt.Errorf("invalid server slug")
 	}
 	candidate := filepath.Join(r.base, slug)
 	relative, err := filepath.Rel(r.base, candidate)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
-		return "", fmt.Errorf("project path escapes configured root")
+		return "", fmt.Errorf("server path escapes configured root")
 	}
 	return candidate, nil
 }
@@ -1220,11 +1220,11 @@ func (r *Root) readMetadata(slug string) (Metadata, error) {
 		return Metadata{}, ErrNotFound
 	}
 	if err != nil {
-		return Metadata{}, fmt.Errorf("read project metadata: %w", err)
+		return Metadata{}, fmt.Errorf("read server metadata: %w", err)
 	}
 	var metadata Metadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
-		return Metadata{}, fmt.Errorf("decode project metadata: %w", err)
+		return Metadata{}, fmt.Errorf("decode server metadata: %w", err)
 	}
 	return metadata, nil
 }
@@ -1238,11 +1238,11 @@ func (r *Root) writeMetadata(slug string, metadata Metadata) error {
 		return err
 	}
 	if err := os.MkdirAll(projectPath, 0o700); err != nil {
-		return fmt.Errorf("create project directory: %w", err)
+		return fmt.Errorf("create server directory: %w", err)
 	}
 	data, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode project metadata: %w", err)
+		return fmt.Errorf("encode server metadata: %w", err)
 	}
 	temporary, err := os.CreateTemp(projectPath, ".project.json-*")
 	if err != nil {
