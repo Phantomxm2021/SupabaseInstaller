@@ -2,7 +2,7 @@ import type { UseFormReturn } from 'react-hook-form'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel, FieldGroup } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { InputGroup, InputGroupAddon } from '@/components/ui/input-group'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -87,10 +87,9 @@ export function BasicStep({
             <FieldLabel htmlFor="project-site-url-hostname">Site URL</FieldLabel>
             <InputGroup>
               <InputGroupAddon aria-hidden="true">{httpsPrefix}</InputGroupAddon>
-              <Input
+              <InputGroupInput
                 id="project-site-url-hostname"
                 aria-label="Site URL hostname"
-                className="border-0 bg-transparent focus-visible:border-0 focus-visible:ring-0"
                 placeholder="platform.example.com"
                 aria-invalid={!!error('configuration.general.siteUrl')}
                 value={hostnameFromSiteURL(siteURL)}

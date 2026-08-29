@@ -198,6 +198,16 @@ it('shows the identity fields in the Basic step', () => {
   expect(screen.queryByLabelText('Project URL')).not.toBeInTheDocument()
 })
 
+it('uses the InputGroup control slot for the Site URL focus state', () => {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}>
+      <MemoryRouter><NewProjectPage /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+
+  expect(screen.getByLabelText('Site URL hostname')).toHaveAttribute('data-slot', 'input-group-control')
+})
+
 it('shows available project identity feedback before enabling Continue', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
