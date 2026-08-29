@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import type { UseFormReturn } from 'react-hook-form'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
@@ -24,15 +23,8 @@ export function SecurityIntegrationsStep({ form }: { form: UseFormReturn<Project
   const setSmtpEnabled = (enabled: boolean) => set('configuration.auth.smtp', enabled ? { ...form.getValues('configuration.auth.smtp'), enabled: true } : disabledSmtpConfiguration())
   const error = (name: string) => fieldError(form, name)
   const selectMethod = (method: AuthenticationMethod) => {
-    if (method.kind === 'oauth') {
-      set(`configuration.auth.oauth.${method.provider}`, { enabled: true, clientId: '', secretSet: false, secret: { action: '' }, fields: {} })
-      setFocusProvider(method.provider)
-      return
-    }
-    if (method.kind === 'phone') set('configuration.auth.phone', { ...form.getValues('configuration.auth.phone'), enabled: true })
-    if (method.kind === 'anonymous') set('configuration.auth.anonymousSignIn', true)
-    if (method.kind === 'smtp') set('configuration.auth.smtp', { ...form.getValues('configuration.auth.smtp'), enabled: true })
-    if (method.kind === 'email' || method.kind === 'magic-link') set('configuration.auth.email.enabled', true)
+    set(`configuration.auth.oauth.${method.provider}`, { enabled: true, clientId: '', secretSet: false, secret: { action: '' }, fields: {} })
+    setFocusProvider(method.provider)
   }
   useEffect(() => {
     if (!focusProvider) return
@@ -54,8 +46,8 @@ export function SecurityIntegrationsStep({ form }: { form: UseFormReturn<Project
   const addedOAuth = Object.entries(auth.oauth).filter(([, config]) => config?.enabled).map(([provider]) => provider)
 
   return <div className="space-y-4">
-    <Module title="Authentication" enabled={services.auth} onEnabledChange={(enabled) => setServiceEnabled(form, 'auth', enabled)}>
-      <div className="space-y-6"><Button type="button" variant="secondary" onClick={() => setDialogOpen(true)}>Add authentication method</Button><FieldGroup className="grid gap-4 md:grid-cols-2"><Toggle label="Email Auth" checked={auth.email.enabled} onChange={(value) => set('configuration.auth.email.enabled', value)} /><Toggle label="Allow signup" checked={auth.email.allowSignup} onChange={(value) => { set('configuration.auth.email.allowSignup', value); set('configuration.auth.disableSignup', !value) }} error={error('configuration.auth.disableSignup')} /><Toggle label="Confirm email" checked={auth.email.confirmEmail} onChange={(value) => set('configuration.auth.email.confirmEmail', value)} /><Toggle label="Secure email change" checked={auth.email.secureEmailChange} onChange={(value) => { set('configuration.auth.email.secureEmailChange', value); set('configuration.auth.email.doubleConfirmChanges', value) }} error={error('configuration.auth.email.secureEmailChange')} /><NumberField label="Session JWT expiry (seconds)" name="configuration.auth.jwtExpiry" form={form} /></FieldGroup><Field><FieldLabel htmlFor="redirect-urls">Redirect URLs</FieldLabel><FieldDescription>One absolute http(s) URL per line.</FieldDescription><Textarea id="redirect-urls" value={auth.redirectUrls.join('\n')} onChange={(event) => set('configuration.auth.redirectUrls', event.target.value.split(/\n/).map((value) => value.trim()).filter(Boolean))} aria-invalid={!!error('configuration.auth.redirectUrls')} /><FieldError>{error('configuration.auth.redirectUrls')}</FieldError>{redirectErrors(form).map(([index, message]) => <FieldError key={index}>Redirect URL {index + 1}: {message}</FieldError>)}</Field>{auth.phone.enabled && <PhoneFields form={form} set={set} error={error} />}{auth.anonymousSignIn && <p className="text-sm text-muted-foreground">Anonymous sign-in is enabled.</p>}<OAuthProviderFields form={form} siteUrl={form.watch('configuration.general.siteUrl')} /></div>
+    <Module title="Authentication" enabled={services.auth} onEnabledChange={(enabled) => setServiceEnabled(form, 'auth', enabled)} headerAction={services.auth && <AuthMethodDialog open={dialogOpen} onOpenChange={setDialogOpen} onSelect={selectMethod} addedOAuth={addedOAuth} />}>
+      <div className="space-y-6"><FieldGroup className="grid gap-4 md:grid-cols-2"><Toggle label="Email Auth" checked={auth.email.enabled} onChange={(value) => set('configuration.auth.email.enabled', value)} /><Toggle label="Allow signup" checked={auth.email.allowSignup} onChange={(value) => { set('configuration.auth.email.allowSignup', value); set('configuration.auth.disableSignup', !value) }} error={error('configuration.auth.disableSignup')} /><Toggle label="Confirm email" checked={auth.email.confirmEmail} onChange={(value) => set('configuration.auth.email.confirmEmail', value)} /><Toggle label="Secure email change" checked={auth.email.secureEmailChange} onChange={(value) => { set('configuration.auth.email.secureEmailChange', value); set('configuration.auth.email.doubleConfirmChanges', value) }} error={error('configuration.auth.email.secureEmailChange')} /><NumberField label="Session JWT expiry (seconds)" name="configuration.auth.jwtExpiry" form={form} /></FieldGroup><Field><FieldLabel htmlFor="redirect-urls">Redirect URLs</FieldLabel><FieldDescription>One absolute http(s) URL per line.</FieldDescription><Textarea id="redirect-urls" value={auth.redirectUrls.join('\n')} onChange={(event) => set('configuration.auth.redirectUrls', event.target.value.split(/\n/).map((value) => value.trim()).filter(Boolean))} aria-invalid={!!error('configuration.auth.redirectUrls')} /><FieldError>{error('configuration.auth.redirectUrls')}</FieldError>{redirectErrors(form).map(([index, message]) => <FieldError key={index}>Redirect URL {index + 1}: {message}</FieldError>)}</Field>{auth.phone.enabled && <PhoneFields form={form} set={set} error={error} />}{auth.anonymousSignIn && <p className="text-sm text-muted-foreground">Anonymous sign-in is enabled.</p>}<OAuthProviderFields form={form} siteUrl={form.watch('configuration.general.siteUrl')} /></div>
     </Module>
     <Module title="Custom SMTP" enabled={auth.smtp.enabled} onEnabledChange={setSmtpEnabled}>
       <FieldGroup className="grid gap-4 md:grid-cols-2"><TextField label="Host" name="configuration.auth.smtp.host" form={form} /><NumberField label="Port" name="configuration.auth.smtp.port" form={form} /><TextField label="Username" name="configuration.auth.smtp.username" form={form} /><SecretField label="Password" path="configuration.auth.smtp.password" set={set} configured={auth.smtp.passwordSet} error={error('configuration.auth.smtp.password')} /><TextField label="Sender email" name="configuration.auth.smtp.senderEmail" form={form} /><TextField label="Sender name" name="configuration.auth.smtp.senderName" form={form} /></FieldGroup>
@@ -66,12 +58,13 @@ export function SecurityIntegrationsStep({ form }: { form: UseFormReturn<Project
     <Module title="Edge Functions" enabled={services.functions} onEnabledChange={(enabled) => setServiceEnabled(form, 'functions', enabled)}>
       <div className="space-y-4"><Field><FieldLabel>Functions directory</FieldLabel><Input readOnly value={functions.directory} /></Field><Toggle label="Verify JWT by default" checked={functions.defaultJwtVerification} onChange={(value) => set('configuration.functions.defaultJwtVerification', value)} /><Field><FieldLabel htmlFor="function-variables">Environment variables</FieldLabel><FieldDescription>Enter NAME=value lines. Existing values remain write-only when left blank.</FieldDescription><Textarea id="function-variables" value={variablesText} onChange={(event) => { const variables = event.target.value.split(/\n/).filter(Boolean).map((line) => { const index = line.indexOf('='); const name = (index < 0 ? line : line.slice(0, index)).trim(); const value = index < 0 ? '' : line.slice(index + 1); const existing = functions.variables.find((variable) => variable.name === name); return { name, valueSet: value ? true : !!existing?.valueSet, value: value ? { action: 'replace' as const, value } : existing?.valueSet ? existing.value : { action: '' as const } } }); set('configuration.functions.variables', variables) }} aria-invalid={!!error('configuration.functions.variables')} /><FieldError>{error('configuration.functions.variables')}</FieldError>{variableErrors.map((item, index) => <FieldError key={index}>{item?.name?.message || item?.value?.message || item?.value?.value?.message}</FieldError>)}</Field></div>
     </Module>
-    <AuthMethodDialog open={dialogOpen} onOpenChange={setDialogOpen} onSelect={selectMethod} addedOAuth={addedOAuth} />
   </div>
 }
 
-function Module({ title, enabled, onEnabledChange, children }: { title: string; enabled: boolean; onEnabledChange: (enabled: boolean) => void; children: React.ReactNode }) {
-  return <Card><Collapsible defaultOpen><div className="flex items-center gap-3 px-4 py-3"><CollapsibleTrigger className="flex-1 text-left font-medium">{title}</CollapsibleTrigger><Switch aria-label={title} checked={enabled} onClick={(event) => event.stopPropagation()} onCheckedChange={onEnabledChange} /></div>{enabled && <CollapsibleContent><CardContent className="border-t pt-4">{children}</CardContent></CollapsibleContent>}</Collapsible></Card>
+function Module({ title, enabled, onEnabledChange, children, headerAction }: { title: string; enabled: boolean; onEnabledChange: (enabled: boolean) => void; children: React.ReactNode; headerAction?: React.ReactNode }) {
+  const [open, setOpen] = useState(enabled)
+  useEffect(() => setOpen(enabled), [enabled])
+  return <Card><Collapsible open={open} onOpenChange={setOpen}><div className="flex items-center gap-3 px-4 py-3"><CollapsibleTrigger className="flex-1 text-left font-medium">{title}</CollapsibleTrigger>{headerAction}<Switch aria-label={title} checked={enabled} onClick={(event) => event.stopPropagation()} onCheckedChange={onEnabledChange} /></div>{enabled && <CollapsibleContent><CardContent className="border-t pt-4">{children}</CardContent></CollapsibleContent>}</Collapsible></Card>
 }
 
 function PhoneFields({ form, set, error }: { form: UseFormReturn<ProjectForm>; set: (name: string, value: unknown) => void; error: (name: string) => string | undefined }) {
