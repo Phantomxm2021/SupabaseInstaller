@@ -190,6 +190,26 @@ it('renders only enabled security integration module bodies', async () => {
   expect(screen.getByLabelText('Storage backend')).toBeVisible()
 })
 
+it('closes the authentication provider picker when Authentication is disabled', async () => {
+  window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Add authentication provider' }))
+  expect(await screen.findByRole('menuitem', { name: 'Google' })).toBeVisible()
+
+  await user.click(screen.getByRole('switch', { name: 'Authentication' }))
+  await user.click(screen.getByRole('switch', { name: 'Authentication' }))
+
+  expect(screen.getByRole('button', { name: 'Add authentication provider' })).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByRole('menuitem', { name: 'Google' })).not.toBeInTheDocument()
+})
+
 it('shows Custom SMTP configuration fields after its switch is enabled', async () => {
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   const user = userEvent.setup()

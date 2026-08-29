@@ -22,6 +22,9 @@ export function SecurityIntegrationsStep({ form }: { form: UseFormReturn<Project
   const set = (name: string, value: unknown) => { form.setValue(name as any, value as any, { shouldDirty: true, shouldValidate: true }); form.setValue('preset', 'CUSTOM', { shouldDirty: true }) }
   const setSmtpEnabled = (enabled: boolean) => set('configuration.auth.smtp', enabled ? { ...form.getValues('configuration.auth.smtp'), enabled: true } : disabledSmtpConfiguration())
   const error = (name: string) => fieldError(form, name)
+  useEffect(() => {
+    if (!services.auth) setDialogOpen(false)
+  }, [services.auth])
   const selectMethod = (method: AuthenticationMethod) => {
     set(`configuration.auth.oauth.${method.provider}`, { enabled: true, clientId: '', secretSet: false, secret: { action: '' }, fields: {} })
     setFocusProvider(method.provider)
