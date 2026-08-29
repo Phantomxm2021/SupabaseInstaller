@@ -37,7 +37,7 @@ export function ProjectsPage() {
       <section className="host-grid mb-0" aria-label="Host resources">
         <Metric icon={<Cpu />} label="CPU" loading={resources.isLoading} value={resources.data ? `${Math.round(resources.data.cpuPercent)}%` : 'Unavailable'} detail={resources.data ? `${resources.data.cpuCores} cores` : 'Live metrics unavailable'} />
         <Metric icon={<MemoryStick />} label="Memory" loading={resources.isLoading} value={resources.data ? `${formatBytes(resources.data.memoryUsedBytes)} / ${formatBytes(resources.data.memoryTotalBytes)}` : 'Unavailable'} detail={resources.data ? `${usagePercent(resources.data.memoryUsedBytes, resources.data.memoryTotalBytes)}% used` : 'Available memory'} />
-        <Metric icon={<HardDrive />} label="Disk" loading={resources.isLoading} value={resources.data ? `${formatBytes(resources.data.diskUsedBytes)} / ${formatBytes(resources.data.diskTotalBytes)}` : 'Unavailable'} detail={resources.data ? `${usagePercent(resources.data.diskUsedBytes, resources.data.diskTotalBytes)}% used` : 'Project data volume'} />
+        <Metric icon={<HardDrive />} label="Disk" loading={resources.isLoading} value={resources.data ? `${formatBytes(resources.data.diskUsedBytes)} / ${formatBytes(resources.data.diskTotalBytes)}` : 'Unavailable'} detail={resources.data ? `${usagePercent(resources.data.diskUsedBytes, resources.data.diskTotalBytes)}% used` : 'Server data volume'} />
       </section>
 
       <Card data-testid="projects-card">
@@ -109,7 +109,7 @@ function RetryProjectButton({ project }: { project: Project }) {
   const [message, setMessage] = useState('')
   const retry = useMutation({
     mutationFn: () => apiFetch<{ projectId: string; operationId: string }>(`/api/projects/${project.id}/retry`, { method: 'POST' }),
-    onMutate: () => setMessage('Retrying project…'),
+    onMutate: () => setMessage('Retrying server…'),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['projects'] })
       setMessage('Retry queued')
