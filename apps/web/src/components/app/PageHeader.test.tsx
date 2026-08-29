@@ -19,7 +19,14 @@ it("renders a semantic page title with its action slot", () => {
     />,
   )
 
-  expect(screen.getByRole("banner")).toBeInTheDocument()
+  const header = screen.getByRole("banner")
+
+  expect(header).toBeInTheDocument()
+  expect(header).toHaveClass(
+    "w-full",
+    "max-[560px]:flex-col",
+    "max-[560px]:items-start",
+  )
   expect(
     screen.getByRole("heading", { level: 1, name: "Create a project" }),
   ).toBeInTheDocument()
