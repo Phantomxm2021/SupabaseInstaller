@@ -10,7 +10,7 @@ import {
   SignInProvidersRoute,
 } from "../authentication/AuthenticationWorkspace";
 
-it("renders the installed project configuration workspace from the redacted snapshot", async () => {
+it("renders the installed server configuration workspace from the redacted snapshot", async () => {
   const configuration = defaultConfiguration("LIGHTWEIGHT");
   configuration.general = {
     domain: "bee.example.com",
@@ -57,14 +57,14 @@ it("renders the installed project configuration workspace from the redacted snap
   ).toBeVisible();
   expect(screen.getByLabelText("Maximum connections")).toBeVisible();
   const settings = screen.getByRole("navigation", {
-    name: "Project settings navigation",
+    name: "Server settings navigation",
   });
   expect(within(settings).getAllByRole("link")).toHaveLength(9);
   expect(
-    within(settings).getByRole("heading", { name: "Project Settings" }),
+    within(settings).getByRole("heading", { name: "Server Settings" }),
   ).toBeVisible();
   expect(
-    within(settings).getByRole("heading", { name: "PROJECT" }),
+    within(settings).getByRole("heading", { name: "SERVER" }),
   ).toBeVisible();
   expect(
     within(settings).getByRole("heading", { name: "INFRASTRUCTURE" }),
@@ -75,6 +75,30 @@ it("renders the installed project configuration workspace from the redacted snap
   expect(
     within(settings).getByRole("link", { name: "API & Secrets" }),
   ).toHaveAttribute("href", "/projects/bee/configuration?section=secrets");
+});
+
+it("shows the General server controls and enables saving after a domain change", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify(redactedSnapshot()), { status: 200 })),
+  );
+
+  renderConfiguration();
+
+  const siteUrl = await screen.findByLabelText("Site URL base domain");
+  expect(screen.getByLabelText("Public server hostname")).toHaveValue(
+    "bee.example.com",
+  );
+  expect(screen.getByLabelText("Server URL")).toHaveValue(
+    "https://bee.example.com",
+  );
+  expect(screen.getByRole("button", { name: "Save General" })).toBeDisabled();
+
+  await user.clear(siteUrl);
+  await user.type(siteUrl, "https://edited.example.com");
+
+  expect(screen.getByRole("button", { name: "Save General" })).toBeEnabled();
 });
 
 function redactedSnapshot(
@@ -164,8 +188,10 @@ it("keeps dirty input when preview is dismissed with Keep editing", async () => 
   expect(screen.getByLabelText("Site URL base domain")).toHaveValue(
     "https://edited.example.com",
   );
-  expect(screen.getByLabelText("Domain")).toHaveValue("bee.example.com");
-  expect(screen.getByLabelText("Domain")).toHaveAttribute(
+  expect(screen.getByLabelText("Public server hostname")).toHaveValue(
+    "bee.example.com",
+  );
+  expect(screen.getByLabelText("Public server hostname")).toHaveAttribute(
     "aria-readonly",
     "true",
   );
@@ -216,7 +242,7 @@ it("preserves dirty fields on 409 and only Reload resets to new server data", as
       "https://server.example.com",
     ),
   );
-  expect(screen.getByLabelText("Domain")).toHaveValue(
+  expect(screen.getByLabelText("Public server hostname")).toHaveValue(
     "bee.server.example.com",
   );
 });

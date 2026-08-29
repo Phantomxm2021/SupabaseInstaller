@@ -11,7 +11,7 @@ type OAuthSave = (provider: string, input: Parameters<SectionSave<OAuthProviderC
 
 export function OAuthSection({ initial, revision, general, onSave }: { initial: Record<string, OAuthProviderConfig>; revision: number; general: GeneralConfig; onSave: OAuthSave }) {
   const callback = general.domain ? `https://${general.domain}/auth/v1/callback` : 'Set Domain to generate callback'
-  return <SectionCard title="OAuth providers" description="Each provider is saved independently. Callback URLs are generated from the project public URL and never contain query parameters."><div className="grid gap-4 md:grid-cols-2">{OAUTH_PROVIDERS.map((provider) => <ProviderForm key={provider} provider={provider} initial={initial[provider] ?? emptyProvider()} revision={revision} callback={callback} onSave={onSave} />)}</div></SectionCard>
+  return <SectionCard title="OAuth providers" description="Each provider is saved independently. Callback URLs are generated from the public server URL and never contain query parameters."><div className="space-y-4">{OAUTH_PROVIDERS.map((provider) => <ProviderForm key={provider} provider={provider} initial={initial[provider] ?? emptyProvider()} revision={revision} callback={callback} onSave={onSave} />)}</div></SectionCard>
 }
 
 function ProviderForm({ provider, initial, revision, callback, onSave }: { provider: string; initial: OAuthProviderConfig; revision: number; callback: string; onSave: OAuthSave }) {

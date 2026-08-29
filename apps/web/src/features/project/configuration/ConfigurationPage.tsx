@@ -74,7 +74,7 @@ const projectSettingsGroups: ReadonlyArray<{
   label: string;
   items: readonly ConfigurationSection[];
 }> = [
-  { label: "Project", items: ["general", "secrets"] },
+  { label: "Server", items: ["general", "secrets"] },
   {
     label: "Infrastructure",
     items: [
@@ -98,11 +98,11 @@ function ProjectSettingsNavigation({
 }) {
   return (
     <nav
-      aria-label="Project settings navigation"
+      aria-label="Server settings navigation"
       className="project-settings-navigation"
     >
       <header className="project-settings-navigation-title">
-        <h1>Project Settings</h1>
+        <h1>Server Settings</h1>
       </header>
       {projectSettingsGroups.map((group) => (
         <section
@@ -266,7 +266,7 @@ export function ConfigurationPage() {
     return (
       <main className="page">
         <Alert variant="destructive">
-          Unable to load project configuration.
+          Unable to load server configuration.
         </Alert>
       </main>
     );
@@ -276,7 +276,7 @@ export function ConfigurationPage() {
         <div className="page-heading">
           <div>
             <p className="eyebrow">Configuration operation</p>
-            <h1>Applying project configuration</h1>
+            <h1>Applying server configuration</h1>
             <p className="muted">
               The runtime is reconciled in the background. This panel remains
               available until completion.
@@ -298,7 +298,7 @@ export function ConfigurationPage() {
         <main className="page configuration-page">
           <div className="page-heading">
             <div>
-              <p className="eyebrow">Installed project</p>
+              <p className="eyebrow">Installed server</p>
               <h1>{SECTION_LABELS[section]}</h1>
               <p className="muted">
                 Typed settings for this Supabase host. Secrets remain encrypted
