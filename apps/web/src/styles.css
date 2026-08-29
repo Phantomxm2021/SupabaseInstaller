@@ -31,6 +31,11 @@
   --green-strong: #24b47e;
   --green-soft: rgba(62, 207, 142, 0.11);
   --danger: #ef6a6a;
+  --brand-primary: #3ecf8e;
+  --brand-primary-foreground: #062518;
+  --surface-foreground: #f0f3f1;
+  --focus-ring: #3ecf8e;
+  --motion-fast: 180ms;
   --warning: #e5b65c;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
@@ -1363,7 +1368,7 @@ a.auth-template-row:hover {
   overflow: visible;
 }
 .wizard-step-frame {
-  animation-duration: 200ms;
+  animation-duration: var(--motion-fast);
   animation-fill-mode: both;
   animation-timing-function: ease-out;
 }
