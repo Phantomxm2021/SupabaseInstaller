@@ -166,7 +166,7 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 			envelope.Error = *rotation.Error
 		}
 		code, message := envelope.Error.Code, envelope.Error.Message
-		allowed := map[string]string{"STALE_CONFIG_REVISION": "Project configuration revision is stale", "INVALID_CONFIG_REVISION": "Project configuration revision is invalid", "RECONCILE_FAILED": "Project runtime reconciliation failed", "ROTATE_DATABASE_PASSWORD_FAILED": "Database password rotation failed", "INVALID_REQUEST": "Provisioner request is invalid", "LIFECYCLE_FAILED": "Project lifecycle operation failed", "INSPECT_FAILED": "Project inspection failed"}
+		allowed := map[string]string{"STALE_CONFIG_REVISION": "Server configuration revision is stale", "INVALID_CONFIG_REVISION": "Server configuration revision is invalid", "RECONCILE_FAILED": "Server runtime reconciliation failed", "ROTATE_DATABASE_PASSWORD_FAILED": "Database password rotation failed", "INVALID_REQUEST": "Provisioner request is invalid", "LIFECYCLE_FAILED": "Server lifecycle operation failed", "INSPECT_FAILED": "Server inspection failed"}
 		local, ok := allowed[code]
 		if !ok {
 			code, local = "PROVISIONER_ERROR", "Provisioner request failed"

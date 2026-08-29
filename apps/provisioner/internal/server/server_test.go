@@ -40,10 +40,19 @@ func authenticatedJSON(t *testing.T, handler http.Handler, path string, payload 
 
 func TestReconcileEndpointReturnsTypedRedactedRollbackOutcome(t *testing.T) {
 	root, _ := projectfs.New(t.TempDir())
-	stub := &reconcileStub{err: &contracts.ReconcileFailure{RollbackSucceeded: true, Response: contracts.ReconcileProjectResponse{OperationID: "op", ProjectID: "project", Revision: 1, RolledBack: true, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Project runtime reconciliation failed"}}}}
+	stub := &reconcileStub{err: &contracts.ReconcileFailure{RollbackSucceeded: true, Response: contracts.ReconcileProjectResponse{OperationID: "op", ProjectID: "project", Revision: 1, RolledBack: true, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Server runtime reconciliation failed"}}}}
 	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: stub})
 	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", contracts.ReconcileProjectRequest{OperationID: "op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee"})
 	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"rolledBack":true`) || strings.Contains(response.Body.String(), "secret") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestReconcileEndpointUsesServerTerminologyForGenericFailures(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: &reconcileStub{err: errors.New("runtime failure")}})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", contracts.ReconcileProjectRequest{OperationID: "op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee"})
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"message":"Server runtime reconciliation failed"`) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }
