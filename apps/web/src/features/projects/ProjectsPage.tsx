@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, Cpu, Database, HardDrive, MemoryStick, Plus, RotateCw, Search } from 'lucide-react'
+import { Cpu, Database, HardDrive, MemoryStick, Plus, RotateCw, Search } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { AsyncState } from '@/components/app/AsyncState'
@@ -28,9 +28,9 @@ export function ProjectsPage() {
       <div className="page-heading mb-0">
         <PageHeader
           eyebrow="Runtime orchestration"
-          title="Projects"
-          description="Independent official Supabase stacks on this server."
-          actions={<Link className={buttonVariants()} to="/projects/new"><Plus data-icon="inline-start" />New project</Link>}
+          title="Servers"
+          description="Independent official Supabase stacks on this host."
+          actions={<Link className={buttonVariants()} to="/projects/new"><Plus data-icon="inline-start" />New server</Link>}
         />
       </div>
 
@@ -42,24 +42,24 @@ export function ProjectsPage() {
 
       <Card data-testid="projects-card">
         <CardHeader className="border-b">
-          <CardTitle>All projects</CardTitle>
-          <CardDescription>{projects.length} configured runtimes</CardDescription>
+          <CardTitle>All servers</CardTitle>
+          <CardDescription>{projects.length} configured servers</CardDescription>
           <CardAction className="w-full sm:w-64">
             <div className="relative">
               <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input aria-label="Search projects" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by project or domain" className="pl-8" />
+              <Input aria-label="Search servers" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by server or domain" className="pl-8" />
             </div>
           </CardAction>
         </CardHeader>
         <CardContent className="p-0">
           {query.isLoading ? <AsyncState variant="loading" className="h-52 p-4" /> : null}
-          {query.error ? <AsyncState variant="error" title="Projects unavailable" description={query.error.message} onRetry={() => { void query.refetch() }} className="m-4" /> : null}
+          {query.error ? <AsyncState variant="error" title="Servers unavailable" description={query.error.message} onRetry={() => { void query.refetch() }} className="m-4" /> : null}
           {!query.isLoading && !query.error && projects.length === 0 ? (
             <AsyncState
               variant="empty"
-              title="No projects yet"
-              description="Create a complete project from the guided configuration wizard."
-              action={<Link className={buttonVariants()} to="/projects/new"><Plus data-icon="inline-start" />Create project</Link>}
+              title="No servers yet"
+              description="Create a complete server from the guided configuration wizard."
+              action={<Link className={buttonVariants()} to="/projects/new"><Plus data-icon="inline-start" />Create server</Link>}
               className="items-center px-6 text-center"
             />
           ) : null}
@@ -75,14 +75,14 @@ function ProjectsTable({ projects }: { projects: Project[] }) {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="pl-5">Project</TableHead>
+          <TableHead className="pl-5">Server</TableHead>
           <TableHead>Health</TableHead>
           <TableHead>Version</TableHead>
           <TableHead className="pr-5 text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {projects.length === 0 ? <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">No projects match your search.</TableCell></TableRow> : null}
+        {projects.length === 0 ? <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">No servers match your search.</TableCell></TableRow> : null}
         {projects.map((project) => (
           <TableRow key={project.id}>
             <TableCell className="pl-5">
@@ -96,7 +96,7 @@ function ProjectsTable({ projects }: { projects: Project[] }) {
             </TableCell>
             <TableCell><div className="flex items-center gap-2"><span className={`size-1.5 rounded-full ${healthDotClass(project.health)}`} aria-hidden="true" /><Badge variant={healthBadgeVariant(project.health)}>{labelHealth(project.health)}</Badge></div></TableCell>
             <TableCell className="font-mono text-xs text-muted-foreground">{project.supabaseVersion}</TableCell>
-            <TableCell className="pr-5"><div className="flex items-center justify-end gap-2"><RetryProjectButton project={project} /><Button variant="ghost" size="icon-sm" aria-label={`Open ${project.name}`} nativeButton={false} render={<Link to={`/projects/${project.id}/overview`} />}><ArrowRight /></Button></div></TableCell>
+            <TableCell className="pr-5"><div className="flex items-center justify-end gap-2"><RetryProjectButton project={project} /><Link className={buttonVariants({ variant: 'secondary', size: 'sm' })} to={`/projects/${project.id}/overview`}>View Details</Link></div></TableCell>
           </TableRow>
         ))}
       </TableBody>

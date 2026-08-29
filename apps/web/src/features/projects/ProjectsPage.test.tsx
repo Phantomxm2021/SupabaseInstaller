@@ -12,7 +12,7 @@ function renderProjectsPage() {
   )
 }
 
-it('shows project health and the new project action', async () => {
+it('shows server health and the new server action', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ projects: [{ id: 'bee', name: 'Bee', domain: 'bee.example.com', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'self-hosted/v0.8.0' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -22,13 +22,14 @@ it('shows project health and the new project action', async () => {
 
   expect(await screen.findByText('Bee')).toBeVisible()
   expect(screen.getByText('Healthy')).toBeVisible()
-  expect(screen.getByRole('link', { name: 'New project' })).toHaveAttribute('href', '/projects/new')
+  expect(screen.getByRole('link', { name: 'New server' })).toHaveAttribute('href', '/projects/new')
+  expect(screen.getByRole('link', { name: 'View Details' })).toHaveAttribute('href', '/projects/bee/overview')
   expect(screen.getByTestId('projects-card')).toHaveAttribute('data-slot', 'card')
   expect(screen.getByRole('table')).toHaveAttribute('data-slot', 'table')
   expect(screen.getByText('Healthy')).toHaveAttribute('data-slot', 'badge')
 })
 
-it('uses the shared page header and filters projects by name or domain', async () => {
+it('uses the shared page header and filters servers by name or domain', async () => {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
     if (String(input).endsWith('/api/host/resources')) return Promise.resolve(new Response(JSON.stringify({ cpuPercent: 0, cpuCores: 4, memoryUsedBytes: 1, memoryTotalBytes: 2, diskUsedBytes: 1, diskTotalBytes: 2 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     return Promise.resolve(new Response(JSON.stringify({ projects: [
@@ -39,9 +40,9 @@ it('uses the shared page header and filters projects by name or domain', async (
   const user = userEvent.setup()
   renderProjectsPage()
 
-  expect(await screen.findByRole('heading', { name: 'Projects' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Servers' })).toBeVisible()
   expect(screen.getByText('Runtime orchestration')).toBeVisible()
-  await user.type(screen.getByRole('textbox', { name: 'Search projects' }), 'atlas.example')
+  await user.type(screen.getByRole('textbox', { name: 'Search servers' }), 'atlas.example')
 
   expect(screen.getByText('Atlas')).toBeVisible()
   expect(screen.queryByText('Bee')).not.toBeInTheDocument()
@@ -58,6 +59,22 @@ it('shows resource skeletons while host resources are loading', async () => {
   expect(screen.getAllByTestId('resource-skeleton')).toHaveLength(3)
 })
 
+it('shows the project-list loading AsyncState until the projects request resolves', async () => {
+  let resolveProjects: (response: Response) => void
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+    if (String(input).endsWith('/api/host/resources')) return Promise.resolve(new Response(JSON.stringify({ cpuPercent: 0, cpuCores: 4, memoryUsedBytes: 1, memoryTotalBytes: 2, diskUsedBytes: 1, diskTotalBytes: 2 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    return new Promise<Response>((resolve) => { resolveProjects = resolve })
+  }))
+  renderProjectsPage()
+
+  const loadingState = screen.getByRole('status')
+  expect(loadingState).toHaveTextContent('Loading')
+  expect(loadingState.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+
+  resolveProjects!(new Response(JSON.stringify({ projects: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+  expect(await screen.findByText('No servers yet')).toBeVisible()
+})
+
 it('retries a failed project-list query from its destructive alert', async () => {
   let projectRequests = 0
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
@@ -69,33 +86,33 @@ it('retries a failed project-list query from its destructive alert', async () =>
   const user = userEvent.setup()
   renderProjectsPage()
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Projects unavailable')
+  expect(await screen.findByRole('alert')).toHaveTextContent('Servers unavailable')
   await user.click(screen.getByRole('button', { name: 'Retry' }))
 
   expect(await screen.findByText('Bee')).toBeVisible()
   expect(projectRequests).toBe(2)
 })
 
-it('offers project creation from the empty state', async () => {
+it('offers server creation from the empty state', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ projects: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
   renderProjectsPage()
 
-  expect(await screen.findByText('No projects yet')).toBeVisible()
-  expect(screen.getByRole('link', { name: 'Create project' })).toHaveAttribute('href', '/projects/new')
+  expect(await screen.findByText('No servers yet')).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Create server' })).toHaveAttribute('href', '/projects/new')
 })
 
-it('announces project query failures as alerts', async () => {
+it('announces server query failures as alerts', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: 'Projects unavailable' } }), { status: 503 })))
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><ProjectsPage /></MemoryRouter></QueryClientProvider>)
-  expect(await screen.findByRole('alert')).toHaveTextContent('Projects unavailable')
+  expect(await screen.findByRole('alert')).toHaveTextContent('Servers unavailable')
 })
 
-it('hides the project table header while the project list is empty', async () => {
+it('hides the server table header while the server list is empty', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ projects: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><ProjectsPage /></MemoryRouter></QueryClientProvider>)
 
-  expect(await screen.findByText('No projects yet')).toBeVisible()
-  expect(screen.queryByRole('columnheader', { name: 'Project' })).not.toBeInTheDocument()
+  expect(await screen.findByText('No servers yet')).toBeVisible()
+  expect(screen.queryByRole('columnheader', { name: 'Server' })).not.toBeInTheDocument()
 })
 
 it('renders host CPU, memory, and disk metrics from the resources endpoint', async () => {
