@@ -33,7 +33,10 @@ export function PageHeader({
         ) : null}
       </div>
       {actions ? (
-        <div data-slot="page-header-actions" className="shrink-0">
+        <div
+          data-slot="page-header-actions"
+          className="flex shrink-0 items-center gap-2"
+        >
           {actions}
         </div>
       ) : null}

@@ -10,7 +10,12 @@ it("renders a semantic page title with its action slot", () => {
       eyebrow="Projects"
       title="Create a project"
       description="Choose the infrastructure for your new project."
-      actions={<Button>Save draft</Button>}
+      actions={
+        <>
+          <Button>Save draft</Button>
+          <Button variant="outline">Cancel</Button>
+        </>
+      }
     />,
   )
 
@@ -22,5 +27,10 @@ it("renders a semantic page title with its action slot", () => {
   expect(
     screen.getByText("Choose the infrastructure for your new project."),
   ).toBeInTheDocument()
-  expect(screen.getByRole("button", { name: "Save draft" })).toBeInTheDocument()
+  const saveDraft = screen.getByRole("button", { name: "Save draft" })
+  const actions = saveDraft.closest('[data-slot="page-header-actions"]')
+
+  expect(saveDraft).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
+  expect(actions).toHaveClass("flex", "shrink-0", "items-center", "gap-2")
 })

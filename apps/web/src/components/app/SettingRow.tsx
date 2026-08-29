@@ -42,12 +42,13 @@ export function SettingRow({
   return (
     <Card className={className}>
       <Collapsible>
-        <CardHeader className="flex items-center gap-3 py-3">
+        <CardHeader className="grid-cols-[minmax(0,1fr)_auto] !grid-rows-1 items-center gap-3 py-3">
           <CollapsibleTrigger className="min-w-0 flex-1 text-left">
             <CardTitle id={labelId}>{label}</CardTitle>
             {description ? <CardDescription>{description}</CardDescription> : null}
           </CollapsibleTrigger>
           <Switch
+            className="justify-self-end"
             aria-labelledby={labelId}
             aria-describedby={error ? errorId : undefined}
             aria-invalid={Boolean(error)}
