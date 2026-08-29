@@ -185,7 +185,7 @@ See per-service updates below for details. Only the most important changes relev
 - ⚠️ Added `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` to Studio service configuration (requires `docker-compose.yml` update) - PR [#46173](https://github.com/supabase/supabase/pull/46173)
 - ⚠️ Added `start_period` to Studio healthcheck for more reliable cold-boot on slower hosts (requires `docker-compose.yml` update) - PR [#45327](https://github.com/supabase/supabase/pull/45327)
 - Fixed incorrect connection strings in the connect sheet for self-hosted environments - PR [#46217](https://github.com/supabase/supabase/pull/46217)
-- Updated project home and functions page, and added a minimal project settings implementation - PR [#46544](https://github.com/supabase/supabase/pull/46544), PR [#46550](https://github.com/supabase/supabase/pull/46550), PR [#46554](https://github.com/supabase/supabase/pull/46554)
+- Updated server home and functions page, and added a minimal server settings implementation - PR [#46544](https://github.com/supabase/supabase/pull/46544), PR [#46550](https://github.com/supabase/supabase/pull/46550), PR [#46554](https://github.com/supabase/supabase/pull/46554)
 
 ### Auth
 - Updated to `v2.189.0` - [Changelog](https://github.com/supabase/auth/blob/master/CHANGELOG.md) | [Release](https://github.com/supabase/auth/releases/tag/v2.189.0)

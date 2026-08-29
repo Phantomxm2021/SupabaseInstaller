@@ -21,7 +21,7 @@ trap 'rm -f $cleanup_files' EXIT
 BASE_URL="${1:-http://localhost:8000}"
 
 if [ ! -f .env ]; then
-    echo "Error: .env file not found. Run from the project directory."
+    echo "Error: .env file not found. Run from the server directory."
     exit 1
 fi
 

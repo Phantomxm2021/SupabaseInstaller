@@ -27,7 +27,7 @@ trap 'rm -f $cleanup_files' EXIT
 BACKEND_URL="${1:-http://localhost:${S3_BACKEND_TEST_PORT:-9100}}"
 
 if [ ! -f .env ]; then
-    echo "Error: .env file not found. Run from the project directory."
+    echo "Error: .env file not found. Run from the server directory."
     exit 1
 fi
 

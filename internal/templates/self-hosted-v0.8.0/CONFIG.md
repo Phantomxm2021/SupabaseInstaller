@@ -949,7 +949,7 @@ The fields below are repeated for each provider. Substitute `<PROVIDER>` with on
 | `HOST` | string |  | Host the public server binds to. Legacy alias for `SERVER_HOST`. | Default: `0.0.0.0` |
 | `NODE_ENV` | enum |  | Node.js runtime mode. When `production`, sets `isProduction` and forces HTTPS in TUS link generation. | Default: unset |
 | `PORT` | integer |  | Port the public HTTP server listens on. Legacy alias for `SERVER_PORT`. | Default: `5000` |
-| `PROJECT_REF` | string |  | Single-tenant project reference; used as `tenantId` when set. | Optional (single-tenant) |
+| `PROJECT_REF` | string |  | Single-tenant server reference; used as `tenantId` when set. | Optional (single-tenant) |
 | `REGION` | string | Self-hosted | Region label exposed in responses and used as fallback for `STORAGE_S3_REGION` / `SERVER_REGION`. | Default: `not-specified` |
 | `REQUEST_ADMIN_TRACE_HEADER` | string |  | Header carrying the admin request trace id. Legacy fallback for `REQUEST_TRACE_HEADER`. | Optional |
 | `REQUEST_ALLOW_X_FORWARDED_PATH` | boolean | Self-hosted | Honor the `X-Forwarded-Path` header when computing public URLs. | Default: `false` |

@@ -41,7 +41,7 @@ print_help() {
 Usage: setup.sh [options]
 
 Options:
-  -p, --project-dir <name>  Name of the project directory (default: supabase-project)
+  -p, --project-dir <name>  Name of the server directory (default: supabase-project)
       --skip-deps           Skip installation of system packages
       --with-aws            Install the AWS CLI v2
       --ref <tag|branch>    Clone docker/ from this git ref instead of the

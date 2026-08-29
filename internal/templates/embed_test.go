@@ -29,14 +29,31 @@ func TestEmbeddedDocumentationAndScriptsUseServerTerminology(t *testing.T) {
 			"hosted (multi-server) mode",
 			"self-hosted single-server mode",
 			"External/public URL of the Supabase server.",
+			"Single-tenant server reference; used as `tenantId` when set.",
+		},
+		"self-hosted-v0.8.0/CHANGELOG.md": {
+			"Updated server home and functions page, and added a minimal server settings implementation",
 		},
 		"self-hosted-v0.8.0/run.sh": {
 			"is not a service in this server",
 		},
 		"self-hosted-v0.8.0/setup.sh": {
+			"Name of the server directory (default: supabase-project)",
 			"Already in a Supabase server directory; skipping bootstrap.",
 			"Creating server at $target",
 			"Setup complete. Server ready at: $(pwd)",
+		},
+		"self-hosted-v0.8.0/tests/test-self-hosted.sh": {
+			"Run from the server directory.",
+		},
+		"self-hosted-v0.8.0/tests/test-auth-keys.sh": {
+			"Run from the server directory.",
+		},
+		"self-hosted-v0.8.0/tests/test-s3.sh": {
+			"Run from the server directory.",
+		},
+		"self-hosted-v0.8.0/tests/test-s3-backend.sh": {
+			"Run from the server directory.",
 		},
 	}
 	for path, expected := range cases {
