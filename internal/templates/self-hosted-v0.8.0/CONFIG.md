@@ -84,7 +84,7 @@ The image tags below are pinned in `docker-compose.yml` at the time of this docu
 | Variable | Type | Set by | Description | Notes |
 |---|---|---|---|---|
 | `DEFAULT_ORGANIZATION_NAME` | string | Self-hosted | Name shown for the single default organization on the dashboard. | Mapped from `STUDIO_DEFAULT_ORGANIZATION` in `.env.example`. Default: `Default Organization`. |
-| `DEFAULT_PROJECT_NAME` | string | Self-hosted | Name shown for the single default project on the dashboard. | Mapped from `STUDIO_DEFAULT_PROJECT` in `.env.example`. Default: `Default Project`. |
+| `DEFAULT_PROJECT_NAME` | string | Self-hosted | Name shown for the single default server on the dashboard. | Mapped from `STUDIO_DEFAULT_PROJECT` in `.env.example`. Default: `Default Server`. |
 | `HOSTNAME` | string | Both | Network interface Next.js binds to inside the container. | Set to `0.0.0.0` so the container is reachable from outside. |
 | `POSTGRES_DB` | string | Self-hosted | Postgres database name used for Studio's internal connections. | Default: `postgres`. |
 | `POSTGRES_HOST` | string | Self-hosted | Postgres host (service name in compose network). | Default: `db`. |
