@@ -8,7 +8,12 @@ it("renders loading, error retry, and empty action variants", async () => {
   const onRetry = vi.fn()
 
   const { rerender } = render(<AsyncState variant="loading" />)
-  expect(screen.getByLabelText("Loading")).toHaveAttribute("data-slot", "skeleton")
+  const loadingStatus = screen.getByRole("status")
+  const skeleton = loadingStatus.querySelector('[data-slot="skeleton"]')
+
+  expect(loadingStatus).toHaveAttribute("aria-live", "polite")
+  expect(loadingStatus).toHaveTextContent("Loading")
+  expect(skeleton).toHaveAttribute("aria-hidden", "true")
 
   rerender(
     <AsyncState

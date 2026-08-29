@@ -3,9 +3,7 @@ import { useId, type ReactNode } from "react"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card"
 import {
   Collapsible,
@@ -44,8 +42,21 @@ export function SettingRow({
       <Collapsible>
         <CardHeader className="grid-cols-[minmax(0,1fr)_auto] !grid-rows-1 items-center gap-3 py-3">
           <CollapsibleTrigger className="min-w-0 flex-1 text-left">
-            <CardTitle id={labelId}>{label}</CardTitle>
-            {description ? <CardDescription>{description}</CardDescription> : null}
+            <span
+              id={labelId}
+              data-slot="setting-row-label"
+              className="font-heading text-base leading-snug font-medium"
+            >
+              {label}
+            </span>
+            {description ? (
+              <span
+                data-slot="setting-row-description"
+                className="block text-sm text-muted-foreground"
+              >
+                {description}
+              </span>
+            ) : null}
           </CollapsibleTrigger>
           <Switch
             className="justify-self-end"

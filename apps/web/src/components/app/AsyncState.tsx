@@ -34,7 +34,16 @@ export type AsyncStateProps =
 
 export function AsyncState(props: AsyncStateProps) {
   if (props.variant === "loading") {
-    return <Skeleton aria-label="Loading" className={cn("h-24 w-full", props.className)} />
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className={cn("h-24 w-full", props.className)}
+      >
+        <Skeleton aria-hidden="true" className="h-full w-full" />
+        <span className="sr-only">Loading</span>
+      </div>
+    )
   }
 
   if (props.variant === "error") {

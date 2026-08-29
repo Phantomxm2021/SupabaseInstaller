@@ -36,6 +36,8 @@ it("keeps its usable collapsible trigger open when the named switch changes", as
     "items-center",
   )
   expect(trigger.nextElementSibling).toBe(toggle)
+  expect(trigger.querySelector('[data-slot="setting-row-label"]')).toHaveProperty("tagName", "SPAN")
+  expect(trigger.querySelector('[data-slot="setting-row-description"]')).toHaveProperty("tagName", "SPAN")
 
   await user.click(trigger)
   expect(screen.getByText("Realtime configuration")).toBeVisible()
