@@ -52,7 +52,7 @@ export function BasicStep({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Project details</CardTitle>
+        <CardTitle>Server details</CardTitle>
         <CardDescription>Configure the identity, public address, Studio credentials, and runtime version.</CardDescription>
       </CardHeader>
       <CardContent>
@@ -62,7 +62,7 @@ export function BasicStep({
             name="name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel htmlFor="project-name">Project name</FormLabel>
+                <FormLabel htmlFor="project-name">Server name</FormLabel>
                 <Input id="project-name" autoFocus placeholder="Production API" {...field} aria-describedby={nameError ? 'name-form-item-message' : undefined} aria-invalid={!!nameError || availability.name.status === 'conflict'} />
                 <FormMessage />
                 <AvailabilityFeedback availability={availability.name} retry={onRetryAvailability} />
@@ -75,7 +75,7 @@ export function BasicStep({
             name="slug"
             render={({ field }) => (
               <FormItem>
-                <FormLabel htmlFor="project-slug">Project slug</FormLabel>
+                <FormLabel htmlFor="project-slug">Server slug</FormLabel>
                 <Input id="project-slug" placeholder="production-api" {...field} aria-describedby={slugError ? 'slug-form-item-message' : undefined} aria-invalid={!!slugError || availability.slug.status === 'conflict'} />
                 <FormMessage />
                 <AvailabilityFeedback availability={availability.slug} retry={onRetryAvailability} />

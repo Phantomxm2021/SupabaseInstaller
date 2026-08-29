@@ -18,8 +18,8 @@ beforeEach(() => {
 
 async function waitForIdentityAvailability() {
   await waitFor(() => {
-    expect(screen.getByText('Project name is available')).toBeVisible()
-    expect(screen.getByText('Project slug is available')).toBeVisible()
+    expect(screen.getByText('Server name is available')).toBeVisible()
+    expect(screen.getByText('Server slug is available')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
   })
 }
@@ -32,7 +32,7 @@ it('does not render the setup tab navigation while creating a project', () => {
   )
 
   expect(screen.queryByRole('tab', { name: /1\. Basic/ })).not.toBeInTheDocument()
-  expect(screen.getByText('Step 1 of 4 · Project details')).toBeVisible()
+  expect(screen.getByText('Step 1 of 4 · Server details')).toBeVisible()
   expect(screen.getByRole('button', { name: /Continue/ })).toBeVisible()
 })
 
@@ -52,24 +52,24 @@ it('moves through four steps with directional motion and focuses the next headin
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
 
   expect(screen.getByText('Step 2 of 4 · Services')).toBeVisible()
   expect(screen.getByTestId('wizard-step-frame')).toHaveAttribute('data-direction', 'forward')
-  expect(screen.getByRole('heading', { level: 1, name: 'Create a project' })).toHaveFocus()
+  expect(screen.getByRole('heading', { level: 1, name: 'Create a server' })).toHaveFocus()
   await user.click(screen.getByRole('button', { name: 'Back' }))
   expect(screen.getByTestId('wizard-step-frame')).toHaveAttribute('data-direction', 'backward')
-  expect(screen.getByText('Step 1 of 4 · Project details')).toBeVisible()
+  expect(screen.getByText('Step 1 of 4 · Server details')).toBeVisible()
 })
 
 it('groups services under a persistent preset navigation', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -86,7 +86,7 @@ it('applies Standard services and keeps Custom selected after a service edit', a
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -103,7 +103,7 @@ it('explains service dependency closure in the grouped configuration', async () 
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -120,7 +120,7 @@ it('keeps an invalid integrations step visible and focuses its first invalid con
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -142,7 +142,7 @@ it('adds and removes OAuth providers through the authentication method dialog', 
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -165,7 +165,7 @@ it('renders only enabled security integration module bodies', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -188,14 +188,14 @@ it('shows the identity fields in the Basic step', () => {
     </QueryClientProvider>,
   )
 
-  expect(screen.getByLabelText('Project name')).toBeVisible()
-  expect(screen.getByLabelText('Project slug')).toBeVisible()
+  expect(screen.getByLabelText('Server name')).toBeVisible()
+  expect(screen.getByLabelText('Server slug')).toBeVisible()
   expect(screen.getByLabelText('Site URL hostname')).toBeVisible()
   expect(screen.getByLabelText('Studio username')).toBeVisible()
   expect(screen.getByLabelText('Studio password')).toBeVisible()
   expect(screen.getByRole('button', { name: 'Runtime settings' })).toBeVisible()
   expect(screen.queryByLabelText('Pinned Supabase version')).not.toBeInTheDocument()
-  expect(screen.queryByLabelText('Project URL')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Server URL')).not.toBeInTheDocument()
 })
 
 it('uses the InputGroup control slot for the Site URL focus state', () => {
@@ -212,7 +212,7 @@ it('shows available project identity feedback before enabling Continue', async (
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
 
   await waitForIdentityAvailability()
@@ -224,8 +224,8 @@ it('associates identity validation errors with their inputs', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  const name = screen.getByLabelText('Project name')
-  const slug = screen.getByLabelText('Project slug')
+  const name = screen.getByLabelText('Server name')
+  const slug = screen.getByLabelText('Server slug')
   await user.type(name, 'x'.repeat(81))
   await user.clear(slug)
   await user.type(slug, 'Invalid slug')
@@ -245,13 +245,13 @@ it('blocks a duplicate project identity before progression', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
 
-  expect(await screen.findByText('A project named “Production API” already exists')).toBeVisible()
+  expect(await screen.findByText('A server named “Production API” already exists')).toBeVisible()
   expect(screen.getByText('The slug “production-api” is already in use')).toBeVisible()
-  expect(screen.getByLabelText('Project name')).toHaveAttribute('aria-invalid', 'true')
-  expect(screen.getByLabelText('Project slug')).toHaveAttribute('aria-invalid', 'true')
+  expect(screen.getByLabelText('Server name')).toHaveAttribute('aria-invalid', 'true')
+  expect(screen.getByLabelText('Server slug')).toHaveAttribute('aria-invalid', 'true')
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
 })
 
@@ -259,16 +259,16 @@ it('shows a retryable availability check failure instead of a duplicate', async 
   let attempts = 0
   vi.stubGlobal('fetch', vi.fn(async () => {
     attempts += 1
-    if (attempts === 1) return new Response(JSON.stringify({ error: { message: 'Projects unavailable' } }), { status: 503, headers: { 'Content-Type': 'application/json' } })
+    if (attempts === 1) return new Response(JSON.stringify({ error: { message: 'Servers unavailable' } }), { status: 503, headers: { 'Content-Type': 'application/json' } })
     return projectListResponse()
   }))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
 
-  expect(await screen.findByText('Could not check project name availability. Try again.')).toBeVisible()
+  expect(await screen.findByText('Could not check server name availability. Try again.')).toBeVisible()
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
   await user.click(screen.getAllByRole('button', { name: 'Retry' })[0])
   await waitForIdentityAvailability()
@@ -288,13 +288,13 @@ it('installs Lightweight after name and base site URL', async () => {
     </QueryClientProvider>,
   )
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
-  expect(screen.getByLabelText('Project slug')).toHaveValue('production-api')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
+  expect(screen.getByLabelText('Server slug')).toHaveValue('production-api')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   expect(screen.getByText('Lightweight')).toBeVisible()
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   expect(createBody.preset).toBe('LIGHTWEIGHT')
   expect(screen.getByRole('heading', { level: 1, name: 'Installing Production API' })).toBeVisible()
@@ -309,11 +309,11 @@ it('disables the installation action and announces progress while creation is pe
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   const action = await screen.findByRole('button', { name: /Creating operation/ })
   expect(action).toBeDisabled()
@@ -335,12 +335,12 @@ it('prefixes the Basic-step Site URL with HTTPS before submitting', async () => 
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   expect(screen.getByText('https://')).toBeVisible()
   await user.type(screen.getByLabelText('Site URL hostname'), 'app.example.com')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   await waitFor(() => expect(body?.configuration.general.siteUrl).toBe('https://app.example.com'))
 })
@@ -355,7 +355,7 @@ it('collects Studio username and password during project creation', async () => 
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
 
   expect(screen.getByLabelText('Studio username')).toBeVisible()
@@ -365,7 +365,7 @@ it('collects Studio username and password during project creation', async () => 
   await user.type(screen.getByLabelText('Studio password'), 'strong-password')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
   await waitFor(() => expect(body?.configuration.general).toMatchObject({ studioUsername: 'admin', studioPassword: { action: 'replace', value: 'strong-password' } }))
 })
 
@@ -384,7 +384,7 @@ it('keeps infrastructure settings collapsed until their section is opened', asyn
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -403,14 +403,14 @@ it('keeps a Realtime validation error on review and focuses its field', async ()
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('button', { name: 'Database and Realtime settings' }))
   const realtimeMaxConnections = screen.getAllByRole('spinbutton', { name: 'Max connections' })[1]
   await user.clear(realtimeMaxConnections)
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   expect(screen.getByText('Step 4 of 4 · Review & install')).toBeVisible()
   expect(realtimeMaxConnections).toHaveAttribute('aria-invalid', 'true')
@@ -421,7 +421,7 @@ it('reopens the Realtime section before focusing an invalid field during install
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -430,7 +430,7 @@ it('reopens the Realtime section before focusing an invalid field during install
   await user.clear(screen.getAllByRole('spinbutton', { name: 'Max connections' })[1])
   await user.click(section)
   expect(section).toHaveAttribute('aria-expanded', 'false')
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   expect(section).toHaveAttribute('aria-expanded', 'true')
   const realtimeMaxConnections = screen.getAllByRole('spinbutton', { name: 'Max connections' })[1]
@@ -442,7 +442,7 @@ it('opens and focuses infrastructure settings from the review summary edit actio
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -459,7 +459,7 @@ it('redacts dynamic OAuth secrets in the final review summary', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -481,21 +481,21 @@ it('returns to project details and refreshes availability after a create conflic
   const fetchSpy = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (!init?.method || init.method === 'GET') return projectListResponse()
     createAttempted = true
-    return new Response(JSON.stringify({ error: { code: 'PROJECT_EXISTS', message: 'This project already exists' } }), { status: 409, headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ error: { code: 'PROJECT_EXISTS', message: 'This server already exists' } }), { status: 409, headers: { 'Content-Type': 'application/json' } })
   })
   vi.stubGlobal('fetch', fetchSpy)
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   await waitFor(() => expect(createAttempted).toBe(true))
-  expect(await screen.findByText('This project already exists')).toBeVisible()
-  expect(screen.getByText('Step 1 of 4 · Project details')).toBeVisible()
+  expect(await screen.findByText('This server already exists')).toBeVisible()
+  expect(screen.getByText('Step 1 of 4 · Server details')).toBeVisible()
   await waitFor(() => expect(fetchSpy.mock.calls.filter(([, init]) => !init?.method || init.method === 'GET').length).toBeGreaterThan(1))
 })
 
@@ -509,7 +509,7 @@ it('submits the normalized Standard service aggregate with a dynamically added O
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -521,7 +521,7 @@ it('submits the normalized Standard service aggregate with a dynamically added O
   await user.type(screen.getByLabelText('Client ID'), 'google-client')
   await user.type(screen.getByLabelText('Client secret'), 'google-secret')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   await waitFor(() => expect(body).toBeDefined())
   expect(body).toMatchObject({ preset: 'CUSTOM', configuration: { services: { storage: true, functions: true, supavisor: true }, auth: { oauth: { google: { enabled: true, clientId: 'google-client', secret: { action: 'replace', value: 'google-secret' } } } } } })
@@ -533,11 +533,11 @@ it('posts the complete aggregate after navigating every wizard step', async () =
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { if (!init?.method || init.method === 'GET') return projectListResponse(); body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ projectId: 'project-2', operationId: 'operation-2' }), { status: 202, headers: { 'Content-Type': 'application/json' } }) }))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
   await waitFor(() => expect(body?.configuration).toBeDefined())
   expect(body?.supabaseVersion).toBeUndefined()
   expect(body?.configuration.auth.email.secureEmailChange).toBe(false)
@@ -558,7 +558,7 @@ it('uses Standard aggregate controls and closes Direct DB through Custom without
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => { if (!init?.method || init.method === 'GET') return projectListResponse(); body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ projectId: 'project-3', operationId: 'operation-3' }), { status: 202, headers: { 'Content-Type': 'application/json' } }) }))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -570,7 +570,7 @@ it('uses Standard aggregate controls and closes Direct DB through Custom without
   await user.click(screen.getByRole('button', { name: 'Database and Realtime settings' }))
   await user.click(screen.getByRole('switch', { name: 'Direct PostgreSQL port' }))
   expect(screen.getByRole('switch', { name: 'Direct PostgreSQL port' })).toBeChecked()
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
   await waitFor(() => expect(body?.configuration).toBeDefined())
   expect(body?.preset).toBe('CUSTOM')
   expect(body?.configuration.services.functions).toBe(true)
@@ -584,7 +584,7 @@ it('restores the full dependency closure when a feature is enabled again', async
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -602,7 +602,7 @@ it('enabling Storage or Image Transformation atomically restores database, REST,
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -621,7 +621,7 @@ it('renders nested OAuth secret value errors at the secret control', async () =>
   window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -645,7 +645,7 @@ it('submits dynamically added OAuth credentials through the existing aggregate c
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -656,7 +656,7 @@ it('submits dynamically added OAuth credentials through the existing aggregate c
   await user.type(screen.getByLabelText('Client ID'), 'google-client')
   await user.type(screen.getByLabelText('Client secret'), 'google-secret')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   await waitFor(() => expect(body?.configuration.auth.oauth.google).toMatchObject({ enabled: true, clientId: 'google-client', secret: { action: 'replace', value: 'google-secret' } }))
 })
@@ -671,7 +671,7 @@ it('clears incomplete dynamically added OAuth configuration when Authentication 
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -682,7 +682,7 @@ it('clears incomplete dynamically added OAuth configuration when Authentication 
   await user.click(screen.getByRole('switch', { name: 'Authentication' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   expect(screen.getByText('Step 4 of 4 · Review & install')).toBeVisible()
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   await waitFor(() => expect(body?.configuration.auth.oauth).toEqual({}))
 })
@@ -697,7 +697,7 @@ it('clears Custom SMTP credentials from the DTO when Authentication is disabled'
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -712,7 +712,7 @@ it('clears Custom SMTP credentials from the DTO when Authentication is disabled'
   await user.type(screen.getByLabelText('Sender name'), 'Example')
   await user.click(screen.getByRole('switch', { name: 'Authentication' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   await waitFor(() => expect(body?.configuration.auth.smtp).toEqual({ enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' }))
 })
@@ -728,7 +728,7 @@ it('clears Custom SMTP credentials when its module is disabled while Authenticat
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
 
-  await user.type(screen.getByLabelText('Project name'), 'Production API')
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
   await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
   await waitForIdentityAvailability()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -744,7 +744,7 @@ it('clears Custom SMTP credentials when its module is disabled while Authenticat
   await user.click(screen.getByRole('switch', { name: 'Custom SMTP' }))
   expect(screen.getByRole('switch', { name: 'Authentication' })).toBeChecked()
   await user.click(screen.getByRole('button', { name: 'Continue' }))
-  await user.click(screen.getByRole('button', { name: 'Install project' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   await waitFor(() => expect(body?.configuration.auth.smtp).toEqual({ enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' }))
 })

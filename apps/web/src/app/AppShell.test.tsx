@@ -24,7 +24,7 @@ it('keeps the projects landing page free of a duplicate sidebar action', async (
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects']}><AppShell /></MemoryRouter></QueryClientProvider>)
 
   expect(screen.queryByRole('navigation', { name: /main navigation/i })).not.toBeInTheDocument()
-  expect(screen.queryByRole('link', { name: /new project/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: /new server/i })).not.toBeInTheDocument()
 })
 
 it('does not render a sidebar on the projects landing page', () => {
@@ -46,8 +46,8 @@ it('keeps the primary project sidebar visible in Project Settings', () => {
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/configuration']}><AppShell /></MemoryRouter></QueryClientProvider>)
 
   expect(document.querySelector('[data-slot="sidebar"]')).toBeInTheDocument()
-  expect(screen.getByRole('navigation', { name: /project navigation/i })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: 'Project Settings' })).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByRole('navigation', { name: /server navigation/i })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Server Settings' })).toHaveAttribute('aria-current', 'page')
 })
 
 it('provides a focusable sidebar trigger for narrow screens', () => {
@@ -65,7 +65,7 @@ it('opens the mobile Sheet and exposes the named navigation landmark', async () 
   expect(screen.queryByRole('navigation', { name: /main navigation/i })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: /open sidebar/i }))
   expect(await screen.findByRole('navigation', { name: /main navigation/i })).toBeVisible()
-  expect(screen.getByRole('link', { name: /projects/i })).toBeVisible()
+  expect(screen.getByRole('link', { name: /servers/i })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
 })
 
@@ -85,16 +85,16 @@ it('renders project navigation in the single global Sidebar on project routes', 
   expect(document.querySelectorAll('[data-slot="sidebar"]')).toHaveLength(1)
   expect(sidebar).toHaveAttribute('data-state', 'collapsed')
   expect(document.querySelectorAll('[data-slot="sidebar-gap"]')).toHaveLength(1)
-  const projectNavigation = screen.getByRole('navigation', { name: /project navigation/i })
+  const projectNavigation = screen.getByRole('navigation', { name: /server navigation/i })
   const expectedLinks = [
-    ['Project Overview', '/projects/bee/overview'],
+    ['Server Overview', '/projects/bee/overview'],
     ['Authentication', '/projects/bee/authentication'],
-    ['Project Settings', '/projects/bee/configuration'],
+    ['Server Settings', '/projects/bee/configuration'],
   ] as const
   expect(within(projectNavigation).getAllByRole('link')).toHaveLength(expectedLinks.length)
   for (const [name, href] of expectedLinks) expect(within(projectNavigation).getByRole('link', { name })).toHaveAttribute('href', href)
-  expect(within(projectNavigation).getByRole('link', { name: 'Project Overview' })).toHaveClass('primary-sidebar-menu-button')
-  expect(within(projectNavigation).getByRole('link', { name: 'Project Overview' })).toHaveAttribute('aria-current', 'page')
+  expect(within(projectNavigation).getByRole('link', { name: 'Server Overview' })).toHaveClass('primary-sidebar-menu-button')
+  expect(within(projectNavigation).getByRole('link', { name: 'Server Overview' })).toHaveAttribute('aria-current', 'page')
   expect(new Set(Array.from(within(projectNavigation).getAllByRole('link')).map((link) => link.getAttribute('href'))).size).toBe(expectedLinks.length)
 })
 
@@ -103,10 +103,10 @@ it('uses the same global Sidebar Sheet for project navigation on mobile', async 
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/projects/bee/overview']}><AppShell /></MemoryRouter></QueryClientProvider>)
-  expect(screen.queryByRole('navigation', { name: /project navigation/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole('navigation', { name: /server navigation/i })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Open sidebar' }))
-  expect(await screen.findByRole('navigation', { name: /project navigation/i })).toBeVisible()
-  expect(screen.getByRole('link', { name: 'Project Settings' })).toBeVisible()
+  expect(await screen.findByRole('navigation', { name: /server navigation/i })).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Server Settings' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Close' })).toBeVisible()
   expect(document.querySelector('[data-slot="sidebar-trigger"]')).toHaveAttribute('aria-label', 'Close sidebar')
   expect(document.querySelector('[data-slot="sidebar"][data-mobile="true"][data-open]')).toBeVisible()
@@ -139,7 +139,7 @@ it('renders a page-wide dashboard header above the project navigation shell', ()
   const header = screen.getByRole('banner', { name: 'Dashboard header' })
   expect(header).toHaveClass('topbar')
   expect(header).toHaveTextContent('bee')
-  expect(screen.getByRole('button', { name: 'Show projects' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Show servers' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Show branches' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Show organizations' })).not.toBeInTheDocument()
 })
@@ -147,15 +147,15 @@ it('renders a page-wide dashboard header above the project navigation shell', ()
 it('switches projects from the header menu and routes creation through the existing wizard', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ projects: [
     { id: 'bee', name: 'BeeGame', slug: 'bee', domain: 'bee.local', siteUrl: '', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'v2', preset: 'DEFAULT', configurationRevision: 1, services: {}, createdAt: '', updatedAt: '' },
-    { id: 'other', name: 'Other project', slug: 'other', domain: 'other.local', siteUrl: '', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'v2', preset: 'DEFAULT', configurationRevision: 1, services: {}, createdAt: '', updatedAt: '' },
+    { id: 'other', name: 'Other server', slug: 'other', domain: 'other.local', siteUrl: '', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'v2', preset: 'DEFAULT', configurationRevision: 1, services: {}, createdAt: '', updatedAt: '' },
   ] }), { status: 200 })))
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/overview']}><AppShell /></MemoryRouter></QueryClientProvider>)
 
-  await user.click(screen.getByRole('button', { name: 'Show projects' }))
-  expect(await screen.findByPlaceholderText('Find project...')).toBeVisible()
-  expect(await screen.findByRole('menuitem', { name: 'Other project' })).toHaveAttribute('href', '/projects/other/overview')
-  expect(screen.getByRole('menuitem', { name: 'New project' })).toHaveAttribute('href', '/projects/new')
+  await user.click(screen.getByRole('button', { name: 'Show servers' }))
+  expect(await screen.findByPlaceholderText('Find servers...')).toBeVisible()
+  expect(await screen.findByRole('menuitem', { name: 'Other server' })).toHaveAttribute('href', '/projects/other/overview')
+  expect(screen.getByRole('menuitem', { name: 'New server' })).toHaveAttribute('href', '/projects/new')
 })
 
 it('opens the header branch menu with the current local main branch selected', async () => {
@@ -167,7 +167,7 @@ it('opens the header branch menu with the current local main branch selected', a
 })
 
 it.each([
-  ['/projects/bee/overview', 'Project Overview'],
+  ['/projects/bee/overview', 'Server Overview'],
   ['/projects/bee/authentication/emails', 'Authentication'],
 ] as const)('marks only the canonical active link for %s', (path, activeLabel) => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
@@ -183,7 +183,7 @@ it.each(['/projects', '/projects/new', '/settings'])('does not render project na
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><AppShell /></MemoryRouter></QueryClientProvider>)
-  expect(screen.queryByRole('navigation', { name: /project navigation/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole('navigation', { name: /server navigation/i })).not.toBeInTheDocument()
 })
 
 it.each([
@@ -192,7 +192,7 @@ it.each([
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><AppShell /></MemoryRouter></QueryClientProvider>)
-  const projectNavigation = screen.getByRole('navigation', { name: /project navigation/i })
+  const projectNavigation = screen.getByRole('navigation', { name: /server navigation/i })
   expect(within(projectNavigation).getByRole('link', { name: activeLabel })).toHaveAttribute('aria-current', 'page')
   expect(within(projectNavigation).getAllByRole('link').filter((link) => link.getAttribute('aria-current') === 'page')).toHaveLength(1)
 })

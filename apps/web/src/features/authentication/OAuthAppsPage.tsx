@@ -39,7 +39,7 @@ export function OAuthAppsPage() {
 
   return <main className="page auth-page auth-oauth-apps-page">
     <header className="auth-oauth-heading"><h1>OAuth Apps</h1><a className="auth-docs-link" href="https://supabase.com/docs/guides/auth/oauth-server" target="_blank" rel="noreferrer"><BookOpen />Docs</a></header>
-    {disabled && <section className="auth-oauth-disabled"><Info aria-hidden="true" /><div><strong>OAuth Server is disabled</strong><p>Enable OAuth Server to make your project act as an identity provider for third-party applications.</p></div><Button variant="outline" type="button" disabled>OAuth Server Settings</Button></section>}
+    {disabled && <section className="auth-oauth-disabled"><Info aria-hidden="true" /><div><strong>OAuth Server is disabled</strong><p>Enable OAuth Server to make your server act as an identity provider for third-party applications.</p></div><Button variant="outline" type="button" disabled>OAuth Server Settings</Button></section>}
     <div className="auth-oauth-toolbar">
       <div className="auth-oauth-search"><Search aria-hidden="true" /><Input aria-label="Search OAuth apps" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search OAuth apps" /></div>
       <button type="button" className="auth-oauth-filter">Registration Type <ChevronDown /></button>

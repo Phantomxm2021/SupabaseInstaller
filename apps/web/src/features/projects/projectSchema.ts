@@ -835,7 +835,7 @@ export const projectSlugSchema = z
   );
 export const projectSchema = z
   .object({
-    name: z.string().trim().min(1, "Project name is required").max(80),
+    name: z.string().trim().min(1, "Server name is required").max(80),
     slug: projectSlugSchema,
     preset: z.enum(PRESETS),
     configuration: projectConfigurationSchema,

@@ -132,7 +132,7 @@ export function AuthenticationWorkspace() {
     return (
       <main className="page">
         <Alert variant="destructive">
-          Unable to load project configuration.
+          Unable to load server configuration.
         </Alert>
       </main>
     );

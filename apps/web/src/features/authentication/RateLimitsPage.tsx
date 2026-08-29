@@ -11,8 +11,8 @@ import { useAuthenticationWorkspace, type AuthenticationWorkspaceContext } from 
 const defaults: RateLimitConfig = { emailSent: 30, smsSent: 30, tokenRefresh: 150, tokenVerification: 30, anonymousUsers: 30, signupsAndSignins: 30 }
 
 const rows: Array<{ field: keyof RateLimitConfig; title: string; description: string; unit: string; note?: string }> = [
-  { field: 'emailSent', title: 'Rate limit for sending emails', description: 'Number of emails that can be sent per hour from your project', unit: 'emails/h' },
-  { field: 'smsSent', title: 'Rate limit for sending SMS messages', description: 'Number of SMS messages that can be sent per hour from your project', unit: 'sms/h' },
+  { field: 'emailSent', title: 'Rate limit for sending emails', description: 'Number of emails that can be sent per hour from your server', unit: 'emails/h' },
+  { field: 'smsSent', title: 'Rate limit for sending SMS messages', description: 'Number of SMS messages that can be sent per hour from your server', unit: 'sms/h' },
   { field: 'tokenRefresh', title: 'Rate limit for token refreshes', description: 'Number of sessions that can be refreshed in a 5 minute interval per IP address', unit: 'requests/5 min', note: '12× this value per hour' },
   { field: 'tokenVerification', title: 'Rate limit for token verifications', description: 'Number of OTP and magic link verifications that can be made in a 5 minute interval per IP address', unit: 'requests/5 min', note: '12× this value per hour' },
   { field: 'anonymousUsers', title: 'Rate limit for anonymous users', description: 'Number of anonymous sign-ins that can be made per hour per IP address', unit: 'requests/h' },

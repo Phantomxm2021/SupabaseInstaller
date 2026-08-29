@@ -30,7 +30,7 @@ describe('useProjectIdentityAvailability', () => {
 
     expect(result.current.name).toMatchObject({
       status: 'conflict',
-      message: 'A project named “Production API” already exists',
+      message: 'A server named “Production API” already exists',
     })
     expect(result.current.slug).toMatchObject({
       status: 'conflict',

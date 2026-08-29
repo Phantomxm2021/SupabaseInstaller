@@ -33,7 +33,7 @@ function unavailable(valid: boolean, field: 'name' | 'slug'): Availability {
   if (!valid) return idle
   return {
     status: 'unavailable',
-    message: `Could not check project ${field} availability. Try again.`,
+    message: `Could not check server ${field} availability. Try again.`,
   }
 }
 
@@ -114,13 +114,13 @@ export function useProjectIdentityAvailability(
         name: !nameValid
           ? idle
           : existingProjects.some(([projectName]) => projectName === normalizedName)
-            ? { status: 'conflict', message: `A project named “${trimmedName}” already exists` }
-            : { status: 'available', message: 'Project name is available' },
+            ? { status: 'conflict', message: `A server named “${trimmedName}” already exists` }
+            : { status: 'available', message: 'Server name is available' },
         slug: !slugValid
           ? idle
           : existingProjects.some(([, projectSlug]) => projectSlug === normalizedSlug)
             ? { status: 'conflict', message: `The slug “${normalizedSlug}” is already in use` }
-            : { status: 'available', message: 'Project slug is available' },
+            : { status: 'available', message: 'Server slug is available' },
       }
       setAvailability((current) => sameAvailability(current, next) ? current : next)
     }, debounceMs)

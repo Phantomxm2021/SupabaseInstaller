@@ -31,7 +31,7 @@ it('deletes a failed installation with its data and returns to projects without 
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/new']}><Routes><Route path="*" element={<><Location /><OperationPanel operationId="op-delete" projectId="bee" projectName="Bee" /></>} /></Routes></MemoryRouter></QueryClientProvider>)
 
   await screen.findByText('Auth unhealthy')
-  await user.click(screen.getByRole('button', { name: 'Delete project' }))
+  await user.click(screen.getByRole('button', { name: 'Delete server' }))
   await waitFor(() => expect(requests).toContainEqual({ path: '/api/projects/bee', method: 'DELETE', body: JSON.stringify({ mode: 'data', confirmation: 'Bee' }) }))
   await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/projects'))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
