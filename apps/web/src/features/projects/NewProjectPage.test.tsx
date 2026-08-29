@@ -48,6 +48,14 @@ it('uses the primary foreground for the selected preset description', () => {
   expect(styles).toMatch(/\.service-preset-option\[aria-current="true"\] \.service-preset-description \{\s+color: var\(--primary-foreground\);/)
 })
 
+it('stacks preset labels above descriptions and stretches the desktop preset separator', () => {
+  const styles = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
+
+  expect(styles).toMatch(/\.service-preset-option \{\s+width: 100%;\s+height: auto;\s+display: flex;\s+flex-direction: column;/)
+  expect(styles).toMatch(/\.service-preset-nav \{\s+display: flex;\s+flex-direction: column;[\s\S]*?align-self: stretch;/)
+  expect(styles).toMatch(/@media \(max-width: 700px\) \{\s+\.service-configuration-layout \{[\s\S]*?\}\s+\.service-preset-nav \{\s+padding: 0 0 12px;\s+border-right: 0;\s+border-bottom: 1px solid var\(--border\);/)
+})
+
 it('moves through four steps with directional motion and focuses the next heading', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
