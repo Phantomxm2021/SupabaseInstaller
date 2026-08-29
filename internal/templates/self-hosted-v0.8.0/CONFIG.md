@@ -101,8 +101,8 @@ The image tags below are pinned in `docker-compose.yml` at the time of this docu
 | Variable | Type | Set by | Description | Notes |
 |---|---|---|---|---|
 | `AUTH_JWT_SECRET` | string | Both | HS256 JWT secret used to mint/verify legacy API keys; surfaced to the UI for "JWT settings" and PostgREST config. | Mapped from `JWT_SECRET` in `.env.example`. Must be at least 32 characters. |
-| `SUPABASE_ANON_KEY` | string | Both | Anon API key surfaced in the Project API Settings page and used by in-dashboard clients. | Mapped from `ANON_KEY`. Supports `_FILE` suffix for Docker secrets. |
-| `SUPABASE_SERVICE_KEY` | string | Both | Service-role API key surfaced in the Project API Settings page. | Mapped from `SERVICE_ROLE_KEY`. Supports `_FILE` suffix for Docker secrets. Keep secret. |
+| `SUPABASE_ANON_KEY` | string | Both | Anon API key surfaced in the Server API Settings page and used by in-dashboard clients. | Mapped from `ANON_KEY`. Supports `_FILE` suffix for Docker secrets. |
+| `SUPABASE_SERVICE_KEY` | string | Both | Service-role API key surfaced in the Server API Settings page. | Mapped from `SERVICE_ROLE_KEY`. Supports `_FILE` suffix for Docker secrets. Keep secret. |
 
 ### PG Meta
 
@@ -156,8 +156,8 @@ Self-hosted Studio reads `ENABLED_FEATURES_*` env vars at container start time t
 
 | Variable | Type | Set by | Description | Notes |
 |---|---|---|---|---|
-| `CURRENT_CLI_VERSION` | string | CLI | Version string set when Studio is started by the Supabase CLI. | Renames the default project to "Supabase Studio (CLI)" when set. Exposed to client via Next.js passthrough. |
-| `NEXT_PUBLIC_IS_PLATFORM` | boolean | | Master switch: `"true"` runs Studio in hosted (multi-project) mode, anything else runs in self-hosted single-project mode. | Self-hosted images are **built** with this unset/`false`. Exposed to client. Setting this to `true` in a self-hosted deployment will break the dashboard. |
+| `CURRENT_CLI_VERSION` | string | CLI | Version string set when Studio is started by the Supabase CLI. | Renames the default server to "Supabase Studio (CLI)" when set. Exposed to client via Next.js passthrough. |
+| `NEXT_PUBLIC_IS_PLATFORM` | boolean | | Master switch: `"true"` runs Studio in hosted (multi-server) mode, anything else runs in self-hosted single-server mode. | Self-hosted images are **built** with this unset/`false`. Exposed to client. Setting this to `true` in a self-hosted deployment will break the dashboard. |
 | `NEXT_PUBLIC_NODE_ENV` | string | | Marks the build as a test build (used by E2E setup). | Set to `test` only by `generateLocalEnv.js`. Exposed to client. |
 | `NODE_ENV` | enum | Both | Standard Node.js environment (`development` / `production` / `test`). | Set automatically by Next.js. |
 
@@ -1224,7 +1224,7 @@ The fields below are repeated for each provider. Substitute `<PROVIDER>` with on
 | `SUPABASE_INTERNAL_PUBLISHABLE_KEY` | string | CLI | Opaque API key (publishable) used internally by the CLI's bundled main service. | Set by CLI |
 | `SUPABASE_INTERNAL_SECRET_KEY` | string | CLI | Opaque API key (secret) used internally by the CLI's bundled main service. | Set by CLI |
 | `SUPABASE_JWKS` | JWKS | CLI | JSON Web Key Set (asymmetric + legacy symmetric) used by the bundled main service to verify user JWTs. | Self-hosted can derive this from `SUPABASE_URL`'s `/auth/v1/.well-known/jwks.json`. |
-| `SUPABASE_PUBLIC_URL` | URL | Self-hosted | External/public URL of the Supabase project. Injected for user functions. | Injected for user functions |
+| `SUPABASE_PUBLIC_URL` | URL | Self-hosted | External/public URL of the Supabase server. Injected for user functions. | Injected for user functions |
 | `SUPABASE_PUBLISHABLE_KEYS` | JSON | Self-hosted | JSON map of opaque publishable API keys (new asymmetric-key format). | Injected for user functions |
 | `SUPABASE_SECRET_KEYS` | JSON | Self-hosted | JSON map of opaque secret API keys (new asymmetric-key format). Never expose to client code. | Injected for user functions |
 | `SUPABASE_SERVICE_ROLE_KEY` | JWT | Both | `service_role` API key (full database access). Injected for user functions for privileged calls. | Injected for user functions |

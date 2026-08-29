@@ -116,7 +116,7 @@ services_except() {
     filtered="$all_services"
     for ex in "$@"; do
         echo "$all_services" | grep -qFx "$ex" \
-            || echo "Warning: '$ex' is not a service in this project" >&2
+            || echo "Warning: '$ex' is not a service in this server" >&2
         filtered=$(echo "$filtered" | grep -vFx "$ex" || true)
     done
     if [ -z "$filtered" ]; then
