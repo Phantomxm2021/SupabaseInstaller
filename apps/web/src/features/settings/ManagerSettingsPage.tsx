@@ -23,7 +23,7 @@ export function ManagerSettingsPage() {
 
   const account = session.data
   return (
-    <main className="page narrow-page">
+    <main className="page narrow-page" data-density="dashboard">
       <div className="page-heading">
         <div><p className="eyebrow">Control plane</p><h1>Manager settings</h1><p className="muted">Administrator account and safe system information.</p></div>
       </div>

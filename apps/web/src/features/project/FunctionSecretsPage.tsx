@@ -97,7 +97,7 @@ export function FunctionSecretsPage() {
   if (configuration.isLoading) return <main className="page">Loading function secrets…</main>
   if (configuration.error || !configuration.data || !config) return <main className="page"><Alert variant="destructive">Unable to load function secrets.</Alert></main>
 
-  return <main className="page functions-secrets-page">
+  return <main className="page functions-secrets-page" data-density="dashboard">
     <PageHeader className="functions-secrets-heading" title="Edge Function Secrets" description="Manage encrypted values for your functions" />
     {operation ? <OperationPanel operationId={operation.operationId} projectId={projectId} projectName={projectId} onSucceeded={() => void completed()} /> : <>
       {conflict && <Alert variant="destructive" className="mb-4"><div className="flex items-center justify-between gap-3"><span>This configuration is stale. Your dirty fields are preserved.</span><Button size="sm" variant="outline" onClick={() => { setConflict(false); void configuration.refetch() }}>Reload</Button></div></Alert>}

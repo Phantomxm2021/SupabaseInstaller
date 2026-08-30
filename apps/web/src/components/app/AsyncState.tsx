@@ -38,6 +38,7 @@ export function AsyncState(props: AsyncStateProps) {
       <div
         role="status"
         aria-live="polite"
+        data-density="dashboard"
         className={cn("h-24 w-full", props.className)}
       >
         <Skeleton aria-hidden="true" className="h-full w-full" />
@@ -48,7 +49,7 @@ export function AsyncState(props: AsyncStateProps) {
 
   if (props.variant === "error") {
     return (
-      <Alert variant="destructive" className={props.className}>
+      <Alert variant="destructive" data-density="dashboard" className={props.className}>
         <AlertTitle>{props.title ?? "Something went wrong"}</AlertTitle>
         {props.description ? <AlertDescription>{props.description}</AlertDescription> : null}
         {props.onRetry ? (
@@ -61,8 +62,8 @@ export function AsyncState(props: AsyncStateProps) {
   }
 
   return (
-    <section className={cn("flex flex-col items-start gap-2 py-8", props.className)}>
-      <h2 className="font-heading text-base font-medium text-foreground">{props.title}</h2>
+    <section data-density="dashboard" className={cn("flex flex-col items-start gap-2 py-8", props.className)}>
+      <h2 data-density="dashboard" className="font-heading text-base font-medium text-foreground">{props.title}</h2>
       {props.description ? (
         <p className="text-sm text-muted-foreground">{props.description}</p>
       ) : null}
