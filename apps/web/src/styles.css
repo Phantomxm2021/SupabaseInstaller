@@ -274,13 +274,13 @@ h2 {
   display: grid;
   grid-template-columns: 256px minmax(0, 1fr);
   min-height: calc(100vh - 48px);
-  background: #101211;
+  background: var(--background);
 }
 .authentication-navigation,
 .functions-navigation {
   min-height: 0;
-  border-right: 1px solid #292d2b;
-  background: #151716;
+  border-right: 1px solid var(--border);
+  background: var(--sidebar);
   position: fixed;
   left: var(--sidebar-width-icon, 48px);
   top: 48px;
@@ -1593,12 +1593,12 @@ a.auth-template-row:hover {
   gap: 0;
   padding-top: 0;
   padding-bottom: 0;
-  border: 1px solid #2b302d;
-  background: #171a18;
+  border-color: var(--border);
+  background: var(--card);
 }
 .functions-card-header {
   gap: 6px;
-  padding: 24px 28px 16px;
+  padding: 20px 24px 16px;
 }
 .functions-card-header [data-slot="card-title"] {
   font-family: "Manrope Variable", Manrope, sans-serif;
@@ -1686,15 +1686,15 @@ a.auth-template-row:hover {
   min-width: 760px;
 }
 .functions-list-content [data-slot="table-head"] {
-  height: 42px;
+  height: 38px;
   color: #8f9792;
   font-size: 11px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 .functions-list-content [data-slot="table-cell"] {
-  height: 58px;
-  padding: 12px 16px;
+  height: 46px;
+  padding: 8px 16px;
   vertical-align: middle;
 }
 .functions-empty-state {

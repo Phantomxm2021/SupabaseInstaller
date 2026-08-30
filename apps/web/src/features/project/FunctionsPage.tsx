@@ -90,7 +90,7 @@ export function FunctionsPage() {
   const enabled = functions.data?.enabled ?? false
   const operationInProgress = Boolean(activeOperationId && !terminalOperation(operation.data?.status))
   const deploymentStatusVisible = upload.isPending || (activeOperationId !== null && operationSurface === 'dialog')
-  return <main className="page functions-page" data-testid="functions-page">
+  return <main className="page functions-page" data-testid="functions-page" data-density="dashboard">
     <PageHeader eyebrow="Edge Functions" title="Functions" description="Deploy a function ZIP and keep one previous release ready for rollback." actions={<Button onClick={() => openDeploymentDialog()} disabled={!enabled || operationInProgress}><Upload />Deploy</Button>} />
     {!enabled && <Alert>Enable the Functions service in Server Settings before deploying code.</Alert>}
     {activeOperationId && operationSurface === 'page' && <FunctionOperationStatus operationId={activeOperationId} operation={operation.data} isLoading={operation.isLoading} />}
