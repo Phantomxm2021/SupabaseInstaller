@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { defaultConfiguration } from '../projects/projectSchema'
 import { FunctionSecretsPage } from './FunctionSecretsPage'
 
-it('updates a function secret without rendering its replacement value', async () => {
+it('presents the Supabase-style secrets workspace and saves an added replacement', async () => {
   const user = userEvent.setup()
   const configuration = defaultConfiguration('LIGHTWEIGHT')
   configuration.functions.variables = [{ name: 'STRIPE_KEY', valueSet: true, value: { action: '' } }]
@@ -19,13 +19,18 @@ it('updates a function secret without rendering its replacement value', async ()
   vi.stubGlobal('fetch', fetchMock)
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions/secrets']}><Routes><Route path="/projects/:projectId/functions/secrets" element={<FunctionSecretsPage />} /></Routes></MemoryRouter></QueryClientProvider>)
 
-  expect(await screen.findByRole('heading', { name: 'Functions' })).toBeVisible()
-  expect(screen.getByDisplayValue('STRIPE_KEY')).toBeVisible()
-  expect(screen.getByText('Configured')).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Edge Function Secrets' })).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'Add or replace secrets' })).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'Custom secrets' })).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'Default secrets' })).toBeVisible()
+  expect(screen.getByRole('columnheader', { name: /Digest SHA256/ })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'STRIPE_KEY' })).toBeVisible()
+
+  await user.type(screen.getByPlaceholderText('e.g. CLIENT_KEY'), 'STRIPE_KEY')
   const secret = screen.getByLabelText('Value for STRIPE_KEY')
   expect(secret).not.toHaveValue('stored-secret')
   await user.type(secret, 'replacement-secret')
-  await user.click(screen.getByRole('button', { name: 'Save Functions' }))
+  await user.click(screen.getByRole('button', { name: 'Save' }))
   await user.click(await screen.findByRole('button', { name: 'Confirm and apply' }))
 
   await waitFor(() => expect(fetchMock.mock.calls.some(([path, init]) => String(path) === '/api/projects/bee/configuration/functions' && (init as RequestInit).method === 'PATCH')).toBe(true))
