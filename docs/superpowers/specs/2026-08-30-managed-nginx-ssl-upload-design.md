@@ -14,8 +14,8 @@ Server from the Manager web UI. The default certificate name is
 - Allow a safe custom certificate name; default to `cloudflare-origin`.
 - Validate PEM parsing and confirm that the certificate public key matches the
   private key before changing host state.
-- Store files under `/etc/nginx/ssl/<name>-<server-slug>.pem` and
-  `/etc/nginx/ssl/<name>-<server-slug>.key`; create `/etc/nginx/ssl`
+- Store files under `/etc/nginx/ssl/<name>-<domain-label>.pem` and
+  `/etc/nginx/ssl/<name>-<domain-label>.key`; create `/etc/nginx/ssl`
   automatically when it does not exist.
 - Render the newly created Server's Nginx site with those paths, validate
   Nginx, reload Nginx, and roll back both files and site activation on failure.
@@ -38,7 +38,7 @@ The agent is the sole writer for `/etc/nginx/ssl`. It creates that directory
 when necessary, then validates the
 requested name against a restricted identifier pattern, parses the PEM inputs,
 verifies their key pair, writes both files with root-owned restrictive modes,
-derives the physical filename as `<certificateName>-<serverSlug>`, and runs
+derives the physical filename as `<certificateName>-<domainLabel>`, and runs
 `nginx -t` followed by reload. The agent returns only safe metadata: selected
 name and absolute paths.
 
@@ -54,7 +54,8 @@ The Create Server workflow gains an **Nginx TLS certificate** section:
 - Certificate PEM upload input.
 - Private key PEM upload input.
 - Generated filename preview, for example `cloudflare-origin-tet.pem`, without
-  exposing private-key contents.
+  exposing private-key contents. The suffix is the normalized first DNS label
+  from the Server domain; it excludes the URL scheme, port, and parent domain.
 - Upload requirement: both files must be selected before creating the Server.
 
 The UI shows precise failures for invalid names, missing files, malformed PEM,
@@ -80,15 +81,15 @@ Existing installations retain the current installer paths:
 - `/etc/nginx/ssl/cloudflare-origin.key`
 
 New Servers upload their own pair. The default certificate name yields files
-such as `/etc/nginx/ssl/cloudflare-origin-tet.pem`; the Server slug prevents
-one Server from overwriting another's certificate pair.
+such as `/etc/nginx/ssl/cloudflare-origin-tet.pem`; the first domain label
+identifies the Server's certificate pair.
 
 ## Verification
 
 - Unit-test TLS name validation, PEM parsing, key-pair matching,
-  slug-derived path mapping, atomic writes, and rollback.
+  first-domain-label path mapping, atomic writes, and rollback.
 - API-test multipart validation and redaction of private-key material.
-- UI-test default name, slug-derived filename preview, required upload fields,
+- UI-test default name, first-domain-label filename preview, required upload fields,
   and errors.
 - Agent integration-test Nginx route rendering with each Server's custom pair.
-- Regression-test the `cloudflare-origin-<slug>` default behavior.
+- Regression-test the `cloudflare-origin-<domain-label>` default behavior.
