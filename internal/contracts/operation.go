@@ -8,15 +8,18 @@ import (
 type OperationType string
 
 const (
-	OperationCreate        OperationType = "CREATE"
-	OperationStart         OperationType = "START"
-	OperationStop          OperationType = "STOP"
-	OperationRestart       OperationType = "RESTART"
-	OperationUpdateConfig  OperationType = "UPDATE_CONFIG"
-	OperationUpdateVersion OperationType = "UPDATE_VERSION"
-	OperationDelete        OperationType = "DELETE"
-	OperationBackup        OperationType = "BACKUP"
-	OperationRestore       OperationType = "RESTORE"
+	OperationCreate           OperationType = "CREATE"
+	OperationStart            OperationType = "START"
+	OperationStop             OperationType = "STOP"
+	OperationRestart          OperationType = "RESTART"
+	OperationUpdateConfig     OperationType = "UPDATE_CONFIG"
+	OperationUpdateVersion    OperationType = "UPDATE_VERSION"
+	OperationDelete           OperationType = "DELETE"
+	OperationBackup           OperationType = "BACKUP"
+	OperationRestore          OperationType = "RESTORE"
+	OperationDeployFunction   OperationType = "DEPLOY_FUNCTION"
+	OperationRollbackFunction OperationType = "ROLLBACK_FUNCTION"
+	OperationDeleteFunction   OperationType = "DELETE_FUNCTION"
 )
 
 type OperationStatus string
