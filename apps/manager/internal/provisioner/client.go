@@ -96,6 +96,38 @@ func (c *Client) Reconcile(ctx context.Context, input contracts.ReconcileProject
 	return output, nil
 }
 
+// DeployFunction streams a previously admitted archive to the Provisioner's
+// single typed Functions endpoint. The caller supplies no filesystem path or
+// Docker command.
+func (c *Client) DeployFunction(ctx context.Context, slug, name, operationID string, archive io.Reader) (contracts.FunctionDeploymentResult, error) {
+	if err := contracts.ValidateFunctionName(name); err != nil {
+		return contracts.FunctionDeploymentResult{}, err
+	}
+	if slug == "" || operationID == "" || archive == nil {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("function deployment identity and archive are required")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/v1/projects/"+slug+"/functions/"+name+"/deploy", archive)
+	if err != nil {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("create function deployment request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Content-Type", "application/zip")
+	request.Header.Set("X-Operation-ID", operationID)
+	response, err := c.http.Do(request)
+	if err != nil {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("deploy function: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("deploy function: provisioner returned %s", response.Status)
+	}
+	var result contracts.FunctionDeploymentResult
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("decode function deployment response: %w", err)
+	}
+	return result, nil
+}
+
 func (c *Client) StageManagedTLS(ctx context.Context, input contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error) {
 	var output contracts.StageManagedTLSResponse
 	if err := c.post(ctx, "/internal/v1/nginx/certificates/stage", input, &output); err != nil {
