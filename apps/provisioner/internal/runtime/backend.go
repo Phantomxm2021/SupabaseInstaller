@@ -39,6 +39,7 @@ type Backend struct {
 	inspector                   HealthInspector
 	proxy                       proxy.Client
 	acceptanceInspectorFailOnce atomic.Bool
+	functions                   *FunctionService
 }
 
 const (
@@ -51,7 +52,25 @@ func NewBackend(projectFS *projectfs.Root, runner LifecycleRunner, inspector Hea
 	if len(proxyClients) > 0 && proxyClients[0] != nil {
 		proxyClient = proxyClients[0]
 	}
-	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector, proxy: proxyClient}
+	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector, proxy: proxyClient, functions: NewFunctionService(projectFS, runner)}
+}
+
+// DeployFunction is the only runtime entry point used by the Provisioner HTTP
+// boundary. It derives Compose paths from the validated project slug and never
+// accepts a caller-controlled Docker command or directory.
+func (backend *Backend) DeployFunction(ctx context.Context, request contracts.DeployFunctionRequest) (contracts.FunctionDeploymentResult, error) {
+	if request.Slug == "" {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("server slug is required")
+	}
+	if request.Archive == nil {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("function archive is required")
+	}
+	runtime, err := backend.projectFS.CurrentRuntimeFiles(request.Slug)
+	if err != nil {
+		return contracts.FunctionDeploymentResult{}, err
+	}
+	project := compose.ProjectRef{Slug: request.Slug, Dir: runtime.ProjectDir, ComposeFile: runtime.ComposeFile, EnvFile: runtime.EnvFile}
+	return backend.functions.Deploy(ctx, project, request, request.Archive)
 }
 
 // EnableAcceptanceInspectorFailure is only wired by the disposable acceptance
