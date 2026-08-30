@@ -33,6 +33,15 @@ func (s *functionDeployStub) DeployFunction(_ context.Context, request contracts
 	s.archive = string(data)
 	return contracts.FunctionDeploymentResult{}, nil
 }
+func (s *functionDeployStub) ListFunctions(context.Context, contracts.FunctionOperationRequest) ([]contracts.FunctionSummary, error) {
+	return []contracts.FunctionSummary{{Name: "demo"}}, nil
+}
+func (s *functionDeployStub) RollbackFunction(context.Context, contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
+	return contracts.FunctionDeploymentResult{}, nil
+}
+func (s *functionDeployStub) DeleteFunction(context.Context, contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
+	return contracts.FunctionDeploymentResult{}, nil
+}
 
 func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
@@ -94,6 +103,33 @@ func TestFunctionDeployEndpointForwardsArchiveWithoutReturningIt(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || backend.archive != "zip-body" || strings.Contains(response.Body.String(), "zip-body") {
 		t.Fatalf("status/body/archive = %d/%s/%q", response.Code, response.Body.String(), backend.archive)
+	}
+}
+
+func TestFunctionManagementEndpointsRequireTypedConfirmationAndReturnMetadata(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	backend := &functionDeployStub{}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/projects/bee/functions", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"demo"`) {
+		t.Fatalf("list status/body = %d/%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodDelete, "/internal/v1/projects/bee/functions/demo", nil)
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	request.Header.Set("X-Operation-ID", "op-1")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("delete without confirmation status = %d", response.Code)
+	}
+	request.Header.Set("X-Confirm-Function", "demo")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("delete status/body = %d/%s", response.Code, response.Body.String())
 	}
 }
 

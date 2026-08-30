@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -53,6 +54,10 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("SECURE_COOKIES must be true or false")
 	}
 
+	spoolDir := envOr("FUNCTION_UPLOAD_SPOOL_DIR", "/var/lib/supabase-manager/function-uploads")
+	if !filepath.IsAbs(spoolDir) {
+		return Config{}, errors.New("FUNCTION_UPLOAD_SPOOL_DIR must be an absolute path")
+	}
 	return Config{
 		ListenAddr:             envOr("MANAGER_LISTEN_ADDR", "0.0.0.0:8080"),
 		DatabasePath:           envOr("MANAGER_DATABASE_PATH", "/var/lib/supabase-manager/manager.db"),
@@ -64,7 +69,7 @@ func Load() (Config, error) {
 		SecureCookies:          secureCookies,
 		PortRangeStart:         portStart,
 		PortRangeEnd:           portEnd,
-		FunctionUploadSpoolDir: envOr("FUNCTION_UPLOAD_SPOOL_DIR", "/var/lib/supabase-manager/function-uploads"),
+		FunctionUploadSpoolDir: spoolDir,
 	}, nil
 }
 

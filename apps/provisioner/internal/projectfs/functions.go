@@ -159,10 +159,6 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		if item.UncompressedSize64 > maxFunctionFileBytes {
 			return fail(fmt.Errorf("function archive file exceeds 20 MiB"))
 		}
-		extracted += int64(item.UncompressedSize64)
-		if extracted > maxFunctionExtractedBytes {
-			return fail(fmt.Errorf("function archive exceeds 100 MiB when extracted"))
-		}
 		if clean == "index.ts" {
 			hasIndex = true
 		}
@@ -174,9 +170,13 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		if err != nil {
 			return fail(fmt.Errorf("open function archive entry: %w", err))
 		}
+		var copied int64
 		destination, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
-			_, err = io.Copy(destination, io.LimitReader(source, maxFunctionFileBytes+1))
+			copied, err = io.Copy(destination, io.LimitReader(source, maxFunctionFileBytes+1))
+			if err == nil && copied > maxFunctionFileBytes {
+				err = fmt.Errorf("function archive file exceeds 20 MiB")
+			}
 			closeErr := destination.Close()
 			if err == nil {
 				err = closeErr
@@ -185,6 +185,10 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		_ = source.Close()
 		if err != nil {
 			return fail(fmt.Errorf("extract function archive entry: %w", err))
+		}
+		extracted += copied
+		if extracted > maxFunctionExtractedBytes {
+			return fail(fmt.Errorf("function archive exceeds 100 MiB when extracted"))
 		}
 	}
 	if !hasIndex {
@@ -225,7 +229,7 @@ func (r *Root) ActivateFunctionRelease(slug, name string, stage FunctionReleaseS
 		return FunctionActivation{}, fmt.Errorf("publish function release: %w", err)
 	}
 	current := filepath.Join(functionsRoot, name)
-	if info, err := os.Lstat(current); err == nil && info.Mode()&os.ModeSymlink == 0 {
+	if info, err := os.Lstat(current); err == nil && (info.Mode()&os.ModeSymlink == 0 || !isManagedFunctionPointer(current, releases)) {
 		_ = os.RemoveAll(release)
 		return FunctionActivation{}, fmt.Errorf("function is not managed by Manager")
 	} else if err != nil && !os.IsNotExist(err) {
@@ -245,7 +249,83 @@ func (r *Root) ActivateFunctionRelease(slug, name string, stage FunctionReleaseS
 	if err := writeManagedFunctionState(releases, managedFunctionState{Current: currentRelease, Previous: state.Current}); err != nil {
 		return FunctionActivation{}, err
 	}
+	// Keep only the two releases exposed by the API. Cleanup is best-effort so
+	// a stale artifact can never make a successful activation fail.
+	_ = pruneFunctionReleases(releases, currentRelease.SHA256, func() string {
+		if state.Current == nil {
+			return ""
+		}
+		return state.Current.SHA256
+	}())
 	return FunctionActivation{Current: currentRelease, Previous: state.Current}, nil
+}
+
+// DeleteFunction removes only Manager-owned releases and their current
+// pointer. An unmanaged directory named like a function is never touched.
+func (r *Root) DeleteFunction(slug, name string) (FunctionActivation, error) {
+	if err := contracts.ValidateFunctionName(name); err != nil {
+		return FunctionActivation{}, err
+	}
+	project, err := r.ProjectPath(slug)
+	if err != nil {
+		return FunctionActivation{}, err
+	}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	functionsRoot := filepath.Join(project, "volumes", "functions")
+	managerDir := filepath.Join(functionsRoot, ".manager", name)
+	releases := filepath.Join(managerDir, "releases")
+	state, err := readManagedFunctionState(releases)
+	if err != nil {
+		return FunctionActivation{}, err
+	}
+	if state.Current == nil {
+		return FunctionActivation{}, fmt.Errorf("function is not managed")
+	}
+	current := filepath.Join(functionsRoot, name)
+	if info, err := os.Lstat(current); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 || !isManagedFunctionPointer(current, managerDir) {
+			return FunctionActivation{}, fmt.Errorf("function is not managed by Manager")
+		}
+		_ = os.Remove(current)
+	} else if !os.IsNotExist(err) {
+		return FunctionActivation{}, err
+	}
+	if err := os.RemoveAll(managerDir); err != nil {
+		return FunctionActivation{}, fmt.Errorf("delete function releases: %w", err)
+	}
+	_ = syncDirectory(filepath.Join(functionsRoot, ".manager"))
+	return FunctionActivation{Current: state.Current, Previous: state.Previous}, nil
+}
+
+func pruneFunctionReleases(releases, current, previous string) error {
+	entries, err := os.ReadDir(releases)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == current || entry.Name() == previous {
+			continue
+		}
+		if len(entry.Name()) != 64 {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(releases, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return syncDirectory(releases)
+}
+
+func isManagedFunctionPointer(pointer, releases string) bool {
+	target, err := os.Readlink(pointer)
+	if err != nil || filepath.IsAbs(target) {
+		return false
+	}
+	resolved := filepath.Clean(filepath.Join(filepath.Dir(pointer), target))
+	releaseRoot := filepath.Clean(releases)
+	rel, err := filepath.Rel(releaseRoot, resolved)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // RollbackFunctionRelease makes the immediately preceding successful release

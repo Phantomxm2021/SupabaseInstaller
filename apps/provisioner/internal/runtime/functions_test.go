@@ -73,6 +73,9 @@ func (f *functionReleaseFake) RollbackFunctionRelease(string, string, string) (p
 	f.rolledBack = true
 	return projectfs.FunctionActivation{}, nil
 }
+func (f *functionReleaseFake) DeleteFunction(string, string) (projectfs.FunctionActivation, error) {
+	return projectfs.FunctionActivation{}, nil
+}
 
 type functionRunnerFake struct {
 	services  []string

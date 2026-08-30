@@ -89,6 +89,7 @@ it('renders project navigation in the single global Sidebar on project routes', 
   const expectedLinks = [
     ['Server Overview', '/projects/bee/overview'],
     ['Authentication', '/projects/bee/authentication'],
+    ['Functions', '/projects/bee/functions'],
     ['Server Settings', '/projects/bee/configuration'],
   ] as const
   expect(within(projectNavigation).getAllByRole('link')).toHaveLength(expectedLinks.length)

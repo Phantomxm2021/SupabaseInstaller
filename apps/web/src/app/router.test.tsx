@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { isValidElement } from "react";
 import { matchRoutes, Navigate } from "react-router-dom";
 import { ConfigurationPage } from "../features/project/configuration/ConfigurationPage";
+import { FunctionsPage } from "../features/project/FunctionsPage";
 import {
   EmailsRoute,
   RetainedAuthenticationRedirect,
@@ -21,13 +22,13 @@ it("does not register removed project configuration compatibility routes", () =>
   const childPaths = projectRoute?.children?.map((route) => route.path) ?? [];
   expect(childPaths).toContain("configuration");
   expect(childPaths).toContain("authentication");
+  expect(childPaths).toContain("functions");
   expect(childPaths).not.toEqual(
     expect.arrayContaining([
       "services",
       "database",
       "storage",
       "realtime",
-      "functions",
       "pooler",
       "network",
       "secrets",
@@ -48,6 +49,9 @@ it("does not register removed project configuration compatibility routes", () =>
         .element,
     ),
   ).toBe(ConfigurationPage);
+  expect(
+    elementType(matchRoutes(router.routes, "/projects/bee/functions")?.at(-1)?.route.element),
+  ).toBe(FunctionsPage);
   const authenticationRoute = projectRoute?.children?.find(
     (route) => route.path === "authentication",
   );
@@ -108,7 +112,6 @@ it("does not register removed project configuration compatibility routes", () =>
     "database",
     "storage",
     "realtime",
-    "functions",
     "pooler",
     "network",
     "secrets",

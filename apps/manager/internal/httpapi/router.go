@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"supabase-manager/apps/manager/internal/configuration"
+	managerfunctions "supabase-manager/apps/manager/internal/functions"
 	"supabase-manager/apps/manager/internal/operation"
 )
 
@@ -14,6 +15,7 @@ type RouterOptions struct {
 	Operations    *operation.Service
 	Configuration *configuration.Orchestrator
 	Config        *configuration.Orchestrator
+	Functions     *managerfunctions.Service
 }
 
 func NewRouter(options RouterOptions) http.Handler {
@@ -32,6 +34,7 @@ func NewRouter(options RouterOptions) http.Handler {
 		configManager = options.Projects.Configuration
 	}
 	RegisterConfigurationRoutes(protected, ConfigurationOptions{Orchestrator: configManager, Auth: options.Auth.Service, PublicOrigin: options.Auth.PublicOrigin, Projects: options.Projects.Projects, ManagedTLS: options.Projects.ManagedTLS})
+	RegisterFunctionsRoutes(protected, FunctionsOptions{Service: options.Functions, Projects: options.Projects.Projects})
 	public.Handle("/api/projects", ProtectAPI(options.Auth, protected))
 	public.Handle("/api/projects/", ProtectAPI(options.Auth, protected))
 	public.Handle("/api/host/", ProtectAPI(options.Auth, protected))

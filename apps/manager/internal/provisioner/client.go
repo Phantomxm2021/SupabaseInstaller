@@ -19,6 +19,13 @@ type Client struct {
 	http    *http.Client
 }
 
+type FunctionsClient interface {
+	DeployFunction(context.Context, string, string, string, io.Reader) (contracts.FunctionDeploymentResult, error)
+	ListFunctions(context.Context, string) ([]contracts.FunctionSummary, error)
+	RollbackFunction(context.Context, string, string, string) (contracts.FunctionDeploymentResult, error)
+	DeleteFunction(context.Context, string, string, string) (contracts.FunctionDeploymentResult, error)
+}
+
 const DefaultRequestTimeout = 45 * time.Minute
 
 // ClientError is a redacted error returned by the private Provisioner API.
@@ -126,6 +133,56 @@ func (c *Client) DeployFunction(ctx context.Context, slug, name, operationID str
 		return contracts.FunctionDeploymentResult{}, fmt.Errorf("decode function deployment response: %w", err)
 	}
 	return result, nil
+}
+
+func (c *Client) ListFunctions(ctx context.Context, slug string) ([]contracts.FunctionSummary, error) {
+	var output struct {
+		Functions []contracts.FunctionSummary `json:"functions"`
+	}
+	if err := c.get(ctx, "/internal/v1/projects/"+slug+"/functions", &output); err != nil {
+		return nil, err
+	}
+	return output.Functions, nil
+}
+
+func (c *Client) RollbackFunction(ctx context.Context, slug, name, operationID string) (contracts.FunctionDeploymentResult, error) {
+	return c.functionAction(ctx, http.MethodPost, slug, name, operationID, "")
+}
+
+func (c *Client) DeleteFunction(ctx context.Context, slug, name, operationID string) (contracts.FunctionDeploymentResult, error) {
+	return c.functionAction(ctx, http.MethodDelete, slug, name, operationID, name)
+}
+
+func (c *Client) functionAction(ctx context.Context, method, slug, name, operationID, confirmation string) (contracts.FunctionDeploymentResult, error) {
+	if err := contracts.ValidateFunctionName(name); err != nil || slug == "" || operationID == "" {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("function action identity is required")
+	}
+	endpoint := c.baseURL + "/internal/v1/projects/" + slug + "/functions/" + name + "/rollback"
+	if method == http.MethodDelete {
+		endpoint = c.baseURL + "/internal/v1/projects/" + slug + "/functions/" + name
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
+	if err != nil {
+		return contracts.FunctionDeploymentResult{}, err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("X-Operation-ID", operationID)
+	if confirmation != "" {
+		request.Header.Set("X-Confirm-Function", confirmation)
+	}
+	response, err := c.http.Do(request)
+	if err != nil {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("function action: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("function action: provisioner returned %s", response.Status)
+	}
+	var output contracts.FunctionDeploymentResult
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&output); err != nil {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("decode function action response: %w", err)
+	}
+	return output, nil
 }
 
 func (c *Client) StageManagedTLS(ctx context.Context, input contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error) {
