@@ -139,6 +139,7 @@ it('renders a page-wide dashboard header above the project navigation shell', ()
 
   const header = screen.getByRole('banner', { name: 'Dashboard header' })
   expect(header).toHaveClass('topbar')
+  expect(header).toHaveAttribute('data-density', 'dashboard')
   expect(header).toHaveTextContent('bee')
   expect(screen.getByRole('button', { name: 'Show servers' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Show branches' })).toBeInTheDocument()

@@ -18,18 +18,21 @@ export function PageHeader({
   className,
 }: PageHeaderProps) {
   return (
-    <header className={cn("flex w-full items-start justify-between gap-4 max-[560px]:flex-col max-[560px]:items-start", className)}>
+    <header
+      data-density="dashboard"
+      className={cn("dashboard-page-header flex w-full items-start justify-between gap-4 max-[560px]:flex-col max-[560px]:items-start", className)}
+    >
       <div className="min-w-0 space-y-1">
         {eyebrow ? (
-          <p className="text-xs font-medium tracking-wide text-primary uppercase">
+          <p className="font-mono text-[12px] leading-4 font-semibold tracking-wide text-primary uppercase">
             {eyebrow}
           </p>
         ) : null}
-        <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
+        <h1 className="font-heading text-[22px] leading-[29px] font-semibold tracking-[-0.025em] text-foreground">
           {title}
         </h1>
         {description ? (
-          <p className="text-sm text-muted-foreground">{description}</p>
+          <p className="text-[13px] leading-[19px] text-muted-foreground">{description}</p>
         ) : null}
       </div>
       {actions ? (

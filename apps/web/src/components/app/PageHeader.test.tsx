@@ -22,6 +22,8 @@ it("renders a semantic page title with its action slot", () => {
   const header = screen.getByRole("banner")
 
   expect(header).toBeInTheDocument()
+  expect(header).toHaveAttribute("data-density", "dashboard")
+  expect(header).toHaveClass("dashboard-page-header")
   expect(header).toHaveClass(
     "w-full",
     "max-[560px]:flex-col",

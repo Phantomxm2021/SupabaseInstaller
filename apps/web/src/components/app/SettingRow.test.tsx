@@ -29,6 +29,7 @@ it("keeps its usable collapsible trigger open when the named switch changes", as
   const toggle = screen.getByRole("switch", { name: "Enable realtime", checked: true })
   const header = trigger.parentElement
 
+  expect(header?.parentElement?.parentElement).toHaveAttribute("data-density", "dashboard")
   expect(header).toHaveClass(
     "grid",
     "grid-cols-[minmax(0,1fr)_auto]",

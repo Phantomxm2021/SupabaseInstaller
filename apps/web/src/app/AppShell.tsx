@@ -92,7 +92,7 @@ export function AppShell() {
           </SidebarFooter>
       </Sidebar>}
       <SidebarInset>
-        <header className="topbar" aria-label="Dashboard header">
+        <header className="topbar" data-density="dashboard" aria-label="Dashboard header">
           {showSidebar && <ResponsiveSidebarTrigger />}
           <div className="topbar-left">
             <span className="topbar-logo" aria-hidden="true"><Database size={18} /></span>

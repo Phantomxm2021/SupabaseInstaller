@@ -1389,10 +1389,12 @@ a.auth-template-row:hover {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
-  border-bottom: 1px solid #292d2b;
+  border-bottom: 1px solid var(--border);
   color: #aab1ac;
-  background: #151716;
+  background: var(--sidebar);
+  font-family: var(--font-ui);
   font-size: 12px;
+  font-weight: 450;
 }
 .topbar-left {
   display: flex;
@@ -1554,6 +1556,12 @@ a.auth-template-row:hover {
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 30px;
+}
+.dashboard-page-header {
+  min-height: 48px;
+}
+.dashboard-page-header [data-slot="page-header-actions"] {
+  min-height: 34px;
 }
 .host-grid {
   display: grid;
