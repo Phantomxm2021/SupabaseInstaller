@@ -18,6 +18,19 @@ func TestManagedTLSPathsUseBaseDomainLabel(t *testing.T) {
 	}
 }
 
+func TestManagedTLSPathsDoNotDuplicateAnExplicitDomainLabel(t *testing.T) {
+	got, err := ManagedTLSPaths("cloudflare-origin-phantominfra", "https://phantominfra.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CertificateFile != "/etc/nginx/ssl/cloudflare-origin-phantominfra.pem" {
+		t.Fatalf("certificate file = %q", got.CertificateFile)
+	}
+	if got.PrivateKeyFile != "/etc/nginx/ssl/cloudflare-origin-phantominfra.key" {
+		t.Fatalf("private key file = %q", got.PrivateKeyFile)
+	}
+}
+
 func TestManagedTLSPathsRejectUnsafeName(t *testing.T) {
 	if _, err := ManagedTLSPaths("../origin", "https://beegame.studio"); err == nil {
 		t.Fatal("ManagedTLSPaths accepted path traversal")

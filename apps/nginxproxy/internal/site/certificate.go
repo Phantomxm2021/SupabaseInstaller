@@ -13,11 +13,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
-)
 
-var certificateNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	"supabase-manager/internal/contracts"
+)
 
 // CertificateInput is accepted only by the host-owned Nginx agent.
 type CertificateInput struct {
@@ -44,7 +43,7 @@ func NewCertificateStore(directory string) CertificateStore {
 func (s CertificateStore) Directory() string { return s.directory }
 
 func (s CertificateStore) Stage(_ context.Context, input CertificateInput) (CertificateResult, error) {
-	name, label, err := validateCertificateInput(input)
+	name, base, err := validateCertificateInput(input)
 	if err != nil {
 		return CertificateResult{}, err
 	}
@@ -65,7 +64,6 @@ func (s CertificateStore) Stage(_ context.Context, input CertificateInput) (Cert
 	if err := os.Chmod(s.directory, 0o755); err != nil {
 		return CertificateResult{}, fmt.Errorf("set certificate directory permissions: %w", err)
 	}
-	base := name + "-" + label
 	result := CertificateResult{
 		CertificateName: name,
 		CertificateFile: filepath.Join(s.directory, base+".pem"),
@@ -97,24 +95,16 @@ func (s CertificateStore) Stage(_ context.Context, input CertificateInput) (Cert
 }
 
 func validateCertificateInput(input CertificateInput) (string, string, error) {
-	name := strings.TrimSpace(strings.ToLower(input.Name))
-	if !certificateNamePattern.MatchString(name) {
-		return "", "", fmt.Errorf("invalid certificate name")
-	}
 	baseDomain := strings.TrimSpace(strings.ToLower(input.BaseDomain))
-	labels := strings.Split(baseDomain, ".")
-	if len(labels) < 2 {
-		return "", "", fmt.Errorf("invalid base domain")
-	}
-	for _, domainLabel := range labels {
-		if !certificateNamePattern.MatchString(domainLabel) {
-			return "", "", fmt.Errorf("invalid base domain")
-		}
+	managed, err := contracts.ManagedTLSPaths(input.Name, "https://"+baseDomain)
+	if err != nil {
+		return "", "", err
 	}
 	if len(input.CertificatePEM) == 0 || len(input.PrivateKeyPEM) == 0 {
 		return "", "", fmt.Errorf("certificate and private key are required")
 	}
-	return name, labels[0], nil
+	base := strings.TrimSuffix(filepath.Base(managed.CertificateFile), ".pem")
+	return managed.CertificateName, base, nil
 }
 
 func parseCertificate(contents []byte) (*x509.Certificate, error) {

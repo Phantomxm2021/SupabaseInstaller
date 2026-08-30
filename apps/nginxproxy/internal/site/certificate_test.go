@@ -37,6 +37,23 @@ func TestCertificateStorePublishesMatchedPair(t *testing.T) {
 	assertFileMode(t, result.PrivateKeyFile, 0o600)
 }
 
+func TestCertificateStoreDoesNotDuplicateAnExplicitDomainLabel(t *testing.T) {
+	directory := t.TempDir()
+	certificate, privateKey := testPEMPair(t)
+	result, err := NewCertificateStore(directory).Stage(context.Background(), CertificateInput{
+		Name:           "cloudflare-origin-phantominfra",
+		BaseDomain:     "phantominfra.example.com",
+		CertificatePEM: certificate,
+		PrivateKeyPEM:  privateKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(directory, "cloudflare-origin-phantominfra.pem"); result.CertificateFile != want {
+		t.Fatalf("certificate file = %q, want %q", result.CertificateFile, want)
+	}
+}
+
 func TestCertificateStoreRejectsMismatchedPrivateKeyWithoutWritingFiles(t *testing.T) {
 	directory := t.TempDir()
 	certificate, _ := testPEMPair(t)

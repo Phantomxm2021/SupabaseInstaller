@@ -28,15 +28,35 @@ export type TLSUpload = {
   privateKey?: File;
 };
 
+function deriveManagedTLSPaths(certificateName: string, siteURL: string) {
+  const name = certificateName.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) return undefined;
+
+  try {
+    const hostname = new URL(siteURL).hostname.toLowerCase();
+    const [label] = hostname.split(".");
+    if (!label) return undefined;
+    const base = name.endsWith(`-${label}`) ? name : `${name}-${label}`;
+    return {
+      certificateFile: `/etc/nginx/ssl/${base}.pem`,
+      privateKeyFile: `/etc/nginx/ssl/${base}.key`,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export function NetworkSection({
   initial,
   revision,
+  siteURL,
   onSave,
   onUploadTLS,
   tlsUploading = false,
 }: {
   initial: NetworkConfig;
   revision: number;
+  siteURL: string;
   onSave: SectionSave<NetworkConfig>;
   onUploadTLS: (input: TLSUpload) => void;
   tlsUploading?: boolean;
@@ -58,6 +78,7 @@ export function NetworkSection({
   const [certificate, setCertificate] = useState<File>();
   const [privateKey, setPrivateKey] = useState<File>();
   const hasIncompleteTLSUpload = Boolean(certificate) !== Boolean(privateKey);
+  const resolvedTLSPaths = deriveManagedTLSPaths(certificateName, siteURL);
 
   return (
     <div className="space-y-5">
@@ -156,9 +177,15 @@ export function NetworkSection({
               required
             />
             <FieldDescription>
-              Use lowercase letters, digits, and hyphens. Saving this name persists domain-scoped PEM and key paths and updates the managed Nginx site.
+              Use lowercase letters, digits, and hyphens. A name that already ends with the base-domain label is used as-is.
             </FieldDescription>
           </Field>
+          {resolvedTLSPaths && (
+            <p className="text-sm text-muted-foreground">
+              Nginx will use <code>{resolvedTLSPaths.certificateFile}</code> and{" "}
+              <code>{resolvedTLSPaths.privateKeyFile}</code>.
+            </p>
+          )}
           <div className="grid gap-5 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="settings-tls-certificate">Certificate (.pem or .crt)</FieldLabel>

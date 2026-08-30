@@ -57,7 +57,10 @@ func ManagedTLSPaths(certificateName, siteURL string) (ManagedTLSConfig, error) 
 		}
 	}
 	label := labels[0]
-	base := name + "-" + label
+	base := name
+	if !strings.HasSuffix(base, "-"+label) {
+		base += "-" + label
+	}
 	return ManagedTLSConfig{
 		CertificateName: name,
 		CertificateFile: managedTLSDirectory + "/" + base + ".pem",

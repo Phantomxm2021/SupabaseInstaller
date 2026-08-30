@@ -425,6 +425,7 @@ export function ConfigurationPage() {
               <NetworkSection
                 revision={configuration.data.revision}
                 initial={config.network}
+                siteURL={config.general.siteUrl}
                 onSave={save}
                 onUploadTLS={(input) => uploadTLS.mutate(input)}
                 tlsUploading={uploadTLS.isPending}

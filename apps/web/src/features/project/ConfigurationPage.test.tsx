@@ -194,6 +194,26 @@ it("persists a TLS certificate name from Server Settings without certificate fil
   expect(body.get("privateKey")).toBeNull();
 });
 
+it("shows the normalized TLS file names without duplicating a domain label", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify(redactedSnapshot()), { status: 200 })),
+  );
+  renderConfiguration("network");
+
+  const name = await screen.findByLabelText("Certificate name");
+  await user.clear(name);
+  await user.type(name, "cloudflare-origin-example");
+
+  expect(
+    screen.getByText("/etc/nginx/ssl/cloudflare-origin-example.pem"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText("/etc/nginx/ssl/cloudflare-origin-example.key"),
+  ).toBeInTheDocument();
+});
+
 function redactedSnapshot(
   domain = "bee.example.com",
   siteUrl = "https://example.com",
