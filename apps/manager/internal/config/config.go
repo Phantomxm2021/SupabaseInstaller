@@ -13,16 +13,17 @@ import (
 const minimumTokenLength = 32
 
 type Config struct {
-	ListenAddr          string
-	DatabasePath        string
-	MasterEncryptionKey []byte
-	ProvisionerURL      string
-	ProvisionerToken    string
-	WebDistPath         string
-	PublicOrigin        string
-	SecureCookies       bool
-	PortRangeStart      int
-	PortRangeEnd        int
+	ListenAddr             string
+	DatabasePath           string
+	MasterEncryptionKey    []byte
+	ProvisionerURL         string
+	ProvisionerToken       string
+	WebDistPath            string
+	PublicOrigin           string
+	SecureCookies          bool
+	PortRangeStart         int
+	PortRangeEnd           int
+	FunctionUploadSpoolDir string
 }
 
 func Load() (Config, error) {
@@ -53,16 +54,17 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		ListenAddr:          envOr("MANAGER_LISTEN_ADDR", "0.0.0.0:8080"),
-		DatabasePath:        envOr("MANAGER_DATABASE_PATH", "/var/lib/supabase-manager/manager.db"),
-		MasterEncryptionKey: key,
-		ProvisionerURL:      envOr("PROVISIONER_URL", "http://provisioner:9090"),
-		ProvisionerToken:    token,
-		WebDistPath:         envOr("WEB_DIST_PATH", ""),
-		PublicOrigin:        envOr("PUBLIC_ORIGIN", "http://localhost:8080"),
-		SecureCookies:       secureCookies,
-		PortRangeStart:      portStart,
-		PortRangeEnd:        portEnd,
+		ListenAddr:             envOr("MANAGER_LISTEN_ADDR", "0.0.0.0:8080"),
+		DatabasePath:           envOr("MANAGER_DATABASE_PATH", "/var/lib/supabase-manager/manager.db"),
+		MasterEncryptionKey:    key,
+		ProvisionerURL:         envOr("PROVISIONER_URL", "http://provisioner:9090"),
+		ProvisionerToken:       token,
+		WebDistPath:            envOr("WEB_DIST_PATH", ""),
+		PublicOrigin:           envOr("PUBLIC_ORIGIN", "http://localhost:8080"),
+		SecureCookies:          secureCookies,
+		PortRangeStart:         portStart,
+		PortRangeEnd:           portEnd,
+		FunctionUploadSpoolDir: envOr("FUNCTION_UPLOAD_SPOOL_DIR", "/var/lib/supabase-manager/function-uploads"),
 	}, nil
 }
 

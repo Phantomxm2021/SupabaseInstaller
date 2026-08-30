@@ -33,6 +33,9 @@ func TestLoadReturnsValidatedManagerConfiguration(t *testing.T) {
 	if len(cfg.MasterEncryptionKey) != 32 {
 		t.Fatalf("MasterEncryptionKey length = %d, want 32", len(cfg.MasterEncryptionKey))
 	}
+	if cfg.FunctionUploadSpoolDir != "/var/lib/supabase-manager/function-uploads" {
+		t.Fatalf("FunctionUploadSpoolDir = %q", cfg.FunctionUploadSpoolDir)
+	}
 }
 
 func TestLoadRejectsPublishedExampleSecrets(t *testing.T) {
