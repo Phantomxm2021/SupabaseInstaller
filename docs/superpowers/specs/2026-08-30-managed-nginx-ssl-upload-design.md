@@ -1,62 +1,61 @@
-# Managed Nginx SSL Upload Design
+# Per-Server Managed Nginx SSL Upload Design
 
 ## Goal
 
-Allow an operator to upload and activate a host-wide Nginx TLS certificate and
-private key from the Manager web UI. The default certificate name is
-`cloudflare-origin`. Every managed project site uses the active certificate
-pair.
+Allow an operator to upload a TLS certificate and private key while creating a
+Server from the Manager web UI. The default certificate name is
+`cloudflare-origin`. Each Server uses its own managed certificate pair.
 
 ## Scope
 
-- Add a global SSL card to Manager Project Settings.
-- Display the active certificate name and its managed paths.
+- Add an SSL section to the Create Server workflow.
+- Display the chosen certificate name and generated managed paths in review.
 - Accept a certificate PEM and private-key PEM together.
 - Allow a safe custom certificate name; default to `cloudflare-origin`.
 - Validate PEM parsing and confirm that the certificate public key matches the
   private key before changing host state.
-- Store files under `/etc/nginx/ssl/<name>.pem` and
-  `/etc/nginx/ssl/<name>.key`; create `/etc/nginx/ssl` automatically when it
-  does not exist.
-- Atomically activate the selected pair, validate Nginx, reload Nginx, and
-  roll back both files and active selection on failure.
-- Re-render existing managed sites so their `ssl_certificate` and
-  `ssl_certificate_key` directives use the active pair; no project runtime is
-  recreated.
+- Store files under `/etc/nginx/ssl/<name>-<server-slug>.pem` and
+  `/etc/nginx/ssl/<name>-<server-slug>.key`; create `/etc/nginx/ssl`
+  automatically when it does not exist.
+- Render the newly created Server's Nginx site with those paths, validate
+  Nginx, reload Nginx, and roll back both files and site activation on failure.
 
 ## Non-goals
 
-- Per-project certificate pairs.
+- Replacing certificate files after Server creation in this first version.
 - ACME or Let's Encrypt issuance and renewal.
 - Returning private-key material through any Manager API.
 - Accepting arbitrary host paths from the browser.
 
 ## Architecture
 
-The Manager API receives a bounded multipart upload containing `name`,
-`certificate`, and `privateKey`. It forwards the bytes over the existing
-authenticated Unix-socket channel to the native Nginx proxy agent.
+The Create Server request accepts a bounded multipart upload containing
+`certificateName`, `certificate`, and `privateKey`. It creates the project and
+forwards the certificate bytes over the existing authenticated Unix-socket
+channel to the native Nginx proxy agent as part of reconciliation.
 
 The agent is the sole writer for `/etc/nginx/ssl`. It creates that directory
 when necessary, then validates the
 requested name against a restricted identifier pattern, parses the PEM inputs,
 verifies their key pair, writes both files with root-owned restrictive modes,
-updates the active TLS selection, and runs `nginx -t` followed by reload. The
-agent returns only safe metadata: active name and absolute paths.
+derives the physical filename as `<certificateName>-<serverSlug>`, and runs
+`nginx -t` followed by reload. The agent returns only safe metadata: selected
+name and absolute paths.
 
-The active pair is persisted in an agent-owned metadata file. On startup, the
-agent loads it; if it is absent, it uses the installer-provided default paths
-for `cloudflare-origin`. Existing routes are re-applied using the active pair.
+Each project configuration persists the certificate name and generated paths.
+Existing installations without uploaded certificate material retain the
+installer-provided `cloudflare-origin` paths until their Server is recreated.
 
 ## UI and API
 
-Project Settings gains an **Nginx TLS certificate** card:
+The Create Server workflow gains an **Nginx TLS certificate** section:
 
 - Certificate name input, prefilled with `cloudflare-origin`.
 - Certificate PEM upload input.
 - Private key PEM upload input.
-- Active certificate metadata, without exposing private-key contents.
-- Upload and activate action, disabled until both files are selected.
+- Generated filename preview, for example `cloudflare-origin-tet.pem`, without
+  exposing private-key contents.
+- Upload requirement: both files must be selected before creating the Server.
 
 The UI shows precise failures for invalid names, missing files, malformed PEM,
 non-matching key pairs, Nginx validation failure, and agent unavailability.
@@ -69,8 +68,9 @@ non-matching key pairs, Nginx validation failure, and agent unavailability.
 - The private key is written only by the host agent with mode `0600`.
 - Certificates use mode `0644` and the directory is root-owned with Nginx
   traversal access only.
-- Replacement is atomic and rollback restores the prior active files and
-  generated Nginx site configuration if validation or reload fails.
+- Upload writes a staged pair and publishes it atomically only after validation.
+  A failed Server creation removes staged files and restores the prior Nginx
+  site state.
 
 ## Compatibility
 
@@ -79,14 +79,16 @@ Existing installations retain the current installer paths:
 - `/etc/nginx/ssl/cloudflare-origin.pem`
 - `/etc/nginx/ssl/cloudflare-origin.key`
 
-The first UI upload imports a new managed pair and becomes the active source
-for all generated sites. No existing project has to be deleted or recreated.
+New Servers upload their own pair. The default certificate name yields files
+such as `/etc/nginx/ssl/cloudflare-origin-tet.pem`; the Server slug prevents
+one Server from overwriting another's certificate pair.
 
 ## Verification
 
-- Unit-test TLS name validation, PEM parsing, key-pair matching, atomic writes,
-  active-selection persistence, and rollback.
+- Unit-test TLS name validation, PEM parsing, key-pair matching,
+  slug-derived path mapping, atomic writes, and rollback.
 - API-test multipart validation and redaction of private-key material.
-- UI-test default name, required upload fields, success metadata, and errors.
-- Agent integration-test Nginx route rendering with the active custom pair.
-- Regression-test the `cloudflare-origin` default behavior.
+- UI-test default name, slug-derived filename preview, required upload fields,
+  and errors.
+- Agent integration-test Nginx route rendering with each Server's custom pair.
+- Regression-test the `cloudflare-origin-<slug>` default behavior.
