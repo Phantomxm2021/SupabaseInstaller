@@ -14,6 +14,24 @@ type FunctionReleaseStore interface {
 	StageFunctionRelease(slug, name, operationID string, archive io.Reader) (projectfs.FunctionReleaseStage, error)
 	ActivateFunctionRelease(slug, name string, stage projectfs.FunctionReleaseStage) (projectfs.FunctionActivation, error)
 	RestoreFunctionRelease(slug, name string, activation projectfs.FunctionActivation) error
+	RollbackFunctionRelease(slug, name, operationID string) (projectfs.FunctionActivation, error)
+}
+
+func (s *FunctionService) Rollback(ctx context.Context, project compose.ProjectRef, request contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
+	if s.releases == nil || s.runner == nil {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("functions deployment is unavailable")
+	}
+	if err := contracts.ValidateFunctionName(request.Name); err != nil {
+		return contracts.FunctionDeploymentResult{}, err
+	}
+	activation, err := s.releases.RollbackFunctionRelease(project.Slug, request.Name, request.OperationID)
+	if err != nil {
+		return contracts.FunctionDeploymentResult{}, err
+	}
+	if err := s.runner.Restart(ctx, project, "functions"); err != nil {
+		return contracts.FunctionDeploymentResult{Current: activation.Current, Previous: activation.Previous}, fmt.Errorf("restart functions: %w", err)
+	}
+	return contracts.FunctionDeploymentResult{Current: activation.Current, Previous: activation.Previous}, nil
 }
 
 type FunctionRunner interface {

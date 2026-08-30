@@ -15,6 +15,13 @@ type DeployFunctionRequest struct {
 	Archive     io.Reader `json:"-"`
 }
 
+type FunctionOperationRequest struct {
+	ProjectID   string `json:"projectId"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	OperationID string `json:"operationId"`
+}
+
 type FunctionDeploymentResult struct {
 	Current    *FunctionRelease `json:"current,omitempty"`
 	Previous   *FunctionRelease `json:"previous,omitempty"`

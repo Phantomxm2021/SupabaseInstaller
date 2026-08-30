@@ -40,9 +40,23 @@ func TestFunctionServiceDeployRestoresReleaseWhenRestartFails(t *testing.T) {
 	}
 }
 
+func TestFunctionServiceRollbackRestartsOnlyFunctions(t *testing.T) {
+	releases := &functionReleaseFake{}
+	runner := &functionRunnerFake{}
+	service := NewFunctionService(releases, runner)
+	_, err := service.Rollback(context.Background(), compose.ProjectRef{Slug: "bee"}, contracts.FunctionOperationRequest{Name: "demo", OperationID: "op-3"})
+	if err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+	if !releases.rolledBack || len(runner.services) != 1 || runner.services[0] != "functions" {
+		t.Fatalf("rolledBack/services = %v/%v", releases.rolledBack, runner.services)
+	}
+}
+
 type functionReleaseFake struct {
-	stage    projectfs.FunctionReleaseStage
-	restored bool
+	stage      projectfs.FunctionReleaseStage
+	restored   bool
+	rolledBack bool
 }
 
 func (f *functionReleaseFake) StageFunctionRelease(string, string, string, io.Reader) (projectfs.FunctionReleaseStage, error) {
@@ -54,6 +68,10 @@ func (f *functionReleaseFake) ActivateFunctionRelease(string, string, projectfs.
 func (f *functionReleaseFake) RestoreFunctionRelease(string, string, projectfs.FunctionActivation) error {
 	f.restored = true
 	return nil
+}
+func (f *functionReleaseFake) RollbackFunctionRelease(string, string, string) (projectfs.FunctionActivation, error) {
+	f.rolledBack = true
+	return projectfs.FunctionActivation{}, nil
 }
 
 type functionRunnerFake struct {
