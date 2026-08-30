@@ -9,6 +9,7 @@ import { NewProjectPage } from "../features/projects/NewProjectPage";
 import { OverviewPage } from "../features/project/OverviewPage";
 import { ConfigurationPage } from "../features/project/ConfigurationPage";
 import { FunctionsPage } from "../features/project/FunctionsPage";
+import { FunctionSecretsPage } from "../features/project/FunctionSecretsPage";
 import {
   ComingSoonPage,
   ProjectLayout,
@@ -68,6 +69,7 @@ export function createAppRouter(_queryClient: QueryClient) {
             { path: "sql-editor", element: <ComingSoonPage /> },
             { path: "configuration", element: <ConfigurationPage /> },
             { path: "functions", element: <FunctionsPage /> },
+            { path: "functions/secrets", element: <FunctionSecretsPage /> },
             {
               path: "authentication",
               element: <AuthenticationWorkspace />,

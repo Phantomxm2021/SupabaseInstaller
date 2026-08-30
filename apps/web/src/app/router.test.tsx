@@ -23,6 +23,7 @@ it("does not register removed project configuration compatibility routes", () =>
   expect(childPaths).toContain("configuration");
   expect(childPaths).toContain("authentication");
   expect(childPaths).toContain("functions");
+  expect(childPaths).toContain("functions/secrets");
   expect(childPaths).not.toEqual(
     expect.arrayContaining([
       "services",
