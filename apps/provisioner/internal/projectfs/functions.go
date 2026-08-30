@@ -218,7 +218,11 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 	}
 	if !hasIndex {
-		return fail(fmt.Errorf("function archive requires index.ts at root or under the requested function directory"))
+		message := "function archive requires index.ts at root or under the requested function directory"
+		if entries := functionArchiveEntrySummary(reader.File); entries != "" {
+			message += "; archive entries: " + entries
+		}
+		return fail(fmt.Errorf("%s", message))
 	}
 	if err := syncDirectory(stage); err != nil {
 		return fail(err)
@@ -479,6 +483,26 @@ func isFunctionArchiveMetadata(clean string) bool {
 	}
 	base := path.Base(clean)
 	return base == ".DS_Store" || strings.HasPrefix(base, "._")
+}
+
+func functionArchiveEntrySummary(files []*zip.File) string {
+	entries := make([]string, 0, len(files))
+	for _, item := range files {
+		clean, _, err := safeFunctionArchivePath(item)
+		if err != nil || isFunctionArchiveMetadata(clean) {
+			continue
+		}
+		entries = append(entries, clean)
+	}
+	sort.Strings(entries)
+	if len(entries) > 20 {
+		entries = append(entries[:20], "…")
+	}
+	result := strings.Join(entries, ", ")
+	if len(result) > 2048 {
+		return result[:2048] + "…"
+	}
+	return result
 }
 
 // functionArchivePrefix returns a trusted directory prefix to remove before

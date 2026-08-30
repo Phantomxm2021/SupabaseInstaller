@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,20 @@ func TestStageFunctionReleaseRejectsUnrelatedEnclosingDirectory(t *testing.T) {
 	archive := zipFixture(t, map[string]string{"project/index.ts": "Deno.serve(() => new Response('ok'))"})
 	if _, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(archive)); err == nil {
 		t.Fatal("StageFunctionRelease() succeeded, want root index rejection")
+	}
+}
+
+func TestStageFunctionReleaseReportsArchiveEntriesWhenIndexIsMissing(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(zipFixture(t, map[string]string{
+		"src/main.ts": "export default {}",
+		"README.md":   "not an edge function entrypoint",
+	})))
+	if err == nil || !strings.Contains(err.Error(), "src/main.ts") {
+		t.Fatalf("StageFunctionRelease() error = %v, want archive entry diagnostic", err)
 	}
 }
 
