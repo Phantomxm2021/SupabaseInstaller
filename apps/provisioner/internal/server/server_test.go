@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,21 @@ import (
 	provisionerruntime "supabase-manager/apps/provisioner/internal/runtime"
 	"supabase-manager/internal/contracts"
 )
+
+type functionDeployStub struct{ archive string }
+
+func (s *functionDeployStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
+func (s *functionDeployStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
+	return contracts.InspectProjectResponse{}, nil
+}
+func (s *functionDeployStub) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
+}
+func (s *functionDeployStub) DeployFunction(_ context.Context, request contracts.DeployFunctionRequest) (contracts.FunctionDeploymentResult, error) {
+	data, _ := io.ReadAll(request.Archive)
+	s.archive = string(data)
+	return contracts.FunctionDeploymentResult{}, nil
+}
 
 func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
@@ -63,6 +79,21 @@ func TestStageCertificateForwardsPEMWithoutReturningIt(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), "/etc/nginx/ssl/cloudflare-origin-example.pem") {
 		t.Fatalf("response missing safe TLS paths: %s", response.Body.String())
+	}
+}
+
+func TestFunctionDeployEndpointForwardsArchiveWithoutReturningIt(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	backend := &functionDeployStub{}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/projects/bee/functions/demo/deploy", strings.NewReader("zip-body"))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	request.Header.Set("Content-Type", "application/zip")
+	request.Header.Set("X-Operation-ID", "operation-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || backend.archive != "zip-body" || strings.Contains(response.Body.String(), "zip-body") {
+		t.Fatalf("status/body/archive = %d/%s/%q", response.Code, response.Body.String(), backend.archive)
 	}
 }
 

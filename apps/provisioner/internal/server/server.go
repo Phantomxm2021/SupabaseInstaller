@@ -29,6 +29,10 @@ type hostPortBackend interface {
 	HostPortAvailable(context.Context, int) (bool, error)
 }
 
+type functionDeploymentBackend interface {
+	DeployFunction(context.Context, contracts.DeployFunctionRequest) (contracts.FunctionDeploymentResult, error)
+}
+
 // certificateStager is deliberately separate from runtime reconciliation: it
 // forwards short-lived PEM bytes to the host-owned Nginx agent and returns
 // only safe filenames for the project configuration.
@@ -65,12 +69,33 @@ func New(options Options) http.Handler {
 	private.HandleFunc("POST /internal/v1/projects/rotate-database-password", service.rotateDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/rollback-database-password", service.rollbackDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/confirm-database-password-rotation", service.confirmDatabasePasswordRotation)
+	private.HandleFunc("POST /internal/v1/projects/{slug}/functions/{name}/deploy", service.deployFunction)
 	private.HandleFunc("GET /internal/v1/host/resources", service.hostResources)
 	private.HandleFunc("GET /internal/v1/host/ports/{port}", service.hostPortAvailable)
 	root := http.NewServeMux()
 	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
 	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
 	return root
+}
+
+func (s *server) deployFunction(response http.ResponseWriter, request *http.Request) {
+	backend, ok := s.backend.(functionDeploymentBackend)
+	if !ok {
+		writeError(response, http.StatusServiceUnavailable, "FUNCTIONS_UNAVAILABLE", "Functions deployment is unavailable")
+		return
+	}
+	name, operationID := request.PathValue("name"), request.Header.Get("X-Operation-ID")
+	if err := contracts.ValidateFunctionName(name); err != nil || operationID == "" {
+		writeError(response, http.StatusBadRequest, "INVALID_FUNCTION_DEPLOYMENT", "A valid function name and operation ID are required")
+		return
+	}
+	request.Body = http.MaxBytesReader(response, request.Body, 20<<20)
+	result, err := backend.DeployFunction(request.Context(), contracts.DeployFunctionRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID, Archive: request.Body})
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_DEPLOY_FAILED", "Functions deployment failed")
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
 }
 
 func (s *server) stageCertificate(response http.ResponseWriter, request *http.Request) {
