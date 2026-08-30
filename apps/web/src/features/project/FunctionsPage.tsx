@@ -35,6 +35,7 @@ export function FunctionsPage() {
   const [deployDialogOpen, setDeployDialogOpen] = useState(false)
   const [deleteName, setDeleteName] = useState<string | null>(null)
   const [activeOperationId, setActiveOperationId] = useState<string | null>(null)
+  const [operationSurface, setOperationSurface] = useState<'dialog' | 'page' | null>(null)
   const handledTerminalOperation = useRef<string | null>(null)
   const functions = useQuery({ queryKey: ['project-functions', projectId], queryFn: () => apiFetch<{ functions: FunctionSummary[]; enabled: boolean }>(`/api/projects/${projectId}/functions`), enabled: Boolean(projectId) })
   const operation = useQuery({
@@ -50,12 +51,16 @@ export function FunctionsPage() {
     handledTerminalOperation.current = activeOperationId
     if (current.status === 'SUCCEEDED') void queryClient.invalidateQueries({ queryKey: ['project-functions', projectId] })
   }, [activeOperationId, operation.data, projectId, queryClient])
-  const trackOperation = (operationId: string) => {
+  const trackOperation = (operationId: string, surface: 'dialog' | 'page' = 'page') => {
     handledTerminalOperation.current = null
+    setOperationSurface(surface)
     setActiveOperationId(operationId)
   }
   const openDeploymentDialog = (functionName?: string) => {
-    if (terminalOperation(operation.data?.status)) setActiveOperationId(null)
+    if (operationSurface === 'dialog' && terminalOperation(operation.data?.status)) {
+      setActiveOperationId(null)
+      setOperationSurface(null)
+    }
     if (functionName) setName(functionName)
     setDeployDialogOpen(true)
   }
@@ -65,7 +70,7 @@ export function FunctionsPage() {
       const form = new FormData(); form.append('archive', archive)
       return apiFetch<{ operationId: string }>(`/api/projects/${projectId}/functions/${encodeURIComponent(name.trim())}/deploy`, { method: 'POST', body: form })
     },
-    onSuccess: (result) => { trackOperation(result.operationId); toast.success(`Deployment queued (${result.operationId})`); setArchive(null); setName('') },
+    onSuccess: (result) => { trackOperation(result.operationId, 'dialog'); toast.success(`Deployment queued (${result.operationId})`); setArchive(null); setName('') },
     onError: (error) => toast.error(error.message),
   })
   const rollback = useMutation({
@@ -84,11 +89,11 @@ export function FunctionsPage() {
   const items = functions.data?.functions ?? []
   const enabled = functions.data?.enabled ?? false
   const operationInProgress = Boolean(activeOperationId && !terminalOperation(operation.data?.status))
-  const deploymentStatusVisible = upload.isPending || activeOperationId !== null
+  const deploymentStatusVisible = upload.isPending || (activeOperationId !== null && operationSurface === 'dialog')
   return <main className="page functions-page" data-testid="functions-page">
     <PageHeader eyebrow="Edge Functions" title="Functions" description="Deploy a function ZIP and keep one previous release ready for rollback." actions={<Button onClick={() => openDeploymentDialog()} disabled={!enabled || operationInProgress}><Upload />Deploy</Button>} />
     {!enabled && <Alert>Enable the Functions service in Server Settings before deploying code.</Alert>}
-    {activeOperationId && !deployDialogOpen && <FunctionOperationStatus operationId={activeOperationId} operation={operation.data} isLoading={operation.isLoading} />}
+    {activeOperationId && operationSurface === 'page' && <FunctionOperationStatus operationId={activeOperationId} operation={operation.data} isLoading={operation.isLoading} />}
     <Card className="functions-list-card">
       <CardHeader className="functions-card-header"><CardTitle>Managed functions</CardTitle><CardDescription>Only Manager-owned releases appear here.</CardDescription></CardHeader>
       <CardContent className="functions-list-content">
