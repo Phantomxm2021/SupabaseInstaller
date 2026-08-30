@@ -42,6 +42,8 @@ it('tracks a queued deployment and refreshes the function list after it succeeds
   expect(await screen.findByText('hello-world')).toBeVisible()
 
   await user.click(within(screen.getByRole('dialog')).getAllByRole('button', { name: 'Close' })[0])
+  expect(screen.queryByText('Function operation complete')).not.toBeInTheDocument()
+  expect(screen.queryByText('Finalizing function deployment')).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Deploy' }))
 
   expect(await screen.findByLabelText('ZIP archive')).toBeVisible()
