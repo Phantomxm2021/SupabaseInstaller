@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"supabase-manager/internal/contracts"
 )
@@ -39,6 +41,11 @@ type FunctionReleaseStage struct {
 type FunctionActivation struct {
 	Current  *contracts.FunctionRelease
 	Previous *contracts.FunctionRelease
+}
+
+type managedFunctionState struct {
+	Current  *contracts.FunctionRelease `json:"current,omitempty"`
+	Previous *contracts.FunctionRelease `json:"previous,omitempty"`
 }
 
 // FunctionCurrentPath returns the current managed pointer for a function.
@@ -191,20 +198,98 @@ func (r *Root) ActivateFunctionRelease(slug, name string, stage FunctionReleaseS
 	} else if err != nil && !os.IsNotExist(err) {
 		return FunctionActivation{}, err
 	}
-	temporary := filepath.Join(functionsRoot, "."+name+".next-"+stage.OperationID)
-	_ = os.Remove(temporary)
-	target := filepath.ToSlash(filepath.Join(".manager", name, "releases", stage.SHA256))
-	if err := os.Symlink(target, temporary); err != nil {
-		return FunctionActivation{}, fmt.Errorf("create function pointer: %w", err)
+	state, err := readManagedFunctionState(releases)
+	if err != nil {
+		return FunctionActivation{}, err
 	}
-	if err := os.Rename(temporary, current); err != nil {
-		_ = os.Remove(temporary)
-		return FunctionActivation{}, fmt.Errorf("activate function pointer: %w", err)
+	if err := switchFunctionPointer(functionsRoot, name, stage.OperationID, stage.SHA256); err != nil {
+		return FunctionActivation{}, err
 	}
 	if err := syncDirectory(functionsRoot); err != nil {
 		return FunctionActivation{}, err
 	}
-	return FunctionActivation{Current: &contracts.FunctionRelease{SHA256: stage.SHA256, OperationID: stage.OperationID}}, nil
+	currentRelease := &contracts.FunctionRelease{SHA256: stage.SHA256, OperationID: stage.OperationID, DeployedAt: time.Now().UTC()}
+	if err := writeManagedFunctionState(releases, managedFunctionState{Current: currentRelease, Previous: state.Current}); err != nil {
+		return FunctionActivation{}, err
+	}
+	return FunctionActivation{Current: currentRelease, Previous: state.Current}, nil
+}
+
+// RollbackFunctionRelease makes the immediately preceding successful release
+// current. It is intentionally unavailable when a function has only one
+// retained release.
+func (r *Root) RollbackFunctionRelease(slug, name, operationID string) (FunctionActivation, error) {
+	if err := contracts.ValidateFunctionName(name); err != nil || !operationIDPattern.MatchString(operationID) {
+		return FunctionActivation{}, fmt.Errorf("invalid function rollback request")
+	}
+	project, err := r.ProjectPath(slug)
+	if err != nil {
+		return FunctionActivation{}, err
+	}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	functionsRoot := filepath.Join(project, "volumes", "functions")
+	releases := filepath.Join(functionsRoot, ".manager", name, "releases")
+	state, err := readManagedFunctionState(releases)
+	if err != nil {
+		return FunctionActivation{}, err
+	}
+	if state.Current == nil || state.Previous == nil {
+		return FunctionActivation{}, fmt.Errorf("no previous function release")
+	}
+	if _, err := os.Stat(filepath.Join(releases, state.Previous.SHA256, "index.ts")); err != nil {
+		return FunctionActivation{}, fmt.Errorf("previous function release is unavailable: %w", err)
+	}
+	if err := switchFunctionPointer(functionsRoot, name, operationID, state.Previous.SHA256); err != nil {
+		return FunctionActivation{}, err
+	}
+	if err := syncDirectory(functionsRoot); err != nil {
+		return FunctionActivation{}, err
+	}
+	if err := writeManagedFunctionState(releases, managedFunctionState{Current: state.Previous, Previous: state.Current}); err != nil {
+		return FunctionActivation{}, err
+	}
+	return FunctionActivation{Current: state.Previous, Previous: state.Current}, nil
+}
+
+func switchFunctionPointer(functionsRoot, name, operationID, sha string) error {
+	temporary := filepath.Join(functionsRoot, "."+name+".next-"+operationID)
+	_ = os.Remove(temporary)
+	target := filepath.ToSlash(filepath.Join(".manager", name, "releases", sha))
+	if err := os.Symlink(target, temporary); err != nil {
+		return fmt.Errorf("create function pointer: %w", err)
+	}
+	if err := os.Rename(temporary, filepath.Join(functionsRoot, name)); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("activate function pointer: %w", err)
+	}
+	return nil
+}
+
+func readManagedFunctionState(releases string) (managedFunctionState, error) {
+	data, err := os.ReadFile(filepath.Join(releases, "state.json"))
+	if os.IsNotExist(err) {
+		return managedFunctionState{}, nil
+	}
+	if err != nil {
+		return managedFunctionState{}, fmt.Errorf("read function release state: %w", err)
+	}
+	var state managedFunctionState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return managedFunctionState{}, fmt.Errorf("parse function release state: %w", err)
+	}
+	return state, nil
+}
+
+func writeManagedFunctionState(releases string, state managedFunctionState) error {
+	data, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("encode function release state: %w", err)
+	}
+	if err := writeAtomic(releases, "state.json", data, 0o600); err != nil {
+		return err
+	}
+	return syncDirectory(releases)
 }
 
 func safeFunctionArchivePath(item *zip.File) (string, bool, error) {

@@ -44,6 +44,37 @@ func TestActivateFunctionReleaseCreatesCurrentPointer(t *testing.T) {
 	}
 }
 
+func TestRollbackFunctionReleaseRestoresPreviousRelease(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(zipFixture(t, map[string]string{"index.ts": "one"})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.ActivateFunctionRelease("bee", "demo", first); err != nil {
+		t.Fatal(err)
+	}
+	second, err := root.StageFunctionRelease("bee", "demo", "operation-2", bytes.NewReader(zipFixture(t, map[string]string{"index.ts": "two"})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.ActivateFunctionRelease("bee", "demo", second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.RollbackFunctionRelease("bee", "demo", "operation-3"); err != nil {
+		t.Fatalf("RollbackFunctionRelease() error = %v", err)
+	}
+	current, err := root.FunctionCurrentPath("bee", "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(current, "index.ts")); err != nil || string(body) != "one" {
+		t.Fatalf("current index = %q, %v", body, err)
+	}
+}
+
 func TestStageFunctionReleaseRejectsTraversal(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
