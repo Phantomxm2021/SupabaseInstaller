@@ -318,7 +318,7 @@ export function ConfigurationPage() {
       </main>
     );
   return (
-    <section className="project-settings-workspace">
+    <section className="project-settings-workspace" data-density="dashboard">
       <ProjectSettingsNavigation projectId={projectId} section={section} />
       <div className="project-settings-content">
         <main className="page configuration-page">

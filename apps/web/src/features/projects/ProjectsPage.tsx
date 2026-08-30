@@ -24,7 +24,7 @@ export function ProjectsPage() {
   }, [projects, search])
 
   return (
-    <main className="page space-y-5">
+    <main className="page space-y-5" data-density="dashboard">
       <div className="page-heading mb-0">
         <PageHeader
           eyebrow="Runtime orchestration"

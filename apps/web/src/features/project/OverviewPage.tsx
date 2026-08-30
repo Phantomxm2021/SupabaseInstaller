@@ -18,7 +18,7 @@ export function OverviewPage() {
   // fallback for legacy records that do not have a Domain yet.
   const studioURL = data.domain ? `https://${data.domain}` : data.siteUrl
   const enabledServiceCount = Object.values(data.services).filter(Boolean).length
-  return <main className="page project-overview-page">
+  return <main className="page project-overview-page" data-density="dashboard">
     <header className="project-overview-header">
       <div>
         <h1>{data.name}</h1>

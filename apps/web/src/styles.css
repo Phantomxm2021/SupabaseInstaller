@@ -141,7 +141,12 @@ h2 {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 30px 18px;
+  padding: 32px 20px;
+  background: var(--background);
+}
+.auth-layout [data-slot="card"] {
+  --card-spacing: --spacing(6);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .26);
 }
 .sidebar-brand {
   padding: 0 8px 24px;
@@ -1548,7 +1553,11 @@ a.auth-template-row:hover {
 .page {
   max-width: 1180px;
   margin: 0 auto;
-  padding: 45px 34px 80px;
+  padding: 48px 40px 80px;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 450;
+  line-height: 19px;
 }
 .page-heading {
   display: flex;
@@ -1749,12 +1758,12 @@ a.auth-template-row:hover {
   color: var(--muted-foreground);
 }
 .narrow-page {
-  max-width: 960px;
+  max-width: 1024px;
 }
 .wizard-step {
   padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 6px;
   color: var(--muted-foreground);
   font-size: 11px;
 }
@@ -1886,7 +1895,11 @@ a.auth-template-row:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 24px;
+  margin-top: 24px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
 }
 .operation-card {
   padding: 24px;
