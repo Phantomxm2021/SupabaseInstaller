@@ -75,6 +75,16 @@ operation with revision checks, health verification, and rollback where
 possible. See [server configuration](docs/operations/project-configuration.md)
 for section semantics, restart impact, and recovery behavior.
 
+## Edge Functions deployments
+
+When the Functions service is enabled, open a server's **Functions** workspace
+and upload one ZIP per function. The archive must be named
+`function-name.zip` (the page also asks for the function name) and contain a
+root-level `index.ts`. Archives are capped at 20 MiB, validated and extracted
+by the private Provisioner, and only the current and previous releases are
+retained. Each deployment restarts only the Functions container; the Actions
+menu provides rollback and exact-name-confirmed deletion.
+
 ## Inspect and stop
 
 ```sh

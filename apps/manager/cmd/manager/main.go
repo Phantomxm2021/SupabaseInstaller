@@ -17,6 +17,7 @@ import (
 	"supabase-manager/apps/manager/internal/authadmin"
 	managerconfig "supabase-manager/apps/manager/internal/config"
 	managerconfiguration "supabase-manager/apps/manager/internal/configuration"
+	managerfunctions "supabase-manager/apps/manager/internal/functions"
 	"supabase-manager/apps/manager/internal/httpapi"
 	"supabase-manager/apps/manager/internal/install"
 	"supabase-manager/apps/manager/internal/lifecycle"
@@ -54,6 +55,15 @@ func main() {
 	authAdmin := authadmin.New(database, cipher, &http.Client{Timeout: 20 * time.Second}, authadmin.GatewayAtHost("host.docker.internal"))
 	provisionerHTTP := &http.Client{Timeout: provisioner.DefaultRequestTimeout}
 	provisionerClient := provisioner.NewClient(cfg.ProvisionerURL, cfg.ProvisionerToken, provisionerHTTP)
+	functionSpool, err := managerfunctions.NewSpool(cfg.FunctionUploadSpoolDir)
+	if err != nil {
+		slog.Error("initialize function upload spool", "error", err)
+		os.Exit(1)
+	}
+	functionManager := managerfunctions.NewService(database, operations, functionSpool, provisionerClient, now)
+	if err := functionManager.Resume(context.Background(), projects.Get); err != nil {
+		slog.Error("resume functions operations failed", "error", err)
+	}
 	allocator := ports.NewAllocatorWithContextProbe(database, cfg.PortRangeStart, cfg.PortRangeEnd, ports.NetworkProbe{}, provisionerClient)
 	installer := install.NewOrchestrator(database, operations, allocator, cipher, provisionerClient, install.CryptoGenerator{Random: rand.Reader, Now: now}, now)
 	configurationManager := managerconfiguration.NewOrchestrator(database, operations, allocator, provisionerClient, cipher, now)
@@ -69,6 +79,9 @@ func main() {
 			if err := configurationManager.Resume(context.Background(), projects.Get); err != nil {
 				slog.Error("scheduled configuration resume failed", "error", err)
 			}
+			if err := functionManager.Resume(context.Background(), projects.Get); err != nil {
+				slog.Error("scheduled functions resume failed", "error", err)
+			}
 		}
 	}()
 	lifecycleManager := lifecycle.NewService(database, operations, provisionerClient)
@@ -78,6 +91,7 @@ func main() {
 		HostResources: provisionerClient,
 		Operations:    operations,
 		Configuration: configurationManager,
+		Functions:     functionManager,
 	})
 	assets := webdist.Embedded()
 	if cfg.WebDistPath != "" {

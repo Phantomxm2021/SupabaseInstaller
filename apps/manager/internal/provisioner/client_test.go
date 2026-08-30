@@ -20,6 +20,23 @@ func TestClientDefaultRequestTimeoutAllowsDurableRuntimeRecovery(t *testing.T) {
 	}
 }
 
+func TestClientDeployFunctionStreamsArchiveToTypedProvisionerRoute(t *testing.T) {
+	var archive string
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.Path != "/internal/v1/projects/bee/functions/demo/deploy" || request.Header.Get("X-Operation-ID") != "op-1" || request.Header.Get("Authorization") == "" {
+			t.Fatalf("request = %s %s headers=%v", request.Method, request.URL.Path, request.Header)
+		}
+		data, _ := io.ReadAll(request.Body)
+		archive = string(data)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"current":{"sha256":"abc"}}`)), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+	result, err := client.DeployFunction(context.Background(), "bee", "demo", "op-1", strings.NewReader("zip-body"))
+	if err != nil || archive != "zip-body" || result.Current == nil || result.Current.SHA256 != "abc" {
+		t.Fatalf("result/archive/error = %#v/%q/%v", result, archive, err)
+	}
+}
+
 func TestReconcileWireRequestOmitsRetiredRevisionProtocol(t *testing.T) {
 	var body []byte
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {

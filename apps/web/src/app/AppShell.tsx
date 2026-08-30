@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Boxes, ChevronsUpDown, Database, LayoutDashboard, LogOut, Plus, Search, ServerCog, Settings, ShieldCheck, UserCircle } from 'lucide-react'
+import { Boxes, ChevronsUpDown, Code2, Database, LayoutDashboard, LogOut, Plus, Search, ServerCog, Settings, ShieldCheck, UserCircle } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { apiFetch, setCSRFToken } from '../api/client'
 import {
@@ -71,6 +71,7 @@ export function AppShell() {
               <SidebarMenu>
                 <SidebarMenuItem><SidebarMenuButton className="primary-sidebar-menu-button" collapsibleIcon={false} isActive={location.pathname === `/projects/${projectId}` || location.pathname.endsWith('/overview')} render={<Link to={`/projects/${projectId}/overview`} aria-current={location.pathname === `/projects/${projectId}` || location.pathname.endsWith('/overview') ? 'page' : undefined} />}><LayoutDashboard /><span>Server Overview</span></SidebarMenuButton></SidebarMenuItem>
                 <SidebarMenuItem><SidebarMenuButton className="primary-sidebar-menu-button" collapsibleIcon={false} isActive={location.pathname.includes('/authentication')} render={<Link to={`/projects/${projectId}/authentication`} aria-current={location.pathname.includes('/authentication') ? 'page' : undefined} />}><ShieldCheck /><span>Authentication</span></SidebarMenuButton></SidebarMenuItem>
+                <SidebarMenuItem><SidebarMenuButton className="primary-sidebar-menu-button" collapsibleIcon={false} isActive={location.pathname.endsWith('/functions')} render={<Link to={`/projects/${projectId}/functions`} aria-current={location.pathname.endsWith('/functions') ? 'page' : undefined} />}><Code2 /><span>Functions</span></SidebarMenuButton></SidebarMenuItem>
                 <SidebarMenuItem><SidebarMenuButton className="primary-sidebar-menu-button" collapsibleIcon={false} isActive={location.pathname.endsWith('/configuration')} render={<Link to={`/projects/${projectId}/configuration`} aria-current={location.pathname.endsWith('/configuration') ? 'page' : undefined} />}><Settings /><span>Server Settings</span></SidebarMenuButton></SidebarMenuItem>
               </SidebarMenu>
             </nav>}

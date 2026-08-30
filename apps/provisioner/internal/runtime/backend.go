@@ -65,12 +65,55 @@ func (backend *Backend) DeployFunction(ctx context.Context, request contracts.De
 	if request.Archive == nil {
 		return contracts.FunctionDeploymentResult{}, fmt.Errorf("function archive is required")
 	}
+	if metadata, metadataErr := backend.projectFS.Metadata(request.Slug); metadataErr == nil && len(metadata.EnabledServices) > 0 {
+		enabled := false
+		for _, service := range metadata.EnabledServices {
+			if service == "functions" {
+				enabled = true
+				break
+			}
+		}
+		if !enabled {
+			return contracts.FunctionDeploymentResult{}, fmt.Errorf("functions service is disabled")
+		}
+	}
 	runtime, err := backend.projectFS.CurrentRuntimeFiles(request.Slug)
 	if err != nil {
 		return contracts.FunctionDeploymentResult{}, err
 	}
 	project := compose.ProjectRef{Slug: request.Slug, Dir: runtime.ProjectDir, ComposeFile: runtime.ComposeFile, EnvFile: runtime.EnvFile}
 	return backend.functions.Deploy(ctx, project, request, request.Archive)
+}
+
+func (backend *Backend) ListFunctions(ctx context.Context, request contracts.FunctionOperationRequest) ([]contracts.FunctionSummary, error) {
+	if request.Slug == "" {
+		return nil, fmt.Errorf("server slug is required")
+	}
+	return backend.projectFS.ListFunctions(request.Slug)
+}
+
+func (backend *Backend) RollbackFunction(ctx context.Context, request contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
+	if request.Slug == "" {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("server slug is required")
+	}
+	runtime, err := backend.projectFS.CurrentRuntimeFiles(request.Slug)
+	if err != nil {
+		return contracts.FunctionDeploymentResult{}, err
+	}
+	project := compose.ProjectRef{Slug: request.Slug, Dir: runtime.ProjectDir, ComposeFile: runtime.ComposeFile, EnvFile: runtime.EnvFile}
+	return backend.functions.Rollback(ctx, project, request)
+}
+
+func (backend *Backend) DeleteFunction(ctx context.Context, request contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
+	if request.Slug == "" {
+		return contracts.FunctionDeploymentResult{}, fmt.Errorf("server slug is required")
+	}
+	runtime, err := backend.projectFS.CurrentRuntimeFiles(request.Slug)
+	if err != nil {
+		return contracts.FunctionDeploymentResult{}, err
+	}
+	project := compose.ProjectRef{Slug: request.Slug, Dir: runtime.ProjectDir, ComposeFile: runtime.ComposeFile, EnvFile: runtime.EnvFile}
+	return backend.functions.Delete(ctx, project, request)
 }
 
 // EnableAcceptanceInspectorFailure is only wired by the disposable acceptance

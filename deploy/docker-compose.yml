@@ -15,6 +15,7 @@ services:
     environment:
       MANAGER_LISTEN_ADDR: 0.0.0.0:8080
       MANAGER_DATABASE_PATH: /var/lib/supabase-manager/manager.db
+      FUNCTION_UPLOAD_SPOOL_DIR: /var/lib/supabase-manager/function-uploads
       MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:?set MASTER_ENCRYPTION_KEY in deploy/.env}
       PROVISIONER_URL: http://provisioner:9090
       PROVISIONER_TOKEN: ${PROVISIONER_TOKEN:?set PROVISIONER_TOKEN in deploy/.env}

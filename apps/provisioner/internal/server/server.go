@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
 
@@ -31,6 +32,16 @@ type hostPortBackend interface {
 
 type functionDeploymentBackend interface {
 	DeployFunction(context.Context, contracts.DeployFunctionRequest) (contracts.FunctionDeploymentResult, error)
+}
+
+type functionListBackend interface {
+	ListFunctions(context.Context, contracts.FunctionOperationRequest) ([]contracts.FunctionSummary, error)
+}
+type functionRollbackBackend interface {
+	RollbackFunction(context.Context, contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error)
+}
+type functionDeleteBackend interface {
+	DeleteFunction(context.Context, contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error)
 }
 
 // certificateStager is deliberately separate from runtime reconciliation: it
@@ -70,6 +81,9 @@ func New(options Options) http.Handler {
 	private.HandleFunc("POST /internal/v1/projects/rollback-database-password", service.rollbackDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/confirm-database-password-rotation", service.confirmDatabasePasswordRotation)
 	private.HandleFunc("POST /internal/v1/projects/{slug}/functions/{name}/deploy", service.deployFunction)
+	private.HandleFunc("GET /internal/v1/projects/{slug}/functions", service.listFunctions)
+	private.HandleFunc("POST /internal/v1/projects/{slug}/functions/{name}/rollback", service.rollbackFunction)
+	private.HandleFunc("DELETE /internal/v1/projects/{slug}/functions/{name}", service.deleteFunction)
 	private.HandleFunc("GET /internal/v1/host/resources", service.hostResources)
 	private.HandleFunc("GET /internal/v1/host/ports/{port}", service.hostPortAvailable)
 	root := http.NewServeMux()
@@ -89,10 +103,67 @@ func (s *server) deployFunction(response http.ResponseWriter, request *http.Requ
 		writeError(response, http.StatusBadRequest, "INVALID_FUNCTION_DEPLOYMENT", "A valid function name and operation ID are required")
 		return
 	}
+	mediaType, _, _ := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if mediaType != "application/zip" && mediaType != "application/octet-stream" {
+		writeError(response, http.StatusBadRequest, "INVALID_FUNCTION_ARCHIVE", "Function archive must be a ZIP")
+		return
+	}
 	request.Body = http.MaxBytesReader(response, request.Body, 20<<20)
 	result, err := backend.DeployFunction(request.Context(), contracts.DeployFunctionRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID, Archive: request.Body})
 	if err != nil {
 		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_DEPLOY_FAILED", "Functions deployment failed")
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
+}
+
+func (s *server) listFunctions(response http.ResponseWriter, request *http.Request) {
+	backend, ok := s.backend.(functionListBackend)
+	if !ok {
+		writeError(response, http.StatusServiceUnavailable, "FUNCTIONS_UNAVAILABLE", "Functions are unavailable")
+		return
+	}
+	items, err := backend.ListFunctions(request.Context(), contracts.FunctionOperationRequest{Slug: request.PathValue("slug")})
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, "FUNCTIONS_LIST_FAILED", "Unable to list functions")
+		return
+	}
+	writeJSON(response, http.StatusOK, map[string]any{"functions": items})
+}
+
+func (s *server) rollbackFunction(response http.ResponseWriter, request *http.Request) {
+	backend, ok := s.backend.(functionRollbackBackend)
+	if !ok {
+		writeError(response, http.StatusServiceUnavailable, "FUNCTIONS_UNAVAILABLE", "Functions are unavailable")
+		return
+	}
+	name, operationID := request.PathValue("name"), request.Header.Get("X-Operation-ID")
+	if err := contracts.ValidateFunctionName(name); err != nil || operationID == "" {
+		writeError(response, http.StatusBadRequest, "INVALID_FUNCTION_ROLLBACK", "A valid function name and operation ID are required")
+		return
+	}
+	result, err := backend.RollbackFunction(request.Context(), contracts.FunctionOperationRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID})
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_ROLLBACK_FAILED", "Function rollback failed")
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
+}
+
+func (s *server) deleteFunction(response http.ResponseWriter, request *http.Request) {
+	backend, ok := s.backend.(functionDeleteBackend)
+	if !ok {
+		writeError(response, http.StatusServiceUnavailable, "FUNCTIONS_UNAVAILABLE", "Functions are unavailable")
+		return
+	}
+	name, operationID := request.PathValue("name"), request.Header.Get("X-Operation-ID")
+	if err := contracts.ValidateFunctionName(name); err != nil || operationID == "" || request.Header.Get("X-Confirm-Function") != name {
+		writeError(response, http.StatusBadRequest, "INVALID_FUNCTION_DELETE", "Function name, operation ID, and exact confirmation are required")
+		return
+	}
+	result, err := backend.DeleteFunction(request.Context(), contracts.FunctionOperationRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID})
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_DELETE_FAILED", "Function deletion failed")
 		return
 	}
 	writeJSON(response, http.StatusOK, result)

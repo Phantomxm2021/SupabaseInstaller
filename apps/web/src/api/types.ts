@@ -199,6 +199,16 @@ export interface FunctionsConfig {
   directory: string;
   variables: FunctionVariable[];
 }
+export interface FunctionRelease {
+  sha256: string
+  operationId: string
+  deployedAt: string
+}
+export interface FunctionSummary {
+  name: string
+  current?: FunctionRelease
+  previous?: FunctionRelease
+}
 export interface DatabaseConfig {
   version: string;
   directPort: boolean;
