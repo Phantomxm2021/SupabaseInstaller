@@ -15,8 +15,9 @@ pair.
 - Allow a safe custom certificate name; default to `cloudflare-origin`.
 - Validate PEM parsing and confirm that the certificate public key matches the
   private key before changing host state.
-- Store files under `/etc/supabase-manager/tls/<name>.pem` and
-  `/etc/supabase-manager/tls/<name>.key`.
+- Store files under `/etc/nginx/ssl/<name>.pem` and
+  `/etc/nginx/ssl/<name>.key`; create `/etc/nginx/ssl` automatically when it
+  does not exist.
 - Atomically activate the selected pair, validate Nginx, reload Nginx, and
   roll back both files and active selection on failure.
 - Re-render existing managed sites so their `ssl_certificate` and
@@ -36,7 +37,8 @@ The Manager API receives a bounded multipart upload containing `name`,
 `certificate`, and `privateKey`. It forwards the bytes over the existing
 authenticated Unix-socket channel to the native Nginx proxy agent.
 
-The agent is the sole writer for `/etc/supabase-manager/tls`. It validates the
+The agent is the sole writer for `/etc/nginx/ssl`. It creates that directory
+when necessary, then validates the
 requested name against a restricted identifier pattern, parses the PEM inputs,
 verifies their key pair, writes both files with root-owned restrictive modes,
 updates the active TLS selection, and runs `nginx -t` followed by reload. The
