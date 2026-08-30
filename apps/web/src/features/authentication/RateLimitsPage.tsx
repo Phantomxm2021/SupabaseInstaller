@@ -27,7 +27,7 @@ export function RateLimitsPage({ context: provided }: { context?: Authentication
   const form = useForm<AuthConfig>({ resolver: zodResolver(authSchema) as Resolver<AuthConfig>, defaultValues: initial })
   useResetOnServerRevision(form, initial, context.revision)
   const limits = form.watch('rateLimits')
-  return <main className="page auth-page auth-reference-page">
+  return <main className="page auth-page auth-reference-page dashboard-stack">
     <header className="page-heading auth-reference-heading"><div><h1>Rate Limits</h1><p className="muted">Safeguard against bursts of incoming traffic to prevent abuse and maximize stability.</p></div><a className="auth-docs-link" href="https://supabase.com/docs/guides/platform/going-into-prod#rate-limiting-resource-allocation--abuse-prevention" target="_blank" rel="noreferrer"><BookOpen aria-hidden="true" />Docs</a></header>
     <form onSubmit={form.handleSubmit((value) => context.requestSave({ section: 'auth', value, dirty: form.formState.dirtyFields, setError: (name, message) => form.setError(name as never, { type: 'server', message }) }))}>
       <section className="auth-settings-card auth-rate-limit-card auth-rate-limits-card" aria-label="Authentication rate limits">

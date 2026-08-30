@@ -104,6 +104,17 @@ it('separates built-in and OAuth provider browsing with the Supabase Cloud tab l
   router.dispose()
 })
 
+it('uses shared dashboard section gaps between provider headings and cards', async () => {
+  const { router } = renderSignInProviders()
+
+  const userSignups = await screen.findByRole('heading', { name: 'User Signups' })
+  const authProviders = screen.getByRole('heading', { name: 'Auth Providers' })
+  expect(userSignups.closest('form')).toHaveClass('dashboard-section')
+  expect(authProviders.closest('section')).toHaveClass('dashboard-section')
+  expect(userSignups.closest('[data-slot="tabs-content"]')).toHaveClass('dashboard-stack')
+  router.dispose()
+})
+
 it('exposes the official email security and OTP controls in the provider drawer', async () => {
   const { router } = renderSignInProviders()
   const user = userEvent.setup()

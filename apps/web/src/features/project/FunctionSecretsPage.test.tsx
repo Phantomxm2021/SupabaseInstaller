@@ -1,9 +1,17 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { defaultConfiguration } from '../projects/projectSchema'
 import { FunctionSecretsPage } from './FunctionSecretsPage'
+
+it('binds the secrets workspace to the shared grid layout rule', () => {
+  const styles = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
+  expect(styles).toContain('.function-secrets-workspace {\n  display: grid;\n  gap: 40px;\n}')
+  expect(styles).not.toContain('.functions-content .functions-secrets-page {\n  max-width: 1100px;\n}')
+})
 
 it('presents the Supabase-style secrets workspace and saves an added replacement', async () => {
   const user = userEvent.setup()

@@ -15,6 +15,7 @@ describe('MultiFactorPage', () => {
   it('renders the source-style MFA factor controls', () => {
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><MultiFactorPage context={context} /></MemoryRouter></QueryClientProvider>)
     expect(screen.getByRole('heading', { level: 1, name: 'Multi-Factor Authentication (MFA)' })).toBeVisible()
+    expect(screen.getByRole('main')).toHaveClass('dashboard-stack')
     expect(screen.getByLabelText('TOTP (App Authenticator)')).toHaveValue('enabled')
     expect(screen.getByLabelText('Maximum number of per-user MFA factors')).toHaveValue(10)
     expect(screen.getByText('SMS MFA')).toBeVisible()

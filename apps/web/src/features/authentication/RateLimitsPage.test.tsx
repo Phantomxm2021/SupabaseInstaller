@@ -22,6 +22,7 @@ describe('RateLimitsPage', () => {
     expect(screen.getByText('emails/h')).toBeVisible()
     expect(screen.getByLabelText('Rate limit for token refreshes')).toHaveValue(150)
     expect(screen.getAllByText('requests/5 min')).toHaveLength(3)
+    expect(screen.getByRole('main')).toHaveClass('dashboard-stack')
   })
 
   it('validates fields then submits a full Auth configuration through the Auth operation flow', async () => {

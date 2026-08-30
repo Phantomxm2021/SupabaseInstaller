@@ -418,16 +418,13 @@ h2 {
   letter-spacing: normal;
   line-height: 25.2px;
 }
-.functions-content .functions-secrets-page {
-  max-width: 1100px;
-}
 .functions-secrets-heading {
   margin-bottom: 48px;
 }
 .functions-content .functions-secrets-page h1 {
   margin-bottom: 4px;
 }
-.functions-secrets-workspace {
+.function-secrets-workspace {
   display: grid;
   gap: 40px;
 }
@@ -743,7 +740,7 @@ h2 {
 }
 .auth-settings-row {
   min-height: 0;
-  padding: 24px;
+  padding: 16px;
   border-bottom: 1px solid #2d312f;
 }
 .auth-settings-row:last-of-type {
@@ -769,7 +766,7 @@ h2 {
 }
 .auth-settings-card > [data-slot="button"],
 .auth-settings-card > div:last-child > [data-slot="button"] {
-  margin: 20px 24px;
+  margin: 12px 16px;
 }
 .auth-provider-list {
   display: grid;
@@ -1021,8 +1018,7 @@ a.auth-template-row:hover {
   line-height: 18.5714px;
 }
 .auth-reference-page {
-  display: flex;
-  flex-direction: column;
+  display: grid;
 }
 .auth-reference-page > .page-heading {
   display: flex;
@@ -1037,7 +1033,7 @@ a.auth-template-row:hover {
   line-height: 22.5px;
 }
 .auth-reference-section {
-  margin-top: 48px;
+  margin-top: 0;
 }
 .authentication-content .auth-reference-section > h2 {
   margin: 0 0 24px;
@@ -1080,9 +1076,6 @@ a.auth-template-row:hover {
 }
 .auth-rate-limits-card .auth-reference-card-footer [data-slot="button"] {
   border-radius: 6px;
-}
-.auth-reference-heading + form {
-  margin-top: 32px;
 }
 .auth-rate-limit-note {
   margin-top: 7px !important;

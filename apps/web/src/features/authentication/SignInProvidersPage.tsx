@@ -27,8 +27,8 @@ export function SignInProvidersPage() {
         <TabsTrigger value="supabase">Supabase Auth</TabsTrigger>
         <TabsTrigger value="third-party">Third-Party Auth</TabsTrigger>
       </TabsList>
-      <TabsContent value="supabase" className="space-y-16">
-        <form className="space-y-4" onSubmit={form.handleSubmit((value) => requestSave({ section: 'auth', value, dirty: form.formState.dirtyFields, setError: (name, message) => form.setError(name as never, { type: 'server', message }) }))}>
+      <TabsContent value="supabase" className="dashboard-stack">
+        <form className="dashboard-section" onSubmit={form.handleSubmit((value) => requestSave({ section: 'auth', value, dirty: form.formState.dirtyFields, setError: (name, message) => form.setError(name as never, { type: 'server', message }) }))}>
           <h2>User Signups</h2>
           <section className="auth-settings-card">
             <SettingsToggleRow><Toggle className="auth-setting-toggle" id="allow-signup" label="Allow new users to sign up" description="If this is disabled, new users will not be able to sign up to your application." checked={policy.email.allowSignup} onChange={(value) => { form.setValue('email.allowSignup', value, { shouldDirty: true, shouldValidate: true }); form.setValue('disableSignup', !value, { shouldDirty: true, shouldValidate: true }) }} /></SettingsToggleRow>
@@ -38,7 +38,7 @@ export function SignInProvidersPage() {
             <SectionSaveButton label="changes" disabled={!form.formState.isDirty} />
           </section>
         </form>
-        <section className="space-y-4">
+        <section className="dashboard-section">
           <div><h2>Auth Providers</h2><p className="muted mt-1">Authenticate your users through a suite of providers and login methods.</p></div>
           <div className="auth-settings-card auth-provider-list">
             {(['email', 'phone', ...OAUTH_PROVIDERS] as Provider[]).map((item) => <ProviderRow key={item} item={item} enabled={status(item)} onClick={() => setProvider(item)} />)}
