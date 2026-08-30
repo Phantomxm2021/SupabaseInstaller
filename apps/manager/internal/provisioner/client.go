@@ -96,6 +96,14 @@ func (c *Client) Reconcile(ctx context.Context, input contracts.ReconcileProject
 	return output, nil
 }
 
+func (c *Client) StageManagedTLS(ctx context.Context, input contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error) {
+	var output contracts.StageManagedTLSResponse
+	if err := c.post(ctx, "/internal/v1/nginx/certificates/stage", input, &output); err != nil {
+		return contracts.StageManagedTLSResponse{}, err
+	}
+	return output, nil
+}
+
 func (c *Client) RotateDatabasePassword(ctx context.Context, input contracts.RotateDatabasePasswordRequest) (contracts.RotateDatabasePasswordResponse, error) {
 	var output contracts.RotateDatabasePasswordResponse
 	if err := c.post(ctx, "/internal/v1/projects/rotate-database-password", input, &output); err != nil {

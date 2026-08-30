@@ -48,6 +48,24 @@ func TestReconcileEndpointReturnsTypedRedactedRollbackOutcome(t *testing.T) {
 	}
 }
 
+func TestStageCertificateForwardsPEMWithoutReturningIt(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	stager := &certificateStagerStub{}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, CertificateStager: stager})
+	response := authenticatedJSON(t, handler, "/internal/v1/nginx/certificates/stage", contracts.StageManagedTLSRequest{
+		CertificateName: "cloudflare-origin", BaseDomain: "example.com", CertificatePEM: []byte("-----BEGIN CERTIFICATE-----"), PrivateKeyPEM: []byte("-----BEGIN PRIVATE KEY-----"),
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
+	}
+	if string(stager.input.PrivateKeyPEM) != "-----BEGIN PRIVATE KEY-----" || strings.Contains(response.Body.String(), "PRIVATE KEY") {
+		t.Fatalf("PEM forwarding/redaction failed: input=%q body=%s", stager.input.PrivateKeyPEM, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "/etc/nginx/ssl/cloudflare-origin-example.pem") {
+		t.Fatalf("response missing safe TLS paths: %s", response.Body.String())
+	}
+}
+
 func TestReconcileEndpointUsesServerTerminologyForGenericFailures(t *testing.T) {
 	root, _ := projectfs.New(t.TempDir())
 	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: &reconcileStub{err: errors.New("runtime failure")}})
@@ -211,6 +229,15 @@ func (source *serverSequenceSource) Containers(context.Context, string) ([]healt
 }
 
 type reconcileStub struct{ err error }
+
+type certificateStagerStub struct {
+	input contracts.StageManagedTLSRequest
+}
+
+func (s *certificateStagerStub) StageCertificate(_ context.Context, input contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error) {
+	s.input = input
+	return contracts.StageManagedTLSResponse{ManagedTLSConfig: contracts.ManagedTLSConfig{CertificateName: input.CertificateName, CertificateFile: "/etc/nginx/ssl/cloudflare-origin-example.pem", PrivateKeyFile: "/etc/nginx/ssl/cloudflare-origin-example.key"}, Created: true}, nil
+}
 
 type lifecycleFailureStub struct{ err error }
 

@@ -14,21 +14,33 @@ import (
 	"supabase-manager/apps/nginxproxy/internal/site"
 )
 
-const maxRequestBytes = 64 << 10
+const (
+	maxRequestBytes            = 64 << 10
+	maxCertificateRequestBytes = 2 << 20
+)
 
 type siteStore interface {
 	Apply(context.Context, site.RenderedSite) error
 	Remove(context.Context, string) error
 }
 
-type Handler struct {
-	token    string
-	renderer site.Renderer
-	store    siteStore
+type certificateStore interface {
+	Stage(context.Context, site.CertificateInput) (site.CertificateResult, error)
 }
 
-func New(token string, renderer site.Renderer, store siteStore) *Handler {
-	return &Handler{token: token, renderer: renderer, store: store}
+type Handler struct {
+	token        string
+	renderer     site.Renderer
+	store        siteStore
+	certificates certificateStore
+}
+
+func New(token string, renderer site.Renderer, store siteStore, certificates ...certificateStore) *Handler {
+	handler := &Handler{token: token, renderer: renderer, store: store}
+	if len(certificates) > 0 {
+		handler.certificates = certificates[0]
+	}
+	return handler
 }
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -50,9 +62,29 @@ func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		h.apply(response, request)
 	case "/v1/sites/remove":
 		h.remove(response, request)
+	case "/v1/certificates/stage":
+		h.stageCertificate(response, request)
 	default:
 		writeError(response, http.StatusNotFound, "not found")
 	}
+}
+
+func (h *Handler) stageCertificate(response http.ResponseWriter, request *http.Request) {
+	if h.certificates == nil {
+		writeError(response, http.StatusServiceUnavailable, "certificate staging is unavailable")
+		return
+	}
+	var input site.CertificateInput
+	if err := decodeJSONLimit(response, request, &input, maxCertificateRequestBytes); err != nil {
+		return
+	}
+	result, err := h.certificates.Stage(request.Context(), input)
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	response.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(response).Encode(result)
 }
 
 func (h *Handler) authorized(request *http.Request) bool {
@@ -101,7 +133,11 @@ func (h *Handler) remove(response http.ResponseWriter, request *http.Request) {
 }
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, destination any) error {
-	request.Body = http.MaxBytesReader(response, request.Body, maxRequestBytes)
+	return decodeJSONLimit(response, request, destination, maxRequestBytes)
+}
+
+func decodeJSONLimit(response http.ResponseWriter, request *http.Request, destination any, limit int64) error {
+	request.Body = http.MaxBytesReader(response, request.Body, limit)
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"supabase-manager/internal/contracts"
 )
 
 func TestClientCallsTypedApplyAndRemoveOverUnixSocket(t *testing.T) {
@@ -31,6 +33,17 @@ func TestClientCallsTypedApplyAndRemoveOverUnixSocket(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&gotRoute); err != nil {
 				t.Errorf("decode route: %v", err)
 			}
+		}
+		if request.URL.Path == "/v1/certificates/stage" {
+			var input contracts.StageManagedTLSRequest
+			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+				t.Errorf("decode certificate request: %v", err)
+			}
+			if string(input.PrivateKeyPEM) != "private-key" {
+				t.Errorf("private key was not sent to host agent")
+			}
+			_ = json.NewEncoder(response).Encode(contracts.StageManagedTLSResponse{ManagedTLSConfig: contracts.ManagedTLSConfig{CertificateName: input.CertificateName, CertificateFile: "/etc/nginx/ssl/cloudflare-origin-example.pem", PrivateKeyFile: "/etc/nginx/ssl/cloudflare-origin-example.key"}, Created: true})
+			return
 		}
 		response.WriteHeader(http.StatusNoContent)
 	})}
@@ -60,6 +73,14 @@ func TestClientCallsTypedApplyAndRemoveOverUnixSocket(t *testing.T) {
 	if got, want := gotPath, "/v1/sites/remove"; got != want {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
+
+	staged, err := client.StageCertificate(context.Background(), contracts.StageManagedTLSRequest{CertificateName: "cloudflare-origin", BaseDomain: "example.com", CertificatePEM: []byte("certificate"), PrivateKeyPEM: []byte("private-key")})
+	if err != nil {
+		t.Fatalf("StageCertificate() error = %v", err)
+	}
+	if got, want := staged.CertificateFile, "/etc/nginx/ssl/cloudflare-origin-example.pem"; got != want {
+		t.Fatalf("certificate file = %q, want %q", got, want)
+	}
 }
 
 func TestDisabledClientDoesNothing(t *testing.T) {
@@ -69,5 +90,8 @@ func TestDisabledClientDoesNothing(t *testing.T) {
 	}
 	if err := client.Remove(context.Background(), "bee"); err != nil {
 		t.Fatalf("Remove() error = %v", err)
+	}
+	if _, err := client.StageCertificate(context.Background(), contracts.StageManagedTLSRequest{}); err == nil {
+		t.Fatal("StageCertificate() succeeded with disabled managed proxy")
 	}
 }

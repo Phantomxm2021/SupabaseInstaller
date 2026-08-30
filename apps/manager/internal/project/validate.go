@@ -34,6 +34,12 @@ func ValidateDraft(draft Draft) error {
 	if err := NormalizeProjectAddress(draft.Slug, &cfg.General); err != nil {
 		errs = append(errs, err)
 	}
+	if cfg.Network.ManagedTLS != nil {
+		expected, err := contracts.ManagedTLSPaths(cfg.Network.ManagedTLS.CertificateName, cfg.General.SiteURL)
+		if err != nil || expected.CertificateFile != cfg.Network.ManagedTLS.CertificateFile || expected.PrivateKeyFile != cfg.Network.ManagedTLS.PrivateKeyFile {
+			errs = append(errs, FieldError{Field: "configuration.network.managedTls", Message: "must use the managed TLS path derived from the Site URL base domain"})
+		}
+	}
 	if cfg.General.SupabaseVersion == "" || strings.EqualFold(cfg.General.SupabaseVersion, "latest") || strings.EqualFold(cfg.General.SupabaseVersion, "master") {
 		errs = append(errs, FieldError{Field: "configuration.general.supabaseVersion", Message: "must be a pinned supported version"})
 	}

@@ -45,7 +45,7 @@ func run() error {
 	)
 	handler := server.New(settings.Token, site.NewRenderer(site.TLSPaths{
 		CertificateFile: settings.CertificateFile, CertificateKeyFile: settings.CertificateKeyFile, AuthDirectory: settings.AuthDirectory,
-	}), store)
+	}), store, site.NewCertificateStore("/etc/nginx/ssl"))
 	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 
 	shutdown := make(chan os.Signal, 1)

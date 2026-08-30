@@ -36,6 +36,21 @@ it('does not render the setup tab navigation while creating a project', () => {
   expect(screen.getByRole('button', { name: /Continue/ })).toBeVisible()
 })
 
+it('keeps TLS configuration in a dedicated second card on the server details step', async () => {
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}>
+      <MemoryRouter><NewProjectPage /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+
+  expect(screen.getByText('TLS certificate')).toBeVisible()
+  expect(screen.getByText('Use default certificate')).toBeVisible()
+  await user.click(screen.getByText('Upload custom certificate'))
+  expect(screen.getByLabelText('Certificate (.pem or .crt)')).toBeVisible()
+  expect(screen.getByLabelText('Private key (.key or .pem)')).toBeVisible()
+})
+
 it('disables directional transforms when reduced motion is requested', () => {
   const styles = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
 

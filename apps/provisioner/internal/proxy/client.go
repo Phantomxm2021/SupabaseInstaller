@@ -12,16 +12,20 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"supabase-manager/internal/contracts"
 )
 
 type Route struct {
-	Slug           string `json:"slug"`
-	Domain         string `json:"domain"`
-	APIPort        int    `json:"apiPort"`
-	StudioPort     int    `json:"studioPort"`
-	StudioEnabled  bool   `json:"studioEnabled"`
-	StudioUsername string `json:"studioUsername"`
-	StudioPassword string `json:"studioPassword"`
+	Slug               string `json:"slug"`
+	Domain             string `json:"domain"`
+	APIPort            int    `json:"apiPort"`
+	StudioPort         int    `json:"studioPort"`
+	StudioEnabled      bool   `json:"studioEnabled"`
+	StudioUsername     string `json:"studioUsername"`
+	StudioPassword     string `json:"studioPassword"`
+	CertificateFile    string `json:"certificateFile,omitempty"`
+	CertificateKeyFile string `json:"certificateKeyFile,omitempty"`
 }
 
 type Client interface {
@@ -29,11 +33,18 @@ type Client interface {
 	Remove(context.Context, string) error
 }
 
+type CertificateStager interface {
+	StageCertificate(context.Context, contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error)
+}
+
 // DisabledClient retains the current manual Nginx deployment mode.
 type DisabledClient struct{}
 
 func (DisabledClient) Apply(context.Context, Route) error   { return nil }
 func (DisabledClient) Remove(context.Context, string) error { return nil }
+func (DisabledClient) StageCertificate(context.Context, contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error) {
+	return contracts.StageManagedTLSResponse{}, fmt.Errorf("managed nginx proxy is disabled")
+}
 
 type ManagedClient struct {
 	token  string
@@ -66,7 +77,19 @@ func (c *ManagedClient) Remove(ctx context.Context, slug string) error {
 	}{Slug: slug})
 }
 
+func (c *ManagedClient) StageCertificate(ctx context.Context, input contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error) {
+	var output contracts.StageManagedTLSResponse
+	if err := c.callJSON(ctx, "/v1/certificates/stage", input, &output); err != nil {
+		return contracts.StageManagedTLSResponse{}, err
+	}
+	return output, nil
+}
+
 func (c *ManagedClient) call(ctx context.Context, path string, body any) error {
+	return c.callJSON(ctx, path, body, nil)
+}
+
+func (c *ManagedClient) callJSON(ctx context.Context, path string, body any, output any) error {
 	if c.token == "" {
 		return fmt.Errorf("managed nginx proxy token is empty")
 	}
@@ -86,6 +109,12 @@ func (c *ManagedClient) call(ctx context.Context, path string, body any) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && output != nil {
+		if err := json.NewDecoder(io.LimitReader(response.Body, 16<<10)).Decode(output); err != nil {
+			return fmt.Errorf("decode managed nginx proxy response: %w", err)
+		}
 		return nil
 	}
 	message, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))

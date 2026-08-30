@@ -29,17 +29,26 @@ type hostPortBackend interface {
 	HostPortAvailable(context.Context, int) (bool, error)
 }
 
+// certificateStager is deliberately separate from runtime reconciliation: it
+// forwards short-lived PEM bytes to the host-owned Nginx agent and returns
+// only safe filenames for the project configuration.
+type certificateStager interface {
+	StageCertificate(context.Context, contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error)
+}
+
 type Options struct {
-	ManagerToken string
-	ProjectFS    *projectfs.Root
-	Backend      Backend
-	Logger       *slog.Logger
+	ManagerToken      string
+	ProjectFS         *projectfs.Root
+	Backend           Backend
+	CertificateStager certificateStager
+	Logger            *slog.Logger
 }
 
 type server struct {
-	projectFS *projectfs.Root
-	backend   Backend
-	logger    *slog.Logger
+	projectFS    *projectfs.Root
+	backend      Backend
+	certificates certificateStager
+	logger       *slog.Logger
 }
 
 func New(options Options) http.Handler {
@@ -47,11 +56,12 @@ func New(options Options) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	service := &server{projectFS: options.ProjectFS, backend: options.Backend, logger: logger}
+	service := &server{projectFS: options.ProjectFS, backend: options.Backend, certificates: options.CertificateStager, logger: logger}
 	private := http.NewServeMux()
 	private.HandleFunc("POST /internal/v1/projects/lifecycle", service.lifecycle)
 	private.HandleFunc("POST /internal/v1/projects/inspect", service.inspect)
 	private.HandleFunc("POST /internal/v1/projects/reconcile", service.reconcile)
+	private.HandleFunc("POST /internal/v1/nginx/certificates/stage", service.stageCertificate)
 	private.HandleFunc("POST /internal/v1/projects/rotate-database-password", service.rotateDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/rollback-database-password", service.rollbackDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/confirm-database-password-rotation", service.confirmDatabasePasswordRotation)
@@ -61,6 +71,24 @@ func New(options Options) http.Handler {
 	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
 	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
 	return root
+}
+
+func (s *server) stageCertificate(response http.ResponseWriter, request *http.Request) {
+	if s.certificates == nil {
+		writeError(response, http.StatusServiceUnavailable, "MANAGED_TLS_UNAVAILABLE", "Managed TLS is unavailable")
+		return
+	}
+	var input contracts.StageManagedTLSRequest
+	if err := decodeJSONLimit(response, request, &input, 2<<20); err != nil || input.CertificateName == "" || input.BaseDomain == "" || len(input.CertificatePEM) == 0 || len(input.PrivateKeyPEM) == 0 {
+		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A certificate name, base domain, certificate, and private key are required")
+		return
+	}
+	output, err := s.certificates.StageCertificate(request.Context(), input)
+	if err != nil {
+		writeError(response, http.StatusUnprocessableEntity, "TLS_STAGE_FAILED", "Unable to stage managed TLS certificate")
+		return
+	}
+	writeJSON(response, http.StatusOK, output)
 }
 
 func (s *server) hostResources(response http.ResponseWriter, request *http.Request) {
@@ -291,7 +319,11 @@ func (s *server) confirmDatabasePasswordRotation(response http.ResponseWriter, r
 var errStaleRevision = errors.New("stale config revision")
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, 1<<20))
+	return decodeJSONLimit(response, request, target, 1<<20)
+}
+
+func decodeJSONLimit(response http.ResponseWriter, request *http.Request, target any, limit int64) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, limit))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err

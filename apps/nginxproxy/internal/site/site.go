@@ -13,13 +13,15 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // ApplyRequest is the complete, typed routing state for one project.
 type ApplyRequest struct {
-	Slug           string `json:"slug"`
-	Domain         string `json:"domain"`
-	APIPort        int    `json:"apiPort"`
-	StudioPort     int    `json:"studioPort"`
-	StudioEnabled  bool   `json:"studioEnabled"`
-	StudioUsername string `json:"studioUsername"`
-	StudioPassword string `json:"studioPassword"`
+	Slug               string `json:"slug"`
+	Domain             string `json:"domain"`
+	APIPort            int    `json:"apiPort"`
+	StudioPort         int    `json:"studioPort"`
+	StudioEnabled      bool   `json:"studioEnabled"`
+	StudioUsername     string `json:"studioUsername"`
+	StudioPassword     string `json:"studioPassword"`
+	CertificateFile    string `json:"certificateFile,omitempty"`
+	CertificateKeyFile string `json:"certificateKeyFile,omitempty"`
 }
 
 // TLSPaths is installed by the host operator and is not project-controlled.
@@ -54,7 +56,8 @@ func (r Renderer) RenderApply(request ApplyRequest) (RenderedSite, error) {
 	if err := validateRequest(request); err != nil {
 		return RenderedSite{}, err
 	}
-	if err := validateTLSPaths(r.tls); err != nil {
+	certificateFile, certificateKeyFile, err := r.resolveTLSPaths(request)
+	if err != nil {
 		return RenderedSite{}, err
 	}
 
@@ -128,11 +131,26 @@ server {
         proxy_send_timeout 3600s;
     }
 }
-`, request.Domain, request.Domain, r.tls.CertificateFile, r.tls.CertificateKeyFile,
+		`, request.Domain, request.Domain, certificateFile, certificateKeyFile,
 			studioLocation,
 			request.APIPort, request.APIPort, request.APIPort, request.APIPort,
 			request.APIPort, request.APIPort, request.APIPort, request.APIPort),
 	}, nil
+}
+
+func (r Renderer) resolveTLSPaths(request ApplyRequest) (string, string, error) {
+	certificateFile, certificateKeyFile := request.CertificateFile, request.CertificateKeyFile
+	if certificateFile == "" && certificateKeyFile == "" {
+		certificateFile, certificateKeyFile = r.tls.CertificateFile, r.tls.CertificateKeyFile
+		if !safeAbsolutePath(certificateFile) || !safeAbsolutePath(certificateKeyFile) || !safeAbsolutePath(r.tls.AuthDirectory) {
+			return "", "", fmt.Errorf("invalid TLS certificate paths")
+		}
+		return certificateFile, certificateKeyFile, nil
+	}
+	if !safeManagedCertificatePath(certificateFile) || !safeManagedCertificatePath(certificateKeyFile) || !safeAbsolutePath(r.tls.AuthDirectory) {
+		return "", "", fmt.Errorf("invalid TLS certificate paths")
+	}
+	return certificateFile, certificateKeyFile, nil
 }
 
 func validateRequest(request ApplyRequest) error {
@@ -175,6 +193,10 @@ func validateTLSPaths(paths TLSPaths) error {
 		return fmt.Errorf("invalid TLS certificate paths")
 	}
 	return nil
+}
+
+func safeManagedCertificatePath(path string) bool {
+	return strings.HasPrefix(path, "/etc/nginx/ssl/") && safeAbsolutePath(path)
 }
 
 func validPort(port int) bool {

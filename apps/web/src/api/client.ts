@@ -17,7 +17,7 @@ export function setCSRFToken(token: string) {
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
-  if (init.body) headers.set('Content-Type', 'application/json')
+  if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (csrfToken && init.method && !['GET', 'HEAD'].includes(init.method)) {
     headers.set('X-CSRF-Token', csrfToken)
   }

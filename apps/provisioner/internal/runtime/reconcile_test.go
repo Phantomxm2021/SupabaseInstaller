@@ -79,6 +79,22 @@ func TestReconcileAppliesProxyOnlyAfterHealthyRuntime(t *testing.T) {
 	}
 }
 
+func TestRouteForProxyUsesPersistedManagedTLSPaths(t *testing.T) {
+	configuration := baseConfig()
+	configuration.Network.ManagedTLS = &contracts.ManagedTLSConfig{
+		CertificateName: "cloudflare-origin",
+		CertificateFile: "/etc/nginx/ssl/cloudflare-origin-example.pem",
+		PrivateKeyFile:  "/etc/nginx/ssl/cloudflare-origin-example.key",
+	}
+	route, managed := routeForProxy("bee", configuration, contracts.ProjectSecrets{DashboardPassword: "dashboard-password"})
+	if !managed {
+		t.Fatal("route was not managed")
+	}
+	if route.CertificateFile != configuration.Network.ManagedTLS.CertificateFile || route.CertificateKeyFile != configuration.Network.ManagedTLS.PrivateKeyFile {
+		t.Fatalf("TLS route = %#v", route)
+	}
+}
+
 func TestAcceptanceInspectorFailureRestoresPreviousRuntimeAndRecreatesPriorAuth(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {

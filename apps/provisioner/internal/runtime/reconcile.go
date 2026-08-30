@@ -308,14 +308,30 @@ func routeForProxy(slug string, configuration contracts.ProjectConfiguration, se
 		studioUsername = "supabase"
 	}
 	return proxy.Route{
-		Slug:           slug,
-		Domain:         configuration.General.Domain,
-		APIPort:        configuration.Network.APIPort,
-		StudioPort:     configuration.Network.StudioPort,
-		StudioEnabled:  configuration.Services.Studio,
-		StudioUsername: studioUsername,
-		StudioPassword: secrets.DashboardPassword,
+		Slug:               slug,
+		Domain:             configuration.General.Domain,
+		APIPort:            configuration.Network.APIPort,
+		StudioPort:         configuration.Network.StudioPort,
+		StudioEnabled:      configuration.Services.Studio,
+		StudioUsername:     studioUsername,
+		StudioPassword:     secrets.DashboardPassword,
+		CertificateFile:    managedTLSCertificateFile(configuration.Network.ManagedTLS),
+		CertificateKeyFile: managedTLSPrivateKeyFile(configuration.Network.ManagedTLS),
 	}, true
+}
+
+func managedTLSCertificateFile(config *contracts.ManagedTLSConfig) string {
+	if config == nil {
+		return ""
+	}
+	return config.CertificateFile
+}
+
+func managedTLSPrivateKeyFile(config *contracts.ManagedTLSConfig) string {
+	if config == nil {
+		return ""
+	}
+	return config.PrivateKeyFile
 }
 
 func pointFunctionsEnvAtCandidate(ref projectfs.RuntimeRef, original string) error {

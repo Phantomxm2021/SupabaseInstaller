@@ -692,6 +692,7 @@ const baseConfiguration = z.object({
   network: z.object({
     gateway: z.enum(["envoy", "kong"]),
     httpsMode: z.enum(["external", "caddy"]),
+    managedTls: z.object({ certificateName: z.string(), certificateFile: z.string(), privateKeyFile: z.string() }).optional(),
     internalGatewayPort: port.optional(),
     apiPort: port,
     studioPort: port,

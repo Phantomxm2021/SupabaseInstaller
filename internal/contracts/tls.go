@@ -19,6 +19,21 @@ type ManagedTLSConfig struct {
 	PrivateKeyFile  string `json:"privateKeyFile"`
 }
 
+// StageManagedTLSRequest carries a certificate pair only across the private
+// Manager -> Provisioner -> host-agent boundary. The bytes are deliberately
+// never embedded in ProjectConfiguration or returned by any API response.
+type StageManagedTLSRequest struct {
+	CertificateName string `json:"certificateName"`
+	BaseDomain      string `json:"baseDomain"`
+	CertificatePEM  []byte `json:"certificatePem"`
+	PrivateKeyPEM   []byte `json:"privateKeyPem"`
+}
+
+type StageManagedTLSResponse struct {
+	ManagedTLSConfig
+	Created bool `json:"created"`
+}
+
 // ManagedTLSPaths derives the only certificate paths that a project may use.
 // The configured Site URL is the base domain, so its first label identifies the
 // certificate scope: https://beegame.studio becomes cloudflare-origin-beegame.
@@ -36,10 +51,12 @@ func ManagedTLSPaths(certificateName, siteURL string) (ManagedTLSConfig, error) 
 	if len(labels) < 2 || labels[0] == "" {
 		return ManagedTLSConfig{}, fmt.Errorf("site URL must include a base domain")
 	}
-	label := labels[0]
-	if !managedTLSNamePattern.MatchString(label) {
-		return ManagedTLSConfig{}, fmt.Errorf("site URL has an invalid base domain label")
+	for _, domainLabel := range labels {
+		if !managedTLSNamePattern.MatchString(domainLabel) {
+			return ManagedTLSConfig{}, fmt.Errorf("site URL has an invalid base domain label")
+		}
 	}
+	label := labels[0]
 	base := name + "-" + label
 	return ManagedTLSConfig{
 		CertificateName: name,

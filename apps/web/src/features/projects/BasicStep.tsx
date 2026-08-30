@@ -34,10 +34,14 @@ export function BasicStep({
   form,
   availability,
   onRetryAvailability,
+  tls,
+  onTLSChange,
 }: {
   form: UseFormReturn<ProjectForm>
   availability: ProjectIdentityAvailability
   onRetryAvailability?: () => void
+  tls: { enabled: boolean; certificate?: File; privateKey?: File }
+  onTLSChange: (next: { enabled: boolean; certificate?: File; privateKey?: File }) => void
 }) {
   const error = (name: string) => {
     let current: any = form.formState.errors
@@ -49,7 +53,10 @@ export function BasicStep({
   const slugError = error('slug')
   const studioPasswordError = error('configuration.general.studioPassword')
 
+  const customTLS = tls.enabled
+
   return (
+    <div className="space-y-5">
     <Card>
       <CardHeader>
         <CardTitle>Server details</CardTitle>
@@ -131,5 +138,26 @@ export function BasicStep({
         </FieldGroup>
       </CardContent>
     </Card>
+    <Card>
+      <CardHeader>
+        <CardTitle>TLS certificate</CardTitle>
+        <CardDescription>Use the installed default certificate, or upload a certificate and matching private key for this server.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border px-4 py-3">
+          <input type="radio" name="tls-source" checked={!customTLS} onChange={() => onTLSChange({ enabled: false })} className="mt-1" />
+          <span className="space-y-1"><span className="block font-medium">Use default certificate</span><span className="block text-sm text-muted-foreground">Uses the host certificate named <code>cloudflare-origin</code>.</span></span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border px-4 py-3">
+          <input type="radio" name="tls-source" checked={customTLS} onChange={() => onTLSChange({ ...tls, enabled: true })} className="mt-1" />
+          <span className="space-y-1"><span className="block font-medium">Upload custom certificate</span><span className="block text-sm text-muted-foreground">Files are validated by the host and stored as <code>cloudflare-origin-{'{base-domain}'}.pem</code> and <code>.key</code>.</span></span>
+        </label>
+        {customTLS && <div className="grid gap-5 sm:grid-cols-2">
+          <Field><FieldLabel htmlFor="tls-certificate">Certificate (.pem or .crt)</FieldLabel><Input id="tls-certificate" type="file" accept=".pem,.crt,application/x-pem-file" onChange={(event) => onTLSChange({ ...tls, certificate: event.target.files?.[0] })} /><p className="text-xs text-muted-foreground">{tls.certificate?.name ?? 'No certificate selected'}</p></Field>
+          <Field><FieldLabel htmlFor="tls-private-key">Private key (.key or .pem)</FieldLabel><Input id="tls-private-key" type="file" accept=".key,.pem,application/x-pem-file" onChange={(event) => onTLSChange({ ...tls, privateKey: event.target.files?.[0] })} /><p className="text-xs text-muted-foreground">{tls.privateKey?.name ?? 'No private key selected'}</p></Field>
+        </div>}
+      </CardContent>
+    </Card>
+    </div>
   )
 }

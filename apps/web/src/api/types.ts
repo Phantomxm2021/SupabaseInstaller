@@ -216,6 +216,11 @@ export interface PoolerConfig {
 export interface NetworkConfig {
   gateway: "envoy" | "kong";
   httpsMode: "external" | "caddy";
+  managedTls?: {
+    certificateName: string;
+    certificateFile: string;
+    privateKeyFile: string;
+  };
   internalGatewayPort?: number;
   apiPort: number;
   studioPort: number;
@@ -296,6 +301,11 @@ export interface RedactedDatabaseConfig {
 export interface RedactedNetworkConfig {
   gateway: "envoy" | "kong";
   httpsMode: "external" | "caddy";
+  managedTls?: {
+    certificateName: string;
+    certificateFile: string;
+    privateKeyFile: string;
+  };
   internalGatewayPort?: number;
   apiPort: number;
   studioPort: number;

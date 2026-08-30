@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -41,6 +42,76 @@ func TestCreateProjectReturnsOperationAndNeverSecret(t *testing.T) {
 		if strings.Contains(response.Body.String(), forbidden) {
 			t.Fatalf("response leaked %s: %s", forbidden, response.Body.String())
 		}
+	}
+}
+
+func TestCreateProjectStagesTLSAndPersistsOnlySafePaths(t *testing.T) {
+	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	defer database.Close()
+	projects := project.NewService(database, func() string { return "project-1" }, time.Now)
+	stager := &fakeManagedTLSStager{}
+	mux := http.NewServeMux()
+	RegisterProjectRoutes(mux, ProjectOptions{Projects: projects, Installer: &fakeInstaller{}, ManagedTLS: stager})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	draft, _ := json.Marshal(projectDraftFixture())
+	_ = writer.WriteField("draft", string(draft))
+	certificate, _ := writer.CreateFormFile("certificate", "origin.pem")
+	_, _ = certificate.Write([]byte("-----BEGIN CERTIFICATE-----\ncertificate"))
+	privateKey, _ := writer.CreateFormFile("privateKey", "origin.key")
+	_, _ = privateKey.Write([]byte("-----BEGIN PRIVATE KEY-----\nkey"))
+	_ = writer.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/projects", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
+	}
+	if string(stager.input.PrivateKeyPEM) != "-----BEGIN PRIVATE KEY-----\nkey" || stager.input.BaseDomain != "example.com" {
+		t.Fatalf("staged input = %#v", stager.input)
+	}
+	snapshot, err := database.GetDesiredConfiguration(context.Background(), "project-1")
+	if err != nil || snapshot.Configuration.Network.ManagedTLS == nil {
+		t.Fatalf("managed TLS was not persisted safely: %#v err=%v", snapshot.Configuration.Network.ManagedTLS, err)
+	}
+	if got := snapshot.Configuration.Network.ManagedTLS.CertificateFile; got != "/etc/nginx/ssl/cloudflare-origin-example.pem" {
+		t.Fatalf("certificate file = %q", got)
+	}
+	if strings.Contains(response.Body.String(), "PRIVATE KEY") {
+		t.Fatalf("response leaked TLS material: %s", response.Body.String())
+	}
+}
+
+func TestCreateProjectDoesNotStageTLSForInvalidDraft(t *testing.T) {
+	database, _ := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	defer database.Close()
+	stager := &fakeManagedTLSStager{}
+	mux := http.NewServeMux()
+	RegisterProjectRoutes(mux, ProjectOptions{Projects: project.NewService(database, func() string { return "project-1" }, time.Now), Installer: &fakeInstaller{}, ManagedTLS: stager})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	draft := projectDraftFixture()
+	draft.Name = ""
+	encoded, _ := json.Marshal(draft)
+	_ = writer.WriteField("draft", string(encoded))
+	certificate, _ := writer.CreateFormFile("certificate", "origin.pem")
+	_, _ = certificate.Write([]byte("certificate"))
+	privateKey, _ := writer.CreateFormFile("privateKey", "origin.key")
+	_, _ = privateKey.Write([]byte("private-key"))
+	_ = writer.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/projects", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity || len(stager.input.CertificatePEM) != 0 {
+		t.Fatalf("status/staged = %d/%q", response.Code, stager.input.CertificatePEM)
 	}
 }
 
@@ -152,6 +223,15 @@ func projectDraftFixture() contracts.ProjectDraft {
 	cfg := project.DefaultConfiguration(contracts.PresetLightweight)
 	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	return contracts.ProjectDraft{Name: "Bee", Slug: "bee", Preset: contracts.PresetLightweight, Configuration: cfg}
+}
+
+type fakeManagedTLSStager struct {
+	input contracts.StageManagedTLSRequest
+}
+
+func (fake *fakeManagedTLSStager) StageManagedTLS(_ context.Context, input contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error) {
+	fake.input = input
+	return contracts.StageManagedTLSResponse{ManagedTLSConfig: contracts.ManagedTLSConfig{CertificateName: input.CertificateName, CertificateFile: "/etc/nginx/ssl/cloudflare-origin-example.pem", PrivateKeyFile: "/etc/nginx/ssl/cloudflare-origin-example.key"}, Created: true}, nil
 }
 
 func (fake *fakeInstaller) CreateOperation(_ context.Context, projectID string) (operation.Operation, error) {

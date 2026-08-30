@@ -37,14 +37,17 @@ func main() {
 		os.Exit(1)
 	}
 	proxyClient := proxy.Client(proxy.DisabledClient{})
+	certificateStager := proxy.CertificateStager(proxy.DisabledClient{})
 	if cfg.NginxProxyMode == "managed" {
-		proxyClient = proxy.NewManagedClient(cfg.NginxProxySocket, cfg.NginxProxyToken)
+		managedProxy := proxy.NewManagedClient(cfg.NginxProxySocket, cfg.NginxProxyToken)
+		proxyClient = managedProxy
+		certificateStager = managedProxy
 	}
 	backend := provisionerruntime.NewBackend(root, compose.NewRunner(compose.OSExecutor{}), health.NewInspector(dockerSource), proxyClient)
 	if cfg.AcceptanceInspectorFailOnce {
 		backend.EnableAcceptanceInspectorFailure()
 	}
-	handler := provisionerserver.New(provisionerserver.Options{ManagerToken: cfg.ManagerToken, ProjectFS: root, Backend: backend})
+	handler := provisionerserver.New(provisionerserver.Options{ManagerToken: cfg.ManagerToken, ProjectFS: root, Backend: backend, CertificateStager: certificateStager})
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,

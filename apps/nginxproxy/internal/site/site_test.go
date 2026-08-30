@@ -42,6 +42,23 @@ func TestRenderApplyUsesStableSlugFileAndCurrentDomain(t *testing.T) {
 	}
 }
 
+func TestRenderApplyUsesManagedTLSPaths(t *testing.T) {
+	renderer := NewRenderer(TLSPaths{AuthDirectory: t.TempDir()})
+	rendered, err := renderer.RenderApply(ApplyRequest{
+		Slug:               "bgs",
+		Domain:             "bgs.beegame.studio",
+		APIPort:            8000,
+		CertificateFile:    "/etc/nginx/ssl/cloudflare-origin-beegame.pem",
+		CertificateKeyFile: "/etc/nginx/ssl/cloudflare-origin-beegame.key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered.Contents, "ssl_certificate /etc/nginx/ssl/cloudflare-origin-beegame.pem;") {
+		t.Fatalf("rendered site did not use managed certificate: %s", rendered.Contents)
+	}
+}
+
 func TestRenderApplyProtectsOnlyStudioRoot(t *testing.T) {
 	renderer := NewRenderer(TLSPaths{
 		CertificateFile:    "/etc/nginx/ssl/cloudflare-origin.pem",

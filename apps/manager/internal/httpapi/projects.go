@@ -2,9 +2,15 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"supabase-manager/apps/manager/internal/authadmin"
@@ -29,6 +35,10 @@ type ProjectInspector interface {
 	Inspect(ctx context.Context, request contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error)
 }
 
+type ManagedTLSStager interface {
+	StageManagedTLS(context.Context, contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error)
+}
+
 type LifecycleManager interface {
 	Queue(ctx context.Context, project contracts.Project, action lifecycle.Action, confirmation string) (operation.Operation, error)
 	Run(ctx context.Context, project contracts.Project, action lifecycle.Action, operation operation.Operation) (operation.Operation, error)
@@ -42,6 +52,7 @@ type ProjectOptions struct {
 	Inspector     ProjectInspector
 	Lifecycle     LifecycleManager
 	Configuration *configuration.Orchestrator
+	ManagedTLS    ManagedTLSStager
 }
 
 type projectHandlers struct {
@@ -164,10 +175,34 @@ func (handlers projectHandlers) queueLifecycle(response http.ResponseWriter, req
 }
 
 func (handlers projectHandlers) create(response http.ResponseWriter, request *http.Request) {
-	var draft contracts.ProjectDraft
-	if err := decodeJSON(response, request, &draft); err != nil {
-		writeError(response, http.StatusBadRequest, "INVALID_JSON", "Request body is invalid")
+	draft, tlsInput, err := decodeCreateProject(response, request)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
+	}
+	if tlsInput != nil {
+		if handlers.options.ManagedTLS == nil {
+			writeError(response, http.StatusServiceUnavailable, "MANAGED_TLS_UNAVAILABLE", "Managed TLS is unavailable")
+			return
+		}
+		// Validate the complete candidate before creating host-owned files. This
+		// avoids leaving a certificate behind when the draft itself is invalid.
+		candidate := draft
+		if err := project.NormalizeProjectAddress(candidate.Slug, &candidate.Configuration.General); err != nil {
+			writeError(response, http.StatusUnprocessableEntity, "INVALID_PROJECT", err.Error())
+			return
+		}
+		if err := project.ValidateDraft(candidate); err != nil {
+			writeError(response, http.StatusUnprocessableEntity, "INVALID_PROJECT", err.Error())
+			return
+		}
+		draft = candidate
+		staged, stageErr := handlers.options.ManagedTLS.StageManagedTLS(request.Context(), *tlsInput)
+		if stageErr != nil {
+			writeError(response, http.StatusUnprocessableEntity, "TLS_STAGE_FAILED", "Unable to stage the TLS certificate")
+			return
+		}
+		draft.Configuration.Network.ManagedTLS = &staged.ManagedTLSConfig
 	}
 	created, err := handlers.options.Projects.Create(request.Context(), draft)
 	switch {
@@ -189,6 +224,83 @@ func (handlers projectHandlers) create(response http.ResponseWriter, request *ht
 		_, _ = handlers.options.Installer.Run(ctx, created, installOperation)
 	}()
 	writeJSON(response, http.StatusAccepted, map[string]string{"projectId": created.ID, "operationId": installOperation.ID})
+}
+
+const maxManagedTLSUploadBytes = 2 << 20
+
+func decodeCreateProject(response http.ResponseWriter, request *http.Request) (contracts.ProjectDraft, *contracts.StageManagedTLSRequest, error) {
+	mediaType, _, _ := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if mediaType != "multipart/form-data" {
+		var draft contracts.ProjectDraft
+		if err := decodeStrictJSON(http.MaxBytesReader(response, request.Body, maxManagedTLSUploadBytes), &draft); err != nil {
+			return contracts.ProjectDraft{}, nil, fmt.Errorf("request body is invalid")
+		}
+		return draft, nil, nil
+	}
+	request.Body = http.MaxBytesReader(response, request.Body, maxManagedTLSUploadBytes)
+	if err := request.ParseMultipartForm(maxManagedTLSUploadBytes); err != nil {
+		return contracts.ProjectDraft{}, nil, fmt.Errorf("multipart request is invalid or too large")
+	}
+	var draft contracts.ProjectDraft
+	if err := decodeStrictJSON(strings.NewReader(request.FormValue("draft")), &draft); err != nil {
+		return contracts.ProjectDraft{}, nil, fmt.Errorf("project draft is invalid")
+	}
+	certificate, certificatePresent, err := multipartFileBytes(request, "certificate")
+	if err != nil {
+		return contracts.ProjectDraft{}, nil, err
+	}
+	privateKey, keyPresent, err := multipartFileBytes(request, "privateKey")
+	if err != nil {
+		return contracts.ProjectDraft{}, nil, err
+	}
+	if !certificatePresent && !keyPresent {
+		return draft, nil, nil
+	}
+	if !certificatePresent || !keyPresent {
+		return contracts.ProjectDraft{}, nil, fmt.Errorf("certificate and private key must be uploaded together")
+	}
+	if draft.Configuration.Network.HTTPSMode != contracts.HTTPSModeExternal {
+		return contracts.ProjectDraft{}, nil, fmt.Errorf("managed TLS requires external HTTPS mode")
+	}
+	parsed, err := url.Parse(draft.Configuration.General.SiteURL)
+	if err != nil || parsed.Hostname() == "" {
+		return contracts.ProjectDraft{}, nil, fmt.Errorf("site URL is required before uploading TLS")
+	}
+	return draft, &contracts.StageManagedTLSRequest{
+		CertificateName: "cloudflare-origin", BaseDomain: parsed.Hostname(), CertificatePEM: certificate, PrivateKeyPEM: privateKey,
+	}, nil
+}
+
+func multipartFileBytes(request *http.Request, field string) ([]byte, bool, error) {
+	file, _, err := request.FormFile(field)
+	if errors.Is(err, http.ErrMissingFile) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("%s upload is invalid", field)
+	}
+	defer file.Close()
+	contents, err := io.ReadAll(io.LimitReader(file, maxManagedTLSUploadBytes+1))
+	if err != nil || len(contents) > maxManagedTLSUploadBytes {
+		return nil, false, fmt.Errorf("%s upload exceeds the size limit", field)
+	}
+	return contents, true, nil
+}
+
+func decodeStrictJSON(reader io.Reader, target any) error {
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func (handlers projectHandlers) list(response http.ResponseWriter, request *http.Request) {
