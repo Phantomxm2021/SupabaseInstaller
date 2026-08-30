@@ -421,6 +421,14 @@ h2 {
 .functions-secrets-heading {
   margin-bottom: 48px;
 }
+.functions-content .functions-secrets-page h1 {
+  margin-bottom: 4px;
+  font-family: "Manrope Variable", Manrope, sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.55px;
+  line-height: 29.3333px;
+}
 .functions-secrets-workspace {
   display: grid;
   gap: 40px;
