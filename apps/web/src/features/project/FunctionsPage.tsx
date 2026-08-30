@@ -48,22 +48,24 @@ export function FunctionsPage() {
   if (functions.error) return <main className="page"><Alert variant="destructive">{functions.error.message}</Alert></main>
   const items = functions.data?.functions ?? []
   const enabled = functions.data?.enabled ?? false
-  return <main className="page" data-testid="functions-page">
+  return <main className="page functions-page" data-testid="functions-page">
     <PageHeader eyebrow="Edge Functions" title="Functions" description="Deploy a function ZIP and keep one previous release ready for rollback." />
-    <Card>
-      <CardHeader><CardTitle>Upload a function</CardTitle><CardDescription>The ZIP must contain index.ts at its root. The filename can be function-name.zip.</CardDescription></CardHeader>
-      {!enabled && <CardContent className="pt-0"><Alert>Enable the Functions service in Server Settings before deploying code.</Alert></CardContent>}
-      <CardContent className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
-        <div className="grid gap-2"><Label htmlFor="function-name">Function name</Label><Input id="function-name" placeholder="hello-world" value={name} onChange={(event) => setName(event.target.value)} /></div>
-        <div className="grid gap-2"><Label htmlFor="function-archive">ZIP archive</Label><Input id="function-archive" type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setArchive(selected); if (selected && !name) setName(selected.name.replace(/\.zip$/i, '')) }} /><span className="text-xs text-muted-foreground">{archiveLabel}</span></div>
-        <Button onClick={() => upload.mutate()} disabled={!enabled || upload.isPending || !archive || !name.trim()}><Upload />{upload.isPending ? 'Uploading…' : 'Deploy function'}</Button>
+    <Card className="functions-upload-card">
+      <CardHeader className="functions-card-header"><CardTitle>Upload a function</CardTitle><CardDescription>The ZIP must contain index.ts at its root. The filename can be function-name.zip.</CardDescription></CardHeader>
+      {!enabled && <CardContent className="functions-service-alert"><Alert>Enable the Functions service in Server Settings before deploying code.</Alert></CardContent>}
+      <CardContent className="functions-upload-content">
+        <div className="functions-upload-grid">
+          <div className="functions-field"><Label htmlFor="function-name">Function name</Label><Input id="function-name" placeholder="hello-world" value={name} onChange={(event) => setName(event.target.value)} /><span className="functions-field-help">Use lowercase letters, numbers, and hyphens.</span></div>
+          <div className="functions-field"><Label htmlFor="function-archive">ZIP archive</Label><Input id="function-archive" type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setArchive(selected); if (selected && !name) setName(selected.name.replace(/\.zip$/i, '')) }} /><span className="functions-field-help">{archiveLabel}</span></div>
+          <div className="functions-upload-action"><Button onClick={() => upload.mutate()} disabled={!enabled || upload.isPending || !archive || !name.trim()}><Upload />{upload.isPending ? 'Uploading…' : 'Deploy function'}</Button></div>
+        </div>
       </CardContent>
-      {upload.isPending && <CardContent className="pt-0"><Progress value={55}><span className="sr-only">Uploading function</span></Progress></CardContent>}
+      {upload.isPending && <CardContent className="functions-progress-content"><Progress value={55}><span className="sr-only">Uploading function</span></Progress></CardContent>}
     </Card>
-    <Card>
-      <CardHeader><CardTitle>Managed functions</CardTitle><CardDescription>Only Manager-owned releases appear here.</CardDescription></CardHeader>
-      <CardContent className="p-0">
-        {items.length === 0 ? <div className="empty-state p-6"><Code2 /><p>No functions deployed yet.</p></div> : <Table><TableHeader><TableRow><TableHead>Function</TableHead><TableHead>Current release</TableHead><TableHead>Previous release</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.name}><TableCell className="font-medium">{item.name}</TableCell><TableCell>{item.current ? <ReleaseBadge release={item.current} /> : <Badge variant="outline">None</Badge>}</TableCell><TableCell>{item.previous ? <ReleaseBadge release={item.previous} /> : <Badge variant="outline">Unavailable</Badge>}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger render={<Button variant="outline" size="sm" aria-label={`Actions for ${item.name}`} />}>Actions <ChevronDown /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={!enabled} onClick={() => { setName(item.name); document.getElementById('function-archive')?.focus() }}><Upload /> Deploy new version</DropdownMenuItem><DropdownMenuItem disabled={!enabled || !item.previous || rollback.isPending} onClick={() => rollback.mutate(item.name)}><RotateCcw /> Roll back</DropdownMenuItem><DropdownMenuItem variant="destructive" disabled={!enabled} onClick={() => setDeleteName(item.name)}><Trash2 /> Delete</DropdownMenuItem></DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}</TableBody></Table>}
+    <Card className="functions-list-card">
+      <CardHeader className="functions-card-header"><CardTitle>Managed functions</CardTitle><CardDescription>Only Manager-owned releases appear here.</CardDescription></CardHeader>
+      <CardContent className="functions-list-content">
+        {items.length === 0 ? <div className="functions-empty-state"><Code2 /><p>No functions deployed yet.</p></div> : <Table><TableHeader><TableRow><TableHead>Function</TableHead><TableHead>Current release</TableHead><TableHead>Previous release</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.name}><TableCell className="font-medium">{item.name}</TableCell><TableCell>{item.current ? <ReleaseBadge release={item.current} /> : <Badge variant="outline">None</Badge>}</TableCell><TableCell>{item.previous ? <ReleaseBadge release={item.previous} /> : <Badge variant="outline">Unavailable</Badge>}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger render={<Button variant="outline" size="sm" aria-label={`Actions for ${item.name}`} />}>Actions <ChevronDown /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={!enabled} onClick={() => { setName(item.name); document.getElementById('function-archive')?.focus() }}><Upload /> Deploy new version</DropdownMenuItem><DropdownMenuItem disabled={!enabled || !item.previous || rollback.isPending} onClick={() => rollback.mutate(item.name)}><RotateCcw /> Roll back</DropdownMenuItem><DropdownMenuItem variant="destructive" disabled={!enabled} onClick={() => setDeleteName(item.name)}><Trash2 /> Delete</DropdownMenuItem></DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}</TableBody></Table>}
       </CardContent>
     </Card>
     <AlertDialog open={deleteName !== null} onOpenChange={(open) => { if (!open) setDeleteName(null) }}>
