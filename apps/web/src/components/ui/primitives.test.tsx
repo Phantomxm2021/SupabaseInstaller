@@ -11,6 +11,7 @@ import { Badge } from "./badge"
 import { Button } from "./button"
 import { Card } from "./card"
 import { Input } from "./input"
+import { Label } from "./label"
 import { Spinner } from "./spinner"
 import { Table } from "./table"
 import { Textarea } from "./textarea"
@@ -49,6 +50,7 @@ it("marks the shared dashboard controls with the compact visual density", () => 
     <>
       <Button>Save changes</Button>
       <Input aria-label="Project name" />
+      <Label htmlFor="project-name">Project name label</Label>
       <Textarea aria-label="Description" />
       <Badge>Active</Badge>
       <Card>Card content</Card>
@@ -60,8 +62,11 @@ it("marks the shared dashboard controls with the compact visual density", () => 
     </>,
   )
 
-  expect(screen.getByRole("button", { name: "Save changes" })).toHaveAttribute("data-density", "dashboard")
+  const saveChanges = screen.getByRole("button", { name: "Save changes" })
+  expect(saveChanges).toHaveAttribute("data-density", "dashboard")
+  expect(saveChanges).toHaveAttribute("data-typography", "regular")
   expect(screen.getByLabelText("Project name")).toHaveAttribute("data-density", "dashboard")
+  expect(screen.getByText("Project name label")).toHaveAttribute("data-typography", "code")
   expect(screen.getByLabelText("Description")).toHaveAttribute("data-density", "dashboard")
   expect(screen.getByText("Active")).toHaveAttribute("data-density", "dashboard")
   expect(screen.getByText("Card content")).toHaveAttribute("data-density", "dashboard")

@@ -29,7 +29,7 @@
   --green-soft: rgba(62, 207, 142, 0.11);
   --danger: #ef6a6a;
   --brand-primary: #3ecf8e;
-  --brand-primary-foreground: #062518;
+  --brand-primary-foreground: #ffffff;
   --surface-foreground: #f0f3f1;
   --focus-ring: #3ecf8e;
   --motion-fast: 180ms;
@@ -42,7 +42,7 @@
   --popover: #1b1e1c;
   --popover-foreground: #e7e9e8;
   --primary: #3ecf8e;
-  --primary-foreground: #062518;
+  --primary-foreground: #ffffff;
   --secondary: #252927;
   --secondary-foreground: #e7e9e8;
   --muted-foreground: #929a95;
@@ -59,7 +59,7 @@
   --sidebar: #151716;
   --sidebar-foreground: #d9ddda;
   --sidebar-primary: #3ecf8e;
-  --sidebar-primary-foreground: #062518;
+  --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #242725;
   --sidebar-accent-foreground: #eef2ef;
   --sidebar-border: rgba(238, 242, 239, 0.12);
@@ -426,11 +426,6 @@ h2 {
 }
 .functions-content .functions-secrets-page h1 {
   margin-bottom: 4px;
-  font-family: "Manrope Variable", Manrope, sans-serif;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.55px;
-  line-height: 29.3333px;
 }
 .functions-secrets-workspace {
   display: grid;
@@ -451,15 +446,15 @@ h2 {
 .function-secrets-listing h2 {
   margin: 0;
   color: #f0f3f1;
-  font-family: "Manrope Variable", Manrope, sans-serif;
+  font-family: var(--font-display);
   font-size: 16px;
   font-weight: 500;
   line-height: 22px;
 }
 .function-secrets-editor-title h2 {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-code);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -484,9 +479,10 @@ h2 {
 .function-secrets-editor-copy label {
   display: block;
   color: #e5e8e6;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
+  font-family: var(--font-code);
+  font-size: 13px;
+  font-weight: 450;
+  line-height: 18px;
 }
 .function-secrets-editor-copy p,
 .function-secrets-listing p,
@@ -583,9 +579,9 @@ h2 {
   height: 40px;
   padding: 0 16px;
   color: #969d99;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  font-weight: 500;
+  font-family: var(--font-code);
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -606,7 +602,7 @@ h2 {
   border: 1px solid #383d3a;
   border-radius: 5px;
   color: #e5e8e6;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-code);
   font-size: 11px;
 }
 .function-secrets-empty {
@@ -2171,7 +2167,7 @@ a.auth-template-row:hover {
   margin: 0 0 8px;
   padding: 0 12px;
   color: #969d99;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-code);
   font-size: 13px;
   font-weight: 450;
   letter-spacing: normal;
@@ -2212,14 +2208,14 @@ a.auth-template-row:hover {
   max-width: none;
   margin: 0;
   padding: 48px 40px 80px 41px;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 450;
-  line-height: 22.5px;
+  line-height: 19px;
 }
 .project-settings-content .page-heading { margin-bottom: 24px; }
 .project-settings-content .page h1 {
   margin-bottom: 4px;
-  font-family: "Manrope Variable", Manrope, sans-serif;
+  font-family: var(--font-display);
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.55px;
@@ -2393,7 +2389,7 @@ a.auth-template-row:hover {
   --popover: #1d211f;
   --popover-foreground: #f0f3f1;
   --primary: #3ecf8e;
-  --primary-foreground: #062518;
+  --primary-foreground: #ffffff;
   --secondary: #1d211f;
   --secondary-foreground: #f0f3f1;
   --muted: #1d211f;
@@ -2412,7 +2408,7 @@ a.auth-template-row:hover {
   --sidebar: #121513;
   --sidebar-foreground: #f0f3f1;
   --sidebar-primary: #3ecf8e;
-  --sidebar-primary-foreground: #062518;
+  --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #1d211f;
   --sidebar-accent-foreground: #f0f3f1;
   --sidebar-border: #2b302d;
@@ -2429,4 +2425,10 @@ a.auth-template-row:hover {
   html {
     @apply font-sans;
   }
+}
+
+/* Dashboard controls are deliberately regular-weight. Keep this at the token
+ * boundary so page-local utility classes cannot create inconsistent buttons. */
+[data-slot="button"][data-typography="regular"] {
+  font-weight: 400 !important;
 }
