@@ -49,3 +49,33 @@ it('shows a secondary Functions menu', async () => {
   expect(await screen.findByRole('tab', { name: 'Deployments' })).toBeVisible()
   expect(screen.getByRole('tab', { name: 'Secrets' })).toBeVisible()
 })
+
+it('opens the deployment dialog from the page header', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input) === '/api/projects/bee/functions') return new Response(JSON.stringify({ functions: [], enabled: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    throw new Error(`Unexpected request: ${input}`)
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /></Routes></MemoryRouter></QueryClientProvider>)
+
+  await user.click(await screen.findByRole('button', { name: 'Deploy' }))
+
+  expect(await screen.findByRole('heading', { name: 'Deploy a function' })).toBeVisible()
+  expect(screen.getByLabelText('Function name')).toBeVisible()
+  expect(screen.getByLabelText('ZIP archive')).toBeVisible()
+})
+
+it('opens the deployment dialog with the selected managed function name', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input) === '/api/projects/bee/functions') return new Response(JSON.stringify({ functions: [{ name: 'hello-world', current: { sha256: 'abcdef1234567890', operationId: 'op-deploy', deployedAt: '2026-08-31T00:00:00Z' } }], enabled: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    throw new Error(`Unexpected request: ${input}`)
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /></Routes></MemoryRouter></QueryClientProvider>)
+
+  await user.click(await screen.findByRole('button', { name: 'Actions for hello-world' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Deploy new version' }))
+
+  expect(await screen.findByRole('heading', { name: 'Deploy a function' })).toBeVisible()
+  expect(await screen.findByLabelText('Function name')).toHaveValue('hello-world')
+})
