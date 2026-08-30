@@ -4,7 +4,8 @@
 
 Allow an operator to upload a TLS certificate and private key while creating a
 Server from the Manager web UI. The default certificate name is
-`cloudflare-origin`. Each Server uses its own managed certificate pair.
+`cloudflare-origin`. Servers under the same configured Site URL base domain use
+the same managed certificate pair.
 
 ## Scope
 
@@ -14,8 +15,8 @@ Server from the Manager web UI. The default certificate name is
 - Allow a safe custom certificate name; default to `cloudflare-origin`.
 - Validate PEM parsing and confirm that the certificate public key matches the
   private key before changing host state.
-- Store files under `/etc/nginx/ssl/<name>-<domain-label>.pem` and
-  `/etc/nginx/ssl/<name>-<domain-label>.key`; create `/etc/nginx/ssl`
+- Store files under `/etc/nginx/ssl/<name>-<base-domain-label>.pem` and
+  `/etc/nginx/ssl/<name>-<base-domain-label>.key`; create `/etc/nginx/ssl`
   automatically when it does not exist.
 - Render the newly created Server's Nginx site with those paths, validate
   Nginx, reload Nginx, and roll back both files and site activation on failure.
@@ -38,9 +39,13 @@ The agent is the sole writer for `/etc/nginx/ssl`. It creates that directory
 when necessary, then validates the
 requested name against a restricted identifier pattern, parses the PEM inputs,
 verifies their key pair, writes both files with root-owned restrictive modes,
-derives the physical filename as `<certificateName>-<domainLabel>`, and runs
+derives the physical filename as `<certificateName>-<baseDomainLabel>`, and runs
 `nginx -t` followed by reload. The agent returns only safe metadata: selected
 name and absolute paths.
+
+If that filename pair already exists, the agent reuses it only when the new
+upload is cryptographically the same certificate and key. A different pair is
+rejected instead of overwriting a live base-domain certificate.
 
 Each project configuration persists the certificate name and generated paths.
 Existing installations without uploaded certificate material retain the
@@ -53,9 +58,10 @@ The Create Server workflow gains an **Nginx TLS certificate** section:
 - Certificate name input, prefilled with `cloudflare-origin`.
 - Certificate PEM upload input.
 - Private key PEM upload input.
-- Generated filename preview, for example `cloudflare-origin-tet.pem`, without
-  exposing private-key contents. The suffix is the normalized first DNS label
-  from the Server domain; it excludes the URL scheme, port, and parent domain.
+- Generated filename preview, for example `cloudflare-origin-beegame.pem`,
+  without exposing private-key contents. The suffix is the normalized primary
+  label of the configured Site URL base domain: for
+  `bgs.beegame.studio`, it is `beegame`, not `bgs`.
 - Upload requirement: both files must be selected before creating the Server.
 
 The UI shows precise failures for invalid names, missing files, malformed PEM,
@@ -80,16 +86,16 @@ Existing installations retain the current installer paths:
 - `/etc/nginx/ssl/cloudflare-origin.pem`
 - `/etc/nginx/ssl/cloudflare-origin.key`
 
-New Servers upload their own pair. The default certificate name yields files
-such as `/etc/nginx/ssl/cloudflare-origin-tet.pem`; the first domain label
-identifies the Server's certificate pair.
+New Servers upload their base-domain certificate pair. The default certificate
+name yields files such as `/etc/nginx/ssl/cloudflare-origin-beegame.pem` for
+`*.beegame.studio`; all Servers under that base domain reference that pair.
 
 ## Verification
 
 - Unit-test TLS name validation, PEM parsing, key-pair matching,
-  first-domain-label path mapping, atomic writes, and rollback.
+  base-domain-label path mapping, atomic writes, and rollback.
 - API-test multipart validation and redaction of private-key material.
-- UI-test default name, first-domain-label filename preview, required upload fields,
+- UI-test default name, base-domain-label filename preview, required upload fields,
   and errors.
-- Agent integration-test Nginx route rendering with each Server's custom pair.
-- Regression-test the `cloudflare-origin-<domain-label>` default behavior.
+- Agent integration-test Nginx route rendering with each base domain's custom pair.
+- Regression-test the `cloudflare-origin-<base-domain-label>` default behavior.
