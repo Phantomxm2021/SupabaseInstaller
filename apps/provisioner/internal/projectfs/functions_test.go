@@ -39,6 +39,52 @@ func TestStageFunctionReleaseAcceptsNamedEnclosingDirectory(t *testing.T) {
 	}
 }
 
+func TestStageFunctionReleaseIgnoresMacOSArchiveMetadata(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(zipFixture(t, map[string]string{
+		"demo/index.ts":   "Deno.serve(() => new Response('ok'))",
+		"__MACOSX/._demo": "AppleDouble metadata",
+		"demo/.DS_Store":  "Finder metadata",
+	})))
+	if err != nil {
+		t.Fatalf("StageFunctionRelease() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage.path, "index.ts")); err != nil {
+		t.Fatalf("normalized index = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage.path, "__MACOSX")); !os.IsNotExist(err) {
+		t.Fatalf("macOS metadata extracted: %v", err)
+	}
+}
+
+func TestStageFunctionReleaseAcceptsSupabaseFunctionsDirectory(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(zipFixture(t, map[string]string{
+		"supabase/functions/demo/index.ts":   "Deno.serve(() => new Response('ok'))",
+		"supabase/functions/demo/deno.json":  "{}",
+		"supabase/functions/other/README.md": "not part of archive",
+	})))
+	if err == nil {
+		t.Fatal("StageFunctionRelease() succeeded with unrelated function directory")
+	}
+	stage, err = root.StageFunctionRelease("bee", "demo", "operation-2", bytes.NewReader(zipFixture(t, map[string]string{
+		"supabase/functions/demo/index.ts":  "Deno.serve(() => new Response('ok'))",
+		"supabase/functions/demo/deno.json": "{}",
+	})))
+	if err != nil {
+		t.Fatalf("StageFunctionRelease() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage.path, "index.ts")); err != nil {
+		t.Fatalf("normalized index = %v", err)
+	}
+}
+
 func TestActivateFunctionReleaseCreatesCurrentPointer(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {

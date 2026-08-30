@@ -140,35 +140,21 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 	}
 	var extracted int64
 	hasIndex := false
-	stripPrefix := ""
-	allEntriesUnderFunctionName := len(reader.File) > 0
-	for _, item := range reader.File {
-		clean, isDirectory, err := safeFunctionArchivePath(item)
-		if err != nil {
-			return fail(err)
-		}
-		if !isDirectory && clean == "index.ts" {
-			hasIndex = true
-		}
-		if topLevel := strings.SplitN(clean, "/", 2)[0]; topLevel != name {
-			allEntriesUnderFunctionName = false
-		}
-	}
-	// Archives created by compressing the function directory itself commonly
-	// contain `function-name/index.ts` instead of `index.ts`. Accept that one
-	// unambiguous wrapper and normalize it to the runtime's expected root while
-	// still rejecting arbitrary enclosing project directories.
-	if !hasIndex && allEntriesUnderFunctionName {
-		stripPrefix = name + "/"
-	}
-	hasIndex = false
+	stripPrefix := functionArchivePrefix(reader.File, name)
 	paths := make(map[string]struct{}, len(reader.File))
 	for _, item := range reader.File {
 		clean, isDirectory, err := safeFunctionArchivePath(item)
 		if err != nil {
 			return fail(err)
 		}
+		if isFunctionArchiveMetadata(clean) {
+			continue
+		}
 		if stripPrefix != "" {
+			prefixRoot := strings.TrimSuffix(stripPrefix, "/")
+			if isDirectory && strings.HasPrefix(prefixRoot, clean+"/") {
+				continue
+			}
 			if clean == name {
 				if isDirectory {
 					continue
@@ -485,4 +471,62 @@ func safeFunctionArchivePath(item *zip.File) (string, bool, error) {
 		return "", false, fmt.Errorf("function archive contains unsupported file type")
 	}
 	return clean, item.FileInfo().IsDir(), nil
+}
+
+func isFunctionArchiveMetadata(clean string) bool {
+	if clean == "__MACOSX" || strings.HasPrefix(clean, "__MACOSX/") {
+		return true
+	}
+	base := path.Base(clean)
+	return base == ".DS_Store" || strings.HasPrefix(base, "._")
+}
+
+// functionArchivePrefix returns a trusted directory prefix to remove before
+// activation. It accepts the layouts users commonly produce when zipping a
+// Supabase function: the function folder itself and the canonical
+// supabase/functions/<name> path. Ancestor directory entries are tolerated,
+// but files outside the selected prefix invalidate that layout.
+func functionArchivePrefix(files []*zip.File, name string) string {
+	candidates := []string{"", name + "/", "supabase/functions/" + name + "/"}
+	for _, prefix := range candidates {
+		hasIndex := false
+		valid := true
+		root := strings.TrimSuffix(prefix, "/")
+		for _, item := range files {
+			clean, isDirectory, err := safeFunctionArchivePath(item)
+			if err != nil || isFunctionArchiveMetadata(clean) {
+				continue
+			}
+			if prefix == "" {
+				if !isDirectory && clean == "index.ts" {
+					hasIndex = true
+				}
+				continue
+			}
+			if strings.HasPrefix(clean, prefix) {
+				relative := strings.TrimPrefix(clean, prefix)
+				if relative == "" {
+					if !isDirectory {
+						valid = false
+					}
+					continue
+				}
+				if !isDirectory && relative == "index.ts" {
+					hasIndex = true
+				}
+				continue
+			}
+			// ZIP writers often include explicit entries for the prefix's
+			// ancestors. They are safe to ignore during normalization.
+			if isDirectory && root != "" && strings.HasPrefix(root, clean+"/") {
+				continue
+			}
+			valid = false
+			break
+		}
+		if valid && hasIndex {
+			return prefix
+		}
+	}
+	return ""
 }
