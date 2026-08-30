@@ -218,7 +218,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 	}
 	if !hasIndex {
-		return fail(fmt.Errorf("function archive requires root index.ts"))
+		return fail(fmt.Errorf("function archive requires index.ts at root or under the requested function directory"))
 	}
 	if err := syncDirectory(stage); err != nil {
 		return fail(err)
@@ -488,6 +488,27 @@ func isFunctionArchiveMetadata(clean string) bool {
 // but files outside the selected prefix invalidate that layout.
 func functionArchivePrefix(files []*zip.File, name string) string {
 	candidates := []string{"", name + "/", "supabase/functions/" + name + "/"}
+	knownCandidates := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		knownCandidates[candidate] = struct{}{}
+	}
+	// A project-level ZIP often adds an outer repository directory. Discover
+	// that wrapper from a root index.ts whose immediate parent is the requested
+	// function name, then apply the same containment checks below.
+	for _, item := range files {
+		clean, isDirectory, err := safeFunctionArchivePath(item)
+		if err != nil || isDirectory || isFunctionArchiveMetadata(clean) || !strings.HasSuffix(clean, "/index.ts") {
+			continue
+		}
+		prefix := strings.TrimSuffix(clean, "index.ts")
+		if path.Base(strings.TrimSuffix(prefix, "/")) != name {
+			continue
+		}
+		if _, exists := knownCandidates[prefix]; !exists {
+			knownCandidates[prefix] = struct{}{}
+			candidates = append(candidates, prefix)
+		}
+	}
 	for _, prefix := range candidates {
 		hasIndex := false
 		valid := true

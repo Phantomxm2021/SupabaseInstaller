@@ -85,6 +85,22 @@ func TestStageFunctionReleaseAcceptsSupabaseFunctionsDirectory(t *testing.T) {
 	}
 }
 
+func TestStageFunctionReleaseAcceptsProjectWrappedSupabaseDirectory(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(zipFixture(t, map[string]string{
+		"my-project/supabase/functions/demo/index.ts": "Deno.serve(() => new Response('ok'))",
+	})))
+	if err != nil {
+		t.Fatalf("StageFunctionRelease() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stage.path, "index.ts")); err != nil {
+		t.Fatalf("normalized index = %v", err)
+	}
+}
+
 func TestActivateFunctionReleaseCreatesCurrentPointer(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
