@@ -40,6 +40,7 @@ func TestStageFunctionReleaseAcceptsNamedEnclosingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	stage, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(zipFixture(t, map[string]string{
+		"demo/":            "",
 		"demo/index.ts":    "Deno.serve(() => new Response('ok'))",
 		"demo/lib/tool.ts": "export const x = 1",
 	})))
@@ -89,6 +90,9 @@ func TestStageFunctionReleaseAcceptsSupabaseFunctionsDirectory(t *testing.T) {
 		t.Fatal("StageFunctionRelease() succeeded with unrelated function directory")
 	}
 	stage, err = root.StageFunctionRelease("bee", "demo", "operation-2", bytes.NewReader(zipFixture(t, map[string]string{
+		"supabase/":                         "",
+		"supabase/functions/":               "",
+		"supabase/functions/demo/":          "",
 		"supabase/functions/demo/index.ts":  "Deno.serve(() => new Response('ok'))",
 		"supabase/functions/demo/deno.json": "{}",
 	})))

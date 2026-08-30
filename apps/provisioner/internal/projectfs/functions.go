@@ -152,7 +152,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 		if stripPrefix != "" {
 			prefixRoot := strings.TrimSuffix(stripPrefix, "/")
-			if isDirectory && strings.HasPrefix(prefixRoot, clean+"/") {
+			if isDirectory && (clean == prefixRoot || strings.HasPrefix(prefixRoot, clean+"/")) {
 				continue
 			}
 			if clean == name {
@@ -559,6 +559,9 @@ func functionArchivePrefix(files []*zip.File, name string) string {
 				if !isDirectory && relative == "index.ts" {
 					hasIndex = true
 				}
+				continue
+			}
+			if isDirectory && clean == root {
 				continue
 			}
 			// ZIP writers often include explicit entries for the prefix's
