@@ -1420,6 +1420,70 @@ a.auth-template-row:hover {
 .functions-progress-content {
   padding: 0 28px 24px;
 }
+.functions-operation-card {
+  gap: 0 !important;
+}
+.functions-operation-content {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 28px;
+}
+.functions-operation-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid #3a403d;
+  border-radius: 50%;
+  color: #9da39f;
+}
+.functions-operation-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.functions-operation-icon.done {
+  border-color: rgba(62, 207, 142, 0.4);
+  color: #3ecf8e;
+}
+.functions-operation-icon.failed {
+  border-color: rgba(239, 106, 106, 0.4);
+  color: #ef6a6a;
+}
+.functions-operation-copy {
+  min-width: 0;
+}
+.functions-operation-kicker {
+  margin: 0 0 2px;
+  color: #8f9792;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 16px;
+}
+.functions-operation-copy h2 {
+  margin: 0;
+  color: #eef2ef;
+  font-family: "Manrope Variable", Manrope, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 21px;
+}
+.functions-operation-copy > p:last-child {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: #9da39f;
+  font-size: 12px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.functions-operation-progress {
+  padding: 0 28px 16px;
+}
+.functions-operation-error {
+  padding: 0 28px 20px;
+}
 .functions-list-content {
   padding: 0;
 }
@@ -1477,7 +1541,10 @@ a.auth-template-row:hover {
   .functions-card-header,
   .functions-upload-content,
   .functions-progress-content,
-  .functions-service-alert {
+  .functions-service-alert,
+  .functions-operation-content,
+  .functions-operation-progress,
+  .functions-operation-error {
     padding-right: 18px;
     padding-left: 18px;
   }
@@ -1491,6 +1558,13 @@ a.auth-template-row:hover {
   }
   .functions-upload-action [data-slot="button"] {
     width: 100%;
+  }
+  .functions-operation-content {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .functions-operation-content [data-slot="badge"] {
+    grid-column: 2;
+    justify-self: start;
   }
   .functions-list-content [data-slot="table"] {
     min-width: 680px;
