@@ -252,6 +252,32 @@ func (r *Root) RollbackFunctionRelease(slug, name, operationID string) (Function
 	return FunctionActivation{Current: state.Previous, Previous: state.Current}, nil
 }
 
+// RestoreFunctionRelease compensates a failed post-activation action by
+// restoring the activation's previous pointer and durable state.
+func (r *Root) RestoreFunctionRelease(slug, name string, activation FunctionActivation) error {
+	if err := contracts.ValidateFunctionName(name); err != nil {
+		return err
+	}
+	if activation.Previous == nil {
+		return fmt.Errorf("no previous function release to restore")
+	}
+	project, err := r.ProjectPath(slug)
+	if err != nil {
+		return err
+	}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	functionsRoot := filepath.Join(project, "volumes", "functions")
+	releases := filepath.Join(functionsRoot, ".manager", name, "releases")
+	if err := switchFunctionPointer(functionsRoot, name, "restore", activation.Previous.SHA256); err != nil {
+		return err
+	}
+	if err := syncDirectory(functionsRoot); err != nil {
+		return err
+	}
+	return writeManagedFunctionState(releases, managedFunctionState{Current: activation.Previous, Previous: activation.Current})
+}
+
 func switchFunctionPointer(functionsRoot, name, operationID, sha string) error {
 	temporary := filepath.Join(functionsRoot, "."+name+".next-"+operationID)
 	_ = os.Remove(temporary)

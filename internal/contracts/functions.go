@@ -2,9 +2,24 @@ package contracts
 
 import (
 	"errors"
+	"io"
 	"regexp"
 	"time"
 )
+
+type DeployFunctionRequest struct {
+	ProjectID   string    `json:"projectId"`
+	Slug        string    `json:"slug"`
+	Name        string    `json:"name"`
+	OperationID string    `json:"operationId"`
+	Archive     io.Reader `json:"-"`
+}
+
+type FunctionDeploymentResult struct {
+	Current    *FunctionRelease `json:"current,omitempty"`
+	Previous   *FunctionRelease `json:"previous,omitempty"`
+	RolledBack bool             `json:"rolledBack"`
+}
 
 var functionNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
