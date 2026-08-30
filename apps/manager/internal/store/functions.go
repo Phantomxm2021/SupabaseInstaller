@@ -25,7 +25,7 @@ func (s *Store) AdmitFunctionOperation(ctx context.Context, op contracts.Operati
 	var existing contracts.Operation
 	err := s.InTx(ctx, func(tx *sql.Tx) error {
 		var id, typ, status, created string
-		err := tx.QueryRowContext(ctx, `SELECT id,type,status,created_at FROM operations WHERE project_id=? AND status IN (?,?) ORDER BY created_at DESC,id DESC LIMIT 1`, op.ProjectID, contracts.OperationQueued, contracts.OperationRunning).Scan(&id, &typ, &status, &created)
+		err := tx.QueryRowContext(ctx, `SELECT id,type,status,created_at FROM operations WHERE project_id=? AND status IN (?,?,?) ORDER BY created_at DESC,id DESC LIMIT 1`, op.ProjectID, contracts.OperationQueued, contracts.OperationRunning, contracts.OperationRollingBack).Scan(&id, &typ, &status, &created)
 		if err == nil {
 			if typ == string(op.Type) {
 				var existingName string
