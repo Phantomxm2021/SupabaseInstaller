@@ -67,6 +67,81 @@ The Create Server workflow gains an **Nginx TLS certificate** section:
 The UI shows precise failures for invalid names, missing files, malformed PEM,
 non-matching key pairs, Nginx validation failure, and agent unavailability.
 
+### Front-end interaction design
+
+The wizard remains four steps: **Server details**, **Services**, **Security &
+integrations**, and **Review & install**. TLS does not create a Setup tab or a
+new wizard step. It is a second card on the first step, directly below the
+vertical Server details card.
+
+```
+Create a server                                      Step 1 of 4 · Server details
+Configure the complete Supabase runtime before Docker resources are created.
+
+┌ Server details ───────────────────────────────────────────────────────────┐
+│ Server name                                                                │
+│ [ Production API                                                        ]  │
+│                                                                            │
+│ Site URL                                                                   │
+│ [ https:// ] [ beegame.studio                                           ]  │
+│                                                                            │
+│ Studio username                                                            │
+│ [ supabase                                                              ]  │
+│                                                                            │
+│ Studio password                                                            │
+│ [ •••••••••••••                                                        ]  │
+│                                                                            │
+│ Supabase version                                                          │
+│ [ self-hosted/v0.8.0                                                    ]  │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌ Nginx TLS certificate ────────────────────────────────────────────────────┐
+│ Upload the certificate used by this Server's external Nginx site.          │
+│                                                                            │
+│ Certificate name                                                          │
+│ [ cloudflare-origin                                                     ]  │
+│                                                                            │
+│ Managed file names                                                        │
+│ Certificate  /etc/nginx/ssl/cloudflare-origin-beegame.pem                 │
+│ Private key   /etc/nginx/ssl/cloudflare-origin-beegame.key                │
+│                                                                            │
+│ Certificate PEM                                                           │
+│ [ Choose certificate file ]  example-origin.pem                           │
+│                                                                            │
+│ Private key PEM                                                           │
+│ [ Choose private-key file ]  example-origin.key                           │
+│                                                                            │
+│ The private key is uploaded once, never shown again, and is not stored in │
+│ the Manager database.                                                     │
+└────────────────────────────────────────────────────────────────────────────┘
+
+                                                    Cancel       Continue →
+```
+
+- The card is always visible on **Server details**. It is disabled, with a
+  single inline explanation, until Site URL has a valid hostname.
+- `Certificate name` defaults to `cloudflare-origin`; it permits only lowercase
+  letters, digits, and hyphens. Editing it immediately updates both path
+  previews.
+- The base-domain label is derived from Site URL. For
+  `bgs.beegame.studio`, the preview becomes
+  `cloudflare-origin-beegame.pem`; the project subdomain is never part of the
+  certificate filename.
+- Both upload controls are required. Selecting one file marks that control
+  complete, but **Continue** remains disabled until both are valid. Neither
+  field displays file contents.
+- The browser sends the selected files only when **Install server** is clicked;
+  moving between wizard steps retains the in-memory selections. Leaving or
+  refreshing the page clears them.
+- On the Review step, a compact **Nginx TLS certificate** summary shows the
+  certificate name and two managed paths, plus an **Edit server details**
+  action. It never includes file names from the user's workstation, file
+  contents, or the private key.
+- Validation messages appear below their own control: unsupported extension or
+  unreadable file, malformed certificate PEM, malformed private-key PEM,
+  certificate/key mismatch, and a conflict when the base-domain pair already
+  exists with different cryptographic material.
+
 ## Security
 
 - Certificate names accept lowercase letters, digits, and hyphens only.
