@@ -18,7 +18,6 @@ import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useOperationEvents } from '../operations/useOperationEvents'
-import { FunctionsNavigation } from './FunctionsNavigation'
 
 const functionStepLabels: Record<string, string> = {
   VALIDATING_ARCHIVE: 'Validating ZIP archive',
@@ -56,6 +55,7 @@ export function FunctionsPage() {
     setActiveOperationId(operationId)
   }
   const openDeploymentDialog = (functionName?: string) => {
+    if (terminalOperation(operation.data?.status)) setActiveOperationId(null)
     if (functionName) setName(functionName)
     setDeployDialogOpen(true)
   }
@@ -65,7 +65,7 @@ export function FunctionsPage() {
       const form = new FormData(); form.append('archive', archive)
       return apiFetch<{ operationId: string }>(`/api/projects/${projectId}/functions/${encodeURIComponent(name.trim())}/deploy`, { method: 'POST', body: form })
     },
-    onSuccess: (result) => { trackOperation(result.operationId); toast.success(`Deployment queued (${result.operationId})`); setArchive(null); setName(''); setDeployDialogOpen(false) },
+    onSuccess: (result) => { trackOperation(result.operationId); toast.success(`Deployment queued (${result.operationId})`); setArchive(null); setName('') },
     onError: (error) => toast.error(error.message),
   })
   const rollback = useMutation({
@@ -84,11 +84,11 @@ export function FunctionsPage() {
   const items = functions.data?.functions ?? []
   const enabled = functions.data?.enabled ?? false
   const operationInProgress = Boolean(activeOperationId && !terminalOperation(operation.data?.status))
+  const deploymentStatusVisible = upload.isPending || activeOperationId !== null
   return <main className="page functions-page" data-testid="functions-page">
     <PageHeader eyebrow="Edge Functions" title="Functions" description="Deploy a function ZIP and keep one previous release ready for rollback." actions={<Button onClick={() => openDeploymentDialog()} disabled={!enabled || operationInProgress}><Upload />Deploy</Button>} />
-    <FunctionsNavigation projectId={projectId} />
     {!enabled && <Alert>Enable the Functions service in Server Settings before deploying code.</Alert>}
-    {activeOperationId && <FunctionOperationStatus operationId={activeOperationId} operation={operation.data} isLoading={operation.isLoading} />}
+    {activeOperationId && !deployDialogOpen && <FunctionOperationStatus operationId={activeOperationId} operation={operation.data} isLoading={operation.isLoading} />}
     <Card className="functions-list-card">
       <CardHeader className="functions-card-header"><CardTitle>Managed functions</CardTitle><CardDescription>Only Manager-owned releases appear here.</CardDescription></CardHeader>
       <CardContent className="functions-list-content">
@@ -97,13 +97,18 @@ export function FunctionsPage() {
     </Card>
     <Dialog open={deployDialogOpen} onOpenChange={setDeployDialogOpen}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Deploy a function</DialogTitle><DialogDescription>The ZIP must contain index.ts at its root, inside a same-named folder, or under supabase/functions/function-name/ (a project wrapper is okay). The filename can be function-name.zip.</DialogDescription></DialogHeader>
-        <div className="grid gap-4">
-          <div className="grid gap-2"><Label htmlFor="function-name">Function name</Label><Input id="function-name" placeholder="hello-world" value={name} onChange={(event) => setName(event.target.value)} /><p className="text-xs text-muted-foreground">Use lowercase letters, numbers, and hyphens.</p></div>
-          <div className="grid gap-2"><Label htmlFor="function-archive">ZIP archive</Label><Input id="function-archive" type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setArchive(selected); if (selected && !name) setName(selected.name.replace(/\.zip$/i, '')) }} /><p className="text-xs text-muted-foreground">{archiveLabel}</p></div>
-          {upload.isPending && <Progress value={55}><span className="sr-only">Uploading function</span></Progress>}
-        </div>
-        <DialogFooter><Button variant="outline" onClick={() => setDeployDialogOpen(false)}>Cancel</Button><Button onClick={() => upload.mutate()} disabled={!enabled || upload.isPending || operationInProgress || !archive || !name.trim()}><Upload />{upload.isPending ? 'Uploading…' : 'Deploy function'}</Button></DialogFooter>
+        {deploymentStatusVisible ? <>
+          <DialogHeader><DialogTitle>{upload.isPending && !activeOperationId ? 'Uploading function archive' : 'Function deployment'}</DialogTitle><DialogDescription>The deployment continues on the server if you close this dialog.</DialogDescription></DialogHeader>
+          {upload.isPending && !activeOperationId ? <div className="grid gap-3" role="status"><div className="flex items-center gap-2 text-sm"><LoaderCircle className="size-4 animate-spin" />Uploading function archive…</div><Progress value={55}><span className="sr-only">Uploading function</span></Progress></div> : activeOperationId ? <FunctionOperationStatus operationId={activeOperationId} operation={operation.data} isLoading={operation.isLoading} /> : null}
+          <DialogFooter><Button variant="outline" onClick={() => setDeployDialogOpen(false)}>Close</Button></DialogFooter>
+        </> : <>
+          <DialogHeader><DialogTitle>Deploy a function</DialogTitle><DialogDescription>The ZIP must contain index.ts at its root, inside a same-named folder, or under supabase/functions/function-name/ (a project wrapper is okay). The filename can be function-name.zip.</DialogDescription></DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-2"><Label htmlFor="function-name">Function name</Label><Input id="function-name" placeholder="hello-world" value={name} onChange={(event) => setName(event.target.value)} /><p className="text-xs text-muted-foreground">Use lowercase letters, numbers, and hyphens.</p></div>
+            <div className="grid gap-2"><Label htmlFor="function-archive">ZIP archive</Label><Input id="function-archive" type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setArchive(selected); if (selected && !name) setName(selected.name.replace(/\.zip$/i, '')) }} /><p className="text-xs text-muted-foreground">{archiveLabel}</p></div>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setDeployDialogOpen(false)}>Cancel</Button><Button onClick={() => upload.mutate()} disabled={!enabled || upload.isPending || operationInProgress || !archive || !name.trim()}><Upload />Deploy function</Button></DialogFooter>
+        </>}
       </DialogContent>
     </Dialog>
     <AlertDialog open={deleteName !== null} onOpenChange={(open) => { if (!open) setDeleteName(null) }}>

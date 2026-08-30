@@ -13,7 +13,6 @@ import { OperationPanel } from '../operations/OperationPanel'
 import { FunctionsSection } from './configuration/FunctionsSection'
 import { affectedServices, dirtyLabels, normalizeRedactedConfiguration, sectionImpact, type PendingConfigurationSave } from './configuration/types'
 import { useConfigurationMutation } from './configuration/useConfigurationMutation'
-import { FunctionsNavigation } from './FunctionsNavigation'
 
 type ConfigurationSnapshot = {
   projectId: string
@@ -74,7 +73,6 @@ export function FunctionSecretsPage() {
 
   return <main className="page functions-secrets-page">
     <PageHeader eyebrow="Edge Functions" title="Functions" description="Configure encrypted environment variables for your deployed functions." />
-    <FunctionsNavigation projectId={projectId} />
     {operation ? <OperationPanel operationId={operation.operationId} projectId={projectId} projectName={projectId} onSucceeded={() => void completed()} /> : <>
       {conflict && <Alert variant="destructive" className="mb-4"><div className="flex items-center justify-between gap-3"><span>This configuration is stale. Your dirty fields are preserved.</span><Button size="sm" variant="outline" onClick={() => { setConflict(false); void configuration.refetch() }}>Reload</Button></div></Alert>}
       <FunctionsSection revision={configuration.data.revision} initial={config.functions as FunctionsConfig} enabled={config.services.functions} onSave={submit} />

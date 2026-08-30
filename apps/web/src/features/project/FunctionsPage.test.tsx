@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { FunctionsPage } from './FunctionsPage'
@@ -37,18 +37,25 @@ it('tracks a queued deployment and refreshes the function list after it succeeds
   await waitFor(() => expect(operationReads).toBeGreaterThan(0))
   await waitFor(() => expect(functionReads).toBeGreaterThan(1))
   expect(await screen.findByText('Function operation complete')).toBeVisible()
+  expect(screen.getByRole('dialog')).toBeVisible()
+  expect(screen.queryByLabelText('ZIP archive')).not.toBeInTheDocument()
   expect(await screen.findByText('hello-world')).toBeVisible()
+
+  await user.click(within(screen.getByRole('dialog')).getAllByRole('button', { name: 'Close' })[0])
+  await user.click(screen.getByRole('button', { name: 'Deploy' }))
+
+  expect(await screen.findByLabelText('ZIP archive')).toBeVisible()
 })
 
-it('shows a secondary Functions menu', async () => {
+it('does not render Functions navigation as in-page tabs', async () => {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     if (String(input) === '/api/projects/bee/functions') return new Response(JSON.stringify({ functions: [], enabled: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     throw new Error(`Unexpected request: ${input}`)
   }))
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /></Routes></MemoryRouter></QueryClientProvider>)
 
-  expect(await screen.findByRole('tab', { name: 'Deployments' })).toBeVisible()
-  expect(screen.getByRole('tab', { name: 'Secrets' })).toBeVisible()
+  await screen.findByText('Managed functions')
+  expect(screen.queryByRole('tablist', { name: 'Functions navigation' })).not.toBeInTheDocument()
 })
 
 it('opens the deployment dialog from the page header', async () => {
