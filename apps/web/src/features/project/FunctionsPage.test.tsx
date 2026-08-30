@@ -29,6 +29,7 @@ it('tracks a queued deployment and refreshes the function list after it succeeds
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /></Routes></MemoryRouter></QueryClientProvider>)
 
   const archive = new File(['zip-body'], 'hello-world.zip', { type: 'application/zip' })
+  await user.click(await screen.findByRole('button', { name: 'Deploy' }))
   await user.upload(await screen.findByLabelText('ZIP archive'), archive)
   await user.click(screen.getByRole('button', { name: 'Deploy function' }))
 
