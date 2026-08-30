@@ -241,13 +241,14 @@ const (
 )
 
 type NetworkConfig struct {
-	Gateway             Gateway   `json:"gateway"`
-	HTTPSMode           HTTPSMode `json:"httpsMode"`
-	InternalGatewayPort int       `json:"internalGatewayPort,omitempty"`
-	APIPort             int       `json:"apiPort"`
-	StudioPort          int       `json:"studioPort"`
-	DirectDatabasePort  int       `json:"directDatabasePort"`
-	PoolerPort          int       `json:"poolerPort"`
+	Gateway             Gateway           `json:"gateway"`
+	HTTPSMode           HTTPSMode         `json:"httpsMode"`
+	ManagedTLS          *ManagedTLSConfig `json:"managedTls,omitempty"`
+	InternalGatewayPort int               `json:"internalGatewayPort,omitempty"`
+	APIPort             int               `json:"apiPort"`
+	StudioPort          int               `json:"studioPort"`
+	DirectDatabasePort  int               `json:"directDatabasePort"`
+	PoolerPort          int               `json:"poolerPort"`
 }
 
 var OAuthProviderNames = []string{

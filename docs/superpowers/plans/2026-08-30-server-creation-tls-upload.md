@@ -17,7 +17,7 @@
 - Modify: internal/contracts/configuration.go
 - Test: internal/contracts/tls_test.go
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
     func TestManagedTLSPathsUseBaseDomainLabel(t *testing.T) {
         got, err := ManagedTLSPaths("cloudflare-origin", "https://beegame.studio")
@@ -29,17 +29,17 @@
         if _, err := ManagedTLSPaths("../origin", "https://beegame.studio"); err == nil { t.Fatal("accepted traversal") }
     }
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: go test ./internal/contracts -run TestManagedTLSPaths -count=1
 
 Expected: compile error because ManagedTLSPaths does not exist.
 
-- [ ] **Step 3: Implement the smallest contract**
+- [x] **Step 3: Implement the smallest contract**
 
 Create ManagedTLSConfig with CertificateName, CertificateFile, and PrivateKeyFile. Add ManagedTLS ManagedTLSConfig to NetworkConfig. ManagedTLSPaths must parse the configured Site URL, take the base-domain label, validate the lowercase/digit/hyphen certificate name, and derive the two /etc/nginx/ssl paths. Manager normalization overwrites any caller-provided paths.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: go test ./internal/contracts -count=1
 
