@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -46,6 +47,38 @@ type FunctionActivation struct {
 type managedFunctionState struct {
 	Current  *contracts.FunctionRelease `json:"current,omitempty"`
 	Previous *contracts.FunctionRelease `json:"previous,omitempty"`
+}
+
+// ListFunctions reads only Manager-owned state and returns no filesystem paths
+// or source content. Unmanaged function directories are deliberately omitted.
+func (r *Root) ListFunctions(slug string) ([]contracts.FunctionSummary, error) {
+	project, err := r.ProjectPath(slug)
+	if err != nil {
+		return nil, err
+	}
+	base := filepath.Join(project, "volumes", "functions", ".manager")
+	entries, err := os.ReadDir(base)
+	if os.IsNotExist(err) {
+		return []contracts.FunctionSummary{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list managed functions: %w", err)
+	}
+	result := make([]contracts.FunctionSummary, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || contracts.ValidateFunctionName(entry.Name()) != nil {
+			continue
+		}
+		state, err := readManagedFunctionState(filepath.Join(base, entry.Name(), "releases"))
+		if err != nil {
+			return nil, err
+		}
+		if state.Current != nil {
+			result = append(result, contracts.FunctionSummary{Name: entry.Name(), Current: state.Current, Previous: state.Previous})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result, nil
 }
 
 // FunctionCurrentPath returns the current managed pointer for a function.

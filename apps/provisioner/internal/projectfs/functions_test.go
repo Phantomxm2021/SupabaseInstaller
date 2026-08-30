@@ -75,6 +75,26 @@ func TestRollbackFunctionReleaseRestoresPreviousRelease(t *testing.T) {
 	}
 }
 
+func TestListFunctionsReturnsCurrentAndPreviousRelease(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, release := range []struct{ operation, body string }{{"operation-1", "one"}, {"operation-2", "two"}} {
+		stage, err := root.StageFunctionRelease("bee", "demo", release.operation, bytes.NewReader(zipFixture(t, map[string]string{"index.ts": release.body})))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := root.ActivateFunctionRelease("bee", "demo", stage); err != nil {
+			t.Fatal(err)
+		}
+	}
+	functions, err := root.ListFunctions("bee")
+	if err != nil || len(functions) != 1 || functions[0].Name != "demo" || functions[0].Current == nil || functions[0].Previous == nil {
+		t.Fatalf("ListFunctions() = %#v, %v", functions, err)
+	}
+}
+
 func TestStageFunctionReleaseRejectsTraversal(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
