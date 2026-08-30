@@ -19,7 +19,7 @@ it('updates a function secret without rendering its replacement value', async ()
   vi.stubGlobal('fetch', fetchMock)
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions/secrets']}><Routes><Route path="/projects/:projectId/functions/secrets" element={<FunctionSecretsPage />} /></Routes></MemoryRouter></QueryClientProvider>)
 
-  expect(await screen.findByRole('tab', { name: 'Secrets' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Functions' })).toBeVisible()
   expect(screen.getByDisplayValue('STRIPE_KEY')).toBeVisible()
   expect(screen.getByText('Configured')).toBeVisible()
   const secret = screen.getByLabelText('Value for STRIPE_KEY')

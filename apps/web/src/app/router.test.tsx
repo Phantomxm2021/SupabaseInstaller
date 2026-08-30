@@ -3,6 +3,7 @@ import { isValidElement } from "react";
 import { matchRoutes, Navigate } from "react-router-dom";
 import { ConfigurationPage } from "../features/project/configuration/ConfigurationPage";
 import { FunctionsPage } from "../features/project/FunctionsPage";
+import { FunctionSecretsPage } from "../features/project/FunctionSecretsPage";
 import {
   EmailsRoute,
   RetainedAuthenticationRedirect,
@@ -23,7 +24,6 @@ it("does not register removed project configuration compatibility routes", () =>
   expect(childPaths).toContain("configuration");
   expect(childPaths).toContain("authentication");
   expect(childPaths).toContain("functions");
-  expect(childPaths).toContain("functions/secrets");
   expect(childPaths).not.toEqual(
     expect.arrayContaining([
       "services",
@@ -53,6 +53,16 @@ it("does not register removed project configuration compatibility routes", () =>
   expect(
     elementType(matchRoutes(router.routes, "/projects/bee/functions")?.at(-1)?.route.element),
   ).toBe(FunctionsPage);
+  const functionsRoute = projectRoute?.children?.find(
+    (route) => route.path === "functions",
+  );
+  expect(functionsRoute?.children?.map((route) => route.path)).toContain("secrets");
+  expect(
+    elementType(
+      matchRoutes(router.routes, "/projects/bee/functions/secrets")?.at(-1)
+        ?.route.element,
+    ),
+  ).toBe(FunctionSecretsPage);
   const authenticationRoute = projectRoute?.children?.find(
     (route) => route.path === "authentication",
   );
