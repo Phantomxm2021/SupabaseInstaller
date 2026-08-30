@@ -8,14 +8,34 @@ import (
 	"testing"
 )
 
-func TestStageFunctionReleaseRequiresRootIndex(t *testing.T) {
+func TestStageFunctionReleaseRejectsUnrelatedEnclosingDirectory(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	archive := zipFixture(t, map[string]string{"demo/index.ts": "Deno.serve(() => new Response('ok'))"})
+	archive := zipFixture(t, map[string]string{"project/index.ts": "Deno.serve(() => new Response('ok'))"})
 	if _, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(archive)); err == nil {
 		t.Fatal("StageFunctionRelease() succeeded, want root index rejection")
+	}
+}
+
+func TestStageFunctionReleaseAcceptsNamedEnclosingDirectory(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(zipFixture(t, map[string]string{
+		"demo/index.ts":    "Deno.serve(() => new Response('ok'))",
+		"demo/lib/tool.ts": "export const x = 1",
+	})))
+	if err != nil {
+		t.Fatalf("StageFunctionRelease() error = %v", err)
+	}
+	if body, err := os.ReadFile(filepath.Join(stage.path, "index.ts")); err != nil || string(body) == "" {
+		t.Fatalf("normalized index = %q, %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(stage.path, "demo", "index.ts")); !os.IsNotExist(err) {
+		t.Fatalf("nested index still exists: %v", err)
 	}
 }
 

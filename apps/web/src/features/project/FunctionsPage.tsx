@@ -80,7 +80,7 @@ export function FunctionsPage() {
   return <main className="page functions-page" data-testid="functions-page">
     <PageHeader eyebrow="Edge Functions" title="Functions" description="Deploy a function ZIP and keep one previous release ready for rollback." />
     <Card className="functions-upload-card">
-      <CardHeader className="functions-card-header"><CardTitle>Upload a function</CardTitle><CardDescription>The ZIP must contain index.ts at its root. The filename can be function-name.zip.</CardDescription></CardHeader>
+      <CardHeader className="functions-card-header"><CardTitle>Upload a function</CardTitle><CardDescription>The ZIP must contain index.ts at its root, or inside one folder named after the function. The filename can be function-name.zip.</CardDescription></CardHeader>
       {!enabled && <CardContent className="functions-service-alert"><Alert>Enable the Functions service in Server Settings before deploying code.</Alert></CardContent>}
       <CardContent className="functions-upload-content">
         <div className="functions-upload-grid">

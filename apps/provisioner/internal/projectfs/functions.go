@@ -140,11 +140,51 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 	}
 	var extracted int64
 	hasIndex := false
+	stripPrefix := ""
+	allEntriesUnderFunctionName := len(reader.File) > 0
+	for _, item := range reader.File {
+		clean, isDirectory, err := safeFunctionArchivePath(item)
+		if err != nil {
+			return fail(err)
+		}
+		if !isDirectory && clean == "index.ts" {
+			hasIndex = true
+		}
+		if topLevel := strings.SplitN(clean, "/", 2)[0]; topLevel != name {
+			allEntriesUnderFunctionName = false
+		}
+	}
+	// Archives created by compressing the function directory itself commonly
+	// contain `function-name/index.ts` instead of `index.ts`. Accept that one
+	// unambiguous wrapper and normalize it to the runtime's expected root while
+	// still rejecting arbitrary enclosing project directories.
+	if !hasIndex && allEntriesUnderFunctionName {
+		stripPrefix = name + "/"
+	}
+	hasIndex = false
 	paths := make(map[string]struct{}, len(reader.File))
 	for _, item := range reader.File {
 		clean, isDirectory, err := safeFunctionArchivePath(item)
 		if err != nil {
 			return fail(err)
+		}
+		if stripPrefix != "" {
+			if clean == name {
+				if isDirectory {
+					continue
+				}
+				return fail(fmt.Errorf("function archive contains an invalid enclosing directory"))
+			}
+			if !strings.HasPrefix(clean, stripPrefix) {
+				return fail(fmt.Errorf("function archive contains an invalid enclosing directory"))
+			}
+			clean = strings.TrimPrefix(clean, stripPrefix)
+			if clean == "" {
+				if isDirectory {
+					continue
+				}
+				return fail(fmt.Errorf("function archive contains an invalid enclosing directory"))
+			}
 		}
 		if isDirectory {
 			if err := os.MkdirAll(filepath.Join(stage, filepath.FromSlash(clean)), 0o700); err != nil {
@@ -159,7 +199,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		if item.UncompressedSize64 > maxFunctionFileBytes {
 			return fail(fmt.Errorf("function archive file exceeds 20 MiB"))
 		}
-		if clean == "index.ts" {
+		if !isDirectory && clean == "index.ts" {
 			hasIndex = true
 		}
 		output := filepath.Join(stage, filepath.FromSlash(clean))

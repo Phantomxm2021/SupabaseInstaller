@@ -19,7 +19,10 @@ import (
 	"supabase-manager/internal/contracts"
 )
 
-type functionDeployStub struct{ archive string }
+type functionDeployStub struct {
+	archive string
+	err     error
+}
 
 func (s *functionDeployStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
 func (s *functionDeployStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
@@ -31,7 +34,7 @@ func (s *functionDeployStub) Reconcile(context.Context, contracts.ReconcileProje
 func (s *functionDeployStub) DeployFunction(_ context.Context, request contracts.DeployFunctionRequest) (contracts.FunctionDeploymentResult, error) {
 	data, _ := io.ReadAll(request.Archive)
 	s.archive = string(data)
-	return contracts.FunctionDeploymentResult{}, nil
+	return contracts.FunctionDeploymentResult{}, s.err
 }
 func (s *functionDeployStub) ListFunctions(context.Context, contracts.FunctionOperationRequest) ([]contracts.FunctionSummary, error) {
 	return []contracts.FunctionSummary{{Name: "demo"}}, nil
@@ -103,6 +106,21 @@ func TestFunctionDeployEndpointForwardsArchiveWithoutReturningIt(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || backend.archive != "zip-body" || strings.Contains(response.Body.String(), "zip-body") {
 		t.Fatalf("status/body/archive = %d/%s/%q", response.Code, response.Body.String(), backend.archive)
+	}
+}
+
+func TestFunctionDeployEndpointReturnsSafeFailureDiagnostic(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	backend := &functionDeployStub{err: errors.New("function archive requires root index.ts; POSTGRES_PASSWORD=secret-value")}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/projects/bee/functions/demo/deploy", strings.NewReader("zip-body"))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	request.Header.Set("Content-Type", "application/zip")
+	request.Header.Set("X-Operation-ID", "operation-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"code":"FUNCTION_DEPLOY_FAILED"`) || !strings.Contains(response.Body.String(), "function archive requires root index.ts") || strings.Contains(response.Body.String(), "secret-value") {
+		t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
 	}
 }
 

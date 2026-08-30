@@ -126,9 +126,14 @@ func (c *Client) DeployFunction(ctx context.Context, slug, name, operationID str
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 		var outcome contracts.FunctionDeploymentResult
-		if json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&outcome) == nil && outcome.RolledBack {
+		if json.Unmarshal(payload, &outcome) == nil && outcome.RolledBack {
 			return contracts.FunctionDeploymentResult{}, &ClientError{Code: "FUNCTION_DEPLOY_FAILED", Message: "Functions deployment failed and was rolled back", Status: response.StatusCode, RollbackComplete: true, RuntimeStateKnown: true}
+		}
+		var envelope contracts.ErrorEnvelope
+		if json.Unmarshal(payload, &envelope) == nil && envelope.Error.Code == "FUNCTION_DEPLOY_FAILED" && strings.TrimSpace(envelope.Error.Message) != "" {
+			return contracts.FunctionDeploymentResult{}, &ClientError{Code: envelope.Error.Code, Message: envelope.Error.Message, Status: response.StatusCode}
 		}
 		return contracts.FunctionDeploymentResult{}, fmt.Errorf("deploy function: provisioner returned %s", response.Status)
 	}

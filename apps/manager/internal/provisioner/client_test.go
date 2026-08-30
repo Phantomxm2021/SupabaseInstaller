@@ -37,6 +37,22 @@ func TestClientDeployFunctionStreamsArchiveToTypedProvisionerRoute(t *testing.T)
 	}
 }
 
+func TestClientDeployFunctionPreservesProvisionerDiagnostic(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{
+			Code:    "FUNCTION_DEPLOY_FAILED",
+			Message: "function archive requires root index.ts",
+		}})
+		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+	_, err := client.DeployFunction(context.Background(), "bee", "demo", "op-1", strings.NewReader("zip-body"))
+	var clientErr *ClientError
+	if !errors.As(err, &clientErr) || clientErr.Code != "FUNCTION_DEPLOY_FAILED" || clientErr.Message != "function archive requires root index.ts" {
+		t.Fatalf("DeployFunction() error = %#v, want typed provisioner diagnostic", err)
+	}
+}
+
 func TestReconcileWireRequestOmitsRetiredRevisionProtocol(t *testing.T) {
 	var body []byte
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {

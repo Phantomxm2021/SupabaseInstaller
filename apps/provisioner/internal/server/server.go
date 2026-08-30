@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 
 	provisionerauth "supabase-manager/apps/provisioner/internal/auth"
 	"supabase-manager/apps/provisioner/internal/projectfs"
@@ -111,13 +112,15 @@ func (s *server) deployFunction(response http.ResponseWriter, request *http.Requ
 	request.Body = http.MaxBytesReader(response, request.Body, 20<<20)
 	result, err := backend.DeployFunction(request.Context(), contracts.DeployFunctionRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID, Archive: request.Body})
 	if err != nil {
+		diagnostic := redactedFunctionDiagnostic(request.PathValue("slug"), name, operationID, err)
+		s.logger.Error("function deployment failed", "slug", request.PathValue("slug"), "function", name, "operation_id", operationID, "error", diagnostic)
 		if result.RolledBack {
 			// Preserve the typed compensation outcome without returning the
 			// underlying Compose/filesystem diagnostic across the private API.
 			writeJSON(response, http.StatusUnprocessableEntity, result)
 			return
 		}
-		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_DEPLOY_FAILED", "Functions deployment failed")
+		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_DEPLOY_FAILED", diagnostic)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -328,6 +331,20 @@ func redactedReconcileDiagnostic(input contracts.ReconcileProjectRequest, cause 
 		values = append(values, value)
 	}
 	return redact.New(values).String(cause.Error())
+}
+
+func redactedFunctionDiagnostic(slug, name, operationID string, cause error) string {
+	if cause == nil {
+		return "Functions deployment failed"
+	}
+	diagnostic := strings.TrimSpace(redact.New([]string{slug, name, operationID}).String(cause.Error()))
+	if diagnostic == "" {
+		return "Functions deployment failed"
+	}
+	if len(diagnostic) > 4096 {
+		return diagnostic[:4096] + "…"
+	}
+	return diagnostic
 }
 
 type passwordRotationBackend interface {
