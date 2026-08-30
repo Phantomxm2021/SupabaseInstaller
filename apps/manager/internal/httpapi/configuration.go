@@ -78,14 +78,11 @@ type sectionPatch struct {
 
 // patchNetworkTLS is deliberately separate from the JSON network PATCH route:
 // certificate material is write-only and must never enter a configuration
-// snapshot, operation payload, or ordinary JSON request.
+// snapshot, operation payload, or ordinary JSON request. A name-only update
+// persists the deterministic host paths for an operator-provisioned pair.
 func (h configurationHandlers) patchNetworkTLS(w http.ResponseWriter, r *http.Request) {
 	if h.options.Orchestrator == nil {
 		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Server configuration is unavailable")
-		return
-	}
-	if h.options.ManagedTLS == nil {
-		writeError(w, http.StatusServiceUnavailable, "MANAGED_TLS_UNAVAILABLE", "Managed TLS is unavailable")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxManagedTLSUploadBytes)
@@ -103,7 +100,7 @@ func (h configurationHandlers) patchNetworkTLS(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "INVALID_TLS_UPLOAD", err.Error())
 		return
 	}
-	if !certificatePresent || !keyPresent {
+	if certificatePresent != keyPresent {
 		writeError(w, http.StatusUnprocessableEntity, "INVALID_TLS_UPLOAD", "Certificate and private key must be uploaded together")
 		return
 	}
@@ -117,27 +114,35 @@ func (h configurationHandlers) patchNetworkTLS(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusUnprocessableEntity, "INVALID_TLS_CONFIGURATION", "Managed TLS requires external HTTPS mode")
 		return
 	}
-	if _, err := contracts.ManagedTLSPaths(name, snapshot.Configuration.General.SiteURL); err != nil {
+	managedTLS, err := contracts.ManagedTLSPaths(name, snapshot.Configuration.General.SiteURL)
+	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "INVALID_TLS_CONFIGURATION", err.Error())
 		return
 	}
-	parsed, err := url.Parse(snapshot.Configuration.General.SiteURL)
-	if err != nil || parsed.Hostname() == "" {
-		writeError(w, http.StatusUnprocessableEntity, "INVALID_TLS_CONFIGURATION", "Site URL is required before uploading TLS")
-		return
-	}
-	staged, err := h.options.ManagedTLS.StageManagedTLS(r.Context(), contracts.StageManagedTLSRequest{
-		CertificateName: name,
-		BaseDomain:      parsed.Hostname(),
-		CertificatePEM:  certificate,
-		PrivateKeyPEM:   privateKey,
-	})
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "TLS_STAGE_FAILED", "Unable to stage the TLS certificate")
-		return
+	if certificatePresent {
+		if h.options.ManagedTLS == nil {
+			writeError(w, http.StatusServiceUnavailable, "MANAGED_TLS_UNAVAILABLE", "Managed TLS is unavailable")
+			return
+		}
+		parsed, err := url.Parse(snapshot.Configuration.General.SiteURL)
+		if err != nil || parsed.Hostname() == "" {
+			writeError(w, http.StatusUnprocessableEntity, "INVALID_TLS_CONFIGURATION", "Site URL is required before uploading TLS")
+			return
+		}
+		staged, err := h.options.ManagedTLS.StageManagedTLS(r.Context(), contracts.StageManagedTLSRequest{
+			CertificateName: name,
+			BaseDomain:      parsed.Hostname(),
+			CertificatePEM:  certificate,
+			PrivateKeyPEM:   privateKey,
+		})
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "TLS_STAGE_FAILED", "Unable to stage the TLS certificate")
+			return
+		}
+		managedTLS = staged.ManagedTLSConfig
 	}
 	network := snapshot.Configuration.Network
-	network.ManagedTLS = &staged.ManagedTLSConfig
+	network.ManagedTLS = &managedTLS
 	h.queue(w, r, contracts.ConfigurationPatch{Network: &network})
 }
 

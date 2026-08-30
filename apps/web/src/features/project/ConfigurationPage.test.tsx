@@ -126,7 +126,7 @@ it("uploads a named TLS certificate from Server Settings without placing PEM in 
     screen.getByLabelText("Private key (.key or .pem)"),
     new File(["private-key-pem"], "private-key.pem", { type: "application/x-pem-file" }),
   );
-  const upload = screen.getByRole("button", { name: "Upload TLS certificate" });
+  const upload = screen.getByRole("button", { name: "Save TLS settings" });
   expect(upload).toBeEnabled();
   await user.click(upload);
 
@@ -150,6 +150,48 @@ it("uploads a named TLS certificate from Server Settings without placing PEM in 
   expect(body.get("certificateName")).toBe("platform-origin");
   expect(body.get("certificate")).toBeInstanceOf(File);
   expect(body.get("privateKey")).toBeInstanceOf(File);
+});
+
+it("persists a TLS certificate name from Server Settings without certificate files", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "PATCH") {
+      return new Response(
+        JSON.stringify({ projectId: "bee", operationId: "tls-name-op", revision: 5 }),
+        { status: 202 },
+      );
+    }
+    return new Response(JSON.stringify(redactedSnapshot()), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderConfiguration("network");
+
+  const name = await screen.findByLabelText("Certificate name");
+  await user.clear(name);
+  await user.type(name, "platform-origin");
+  const save = screen.getByRole("button", { name: "Save TLS settings" });
+  expect(save).toBeEnabled();
+  await user.click(save);
+
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(
+        ([path, init]) =>
+          String(path).endsWith("/configuration/network/tls") &&
+          (init as RequestInit | undefined)?.method === "PATCH",
+      ),
+    ).toBe(true),
+  );
+  const [, request] = fetchMock.mock.calls.find(
+    ([path, init]) =>
+      String(path).endsWith("/configuration/network/tls") &&
+      (init as RequestInit | undefined)?.method === "PATCH",
+  ) as [string, RequestInit];
+  const body = request.body as FormData;
+  expect(body.get("certificateName")).toBe("platform-origin");
+  expect(body.get("certificate")).toBeNull();
+  expect(body.get("privateKey")).toBeNull();
 });
 
 function redactedSnapshot(

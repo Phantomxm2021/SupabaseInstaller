@@ -24,8 +24,8 @@ import {
 
 export type TLSUpload = {
   certificateName: string;
-  certificate: File;
-  privateKey: File;
+  certificate?: File;
+  privateKey?: File;
 };
 
 export function NetworkSection({
@@ -57,6 +57,7 @@ export function NetworkSection({
   );
   const [certificate, setCertificate] = useState<File>();
   const [privateKey, setPrivateKey] = useState<File>();
+  const hasIncompleteTLSUpload = Boolean(certificate) !== Boolean(privateKey);
 
   return (
     <div className="space-y-5">
@@ -141,7 +142,7 @@ export function NetworkSection({
 
       <SectionCard
         title="TLS certificate"
-        description="Replace the certificate served by the managed external Nginx site. The private key is transmitted directly to the host and is never returned in configuration reads."
+        description="Choose the certificate pair used by the managed external Nginx site. Certificate files are optional when the pair has already been placed on the host."
       >
         <div className="space-y-5">
           <Field>
@@ -155,7 +156,7 @@ export function NetworkSection({
               required
             />
             <FieldDescription>
-              Use lowercase letters, digits, and hyphens. The host writes a domain-scoped certificate file from this name.
+              Use lowercase letters, digits, and hyphens. Saving this name persists domain-scoped PEM and key paths and updates the managed Nginx site.
             </FieldDescription>
           </Field>
           <div className="grid gap-5 sm:grid-cols-2">
@@ -165,10 +166,9 @@ export function NetworkSection({
                 id="settings-tls-certificate"
                 type="file"
                 accept=".pem,.crt,application/x-pem-file"
-                required
                 onChange={(event) => setCertificate(event.target.files?.[0])}
               />
-              <FieldDescription>PEM certificate or certificate chain.</FieldDescription>
+              <FieldDescription>Optional. Upload with its matching private key to replace the host files.</FieldDescription>
             </Field>
             <Field>
               <FieldLabel htmlFor="settings-tls-private-key">Private key (.key or .pem)</FieldLabel>
@@ -176,10 +176,9 @@ export function NetworkSection({
                 id="settings-tls-private-key"
                 type="file"
                 accept=".key,.pem,application/x-pem-file"
-                required
                 onChange={(event) => setPrivateKey(event.target.files?.[0])}
               />
-              <FieldDescription>Matching unencrypted PEM private key.</FieldDescription>
+              <FieldDescription>Optional. Upload with the certificate; never returned after saving.</FieldDescription>
             </Field>
           </div>
           {managedTLS ? (
@@ -194,13 +193,17 @@ export function NetworkSection({
           <div className="flex justify-end">
             <Button
               type="button"
-              disabled={tlsUploading || network.httpsMode !== "external" || !certificate || !privateKey}
+              disabled={
+                tlsUploading ||
+                network.httpsMode !== "external" ||
+                certificateName.trim() === "" ||
+                hasIncompleteTLSUpload
+              }
               onClick={() => {
-                if (!certificate || !privateKey) return;
                 onUploadTLS({ certificateName, certificate, privateKey });
               }}
             >
-              Upload TLS certificate
+              Save TLS settings
             </Button>
           </div>
         </div>

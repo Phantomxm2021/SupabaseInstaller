@@ -157,6 +157,46 @@ func TestConfigurationHTTPTLSUploadStagesCertificateAndQueuesNetworkUpdate(t *te
 	}
 }
 
+func TestConfigurationHTTPPersistsTLSCertificateNameWithoutUpload(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "edge.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "edge", Name: "Edge", Slug: "edge", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterConfigurationRoutes(mux, ConfigurationOptions{
+		Orchestrator: configuration.NewOrchestrator(database, operation.NewService(database, func() string { return "tls-name-op" }, time.Now)),
+	})
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	if err := form.WriteField("certificateName", "platform-origin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := form.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/api/projects/edge/configuration/network/tls", &body)
+	request.Header.Set("Content-Type", form.FormDataContentType())
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("TLS name-only update status = %d, body = %s", response.Code, response.Body.String())
+	}
+	snapshot, err := database.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.Configuration.Network.ManagedTLS; got == nil || got.CertificateName != "platform-origin" || got.CertificateFile != "/etc/nginx/ssl/platform-origin-example.pem" || got.PrivateKeyFile != "/etc/nginx/ssl/platform-origin-example.key" {
+		t.Fatalf("managed TLS name-only configuration was not persisted: %#v", got)
+	}
+}
+
 func TestConfigurationBusyIsTypedConflict(t *testing.T) {
 	response := httptest.NewRecorder()
 	h := configurationHandlers{}

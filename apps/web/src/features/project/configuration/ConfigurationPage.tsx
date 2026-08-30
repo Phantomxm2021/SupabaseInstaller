@@ -210,8 +210,8 @@ export function ConfigurationPage() {
     mutationFn: (input: TLSUpload) => {
       const body = new FormData();
       body.set("certificateName", input.certificateName);
-      body.set("certificate", input.certificate);
-      body.set("privateKey", input.privateKey);
+      if (input.certificate) body.set("certificate", input.certificate);
+      if (input.privateKey) body.set("privateKey", input.privateKey);
       return apiFetch<{ projectId: string; operationId: string }>(
         `/api/projects/${projectId}/configuration/network/tls`,
         { method: "PATCH", body },
