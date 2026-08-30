@@ -111,6 +111,12 @@ func (s *server) deployFunction(response http.ResponseWriter, request *http.Requ
 	request.Body = http.MaxBytesReader(response, request.Body, 20<<20)
 	result, err := backend.DeployFunction(request.Context(), contracts.DeployFunctionRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID, Archive: request.Body})
 	if err != nil {
+		if result.RolledBack {
+			// Preserve the typed compensation outcome without returning the
+			// underlying Compose/filesystem diagnostic across the private API.
+			writeJSON(response, http.StatusUnprocessableEntity, result)
+			return
+		}
 		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_DEPLOY_FAILED", "Functions deployment failed")
 		return
 	}
