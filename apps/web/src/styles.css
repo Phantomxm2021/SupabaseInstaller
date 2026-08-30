@@ -395,9 +395,9 @@ h2 {
   max-width: none;
   margin: 0;
   padding: 48px 40px 80px 41px;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 450;
-  line-height: 22.5px;
+  line-height: 19px;
 }
 .authentication-content .page-heading {
   margin-bottom: 24px;
@@ -643,21 +643,8 @@ h2 {
 .authentication-content .page .text-muted-foreground {
   color: #9da39f;
 }
-.authentication-content .page input {
-  min-height: 32px;
-  border-color: #343936;
-  background: #151816;
-  font-size: 13px;
-  font-weight: 450;
-  line-height: 18.5714px;
-}
-.authentication-content .page [data-slot="button"] {
-  font-size: 12px;
-  font-weight: 450;
-  line-height: 16px;
-}
 .authentication-content .page input:focus {
-  border-color: #5a625d;
+  border-color: var(--ring);
 }
 .auth-users-page { --auth-users-gutter: 25px; display: flex; width: 100%; max-width: none; min-height: 100%; flex-direction: column; margin: 0; padding: 10px var(--auth-users-gutter) 0 !important; }
 .auth-users-heading { height: 37px; display: flex; align-items: flex-start; }

@@ -152,7 +152,7 @@ export function AuthenticationWorkspace() {
     setOperation(undefined);
   };
   return (
-    <section className="authentication-workspace">
+    <section className="authentication-workspace" data-density="dashboard">
       <AuthenticationNavigation />
       <div className="authentication-content">
         {operation ? (
