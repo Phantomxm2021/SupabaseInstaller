@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -91,6 +92,68 @@ func TestConfigurationHTTPRejectsUnsupportedNetworkFields(t *testing.T) {
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/projects/bee/configuration/network", body))
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("unsupported network field status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestConfigurationHTTPTLSUploadStagesCertificateAndQueuesNetworkUpdate(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "edge.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "edge", Name: "Edge", Slug: "edge", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	stager := &fakeManagedTLSStager{}
+	mux := http.NewServeMux()
+	RegisterConfigurationRoutes(mux, ConfigurationOptions{
+		Orchestrator: configuration.NewOrchestrator(database, operation.NewService(database, func() string { return "tls-op" }, time.Now)),
+		ManagedTLS:   stager,
+	})
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	if err := form.WriteField("certificateName", "platform-origin"); err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := form.CreateFormFile("certificate", "certificate.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := certificate.Write([]byte("certificate-pem")); err != nil {
+		t.Fatal(err)
+	}
+	privateKey, err := form.CreateFormFile("privateKey", "private-key.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := privateKey.Write([]byte("private-key-pem")); err != nil {
+		t.Fatal(err)
+	}
+	if err := form.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/api/projects/edge/configuration/network/tls", &body)
+	request.Header.Set("Content-Type", form.FormDataContentType())
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("TLS upload status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if stager.input.CertificateName != "platform-origin" || stager.input.BaseDomain != "example.com" {
+		t.Fatalf("stager input = %#v", stager.input)
+	}
+	if string(stager.input.CertificatePEM) != "certificate-pem" || string(stager.input.PrivateKeyPEM) != "private-key-pem" {
+		t.Fatalf("TLS material did not reach stager")
+	}
+	snapshot, err := database.GetConfiguration(context.Background(), project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.Configuration.Network.ManagedTLS; got == nil || got.CertificateName != "platform-origin" || got.CertificateFile != "/etc/nginx/ssl/platform-origin-example.pem" {
+		t.Fatalf("managed TLS was not persisted safely: %#v", got)
 	}
 }
 

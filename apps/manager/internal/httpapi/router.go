@@ -31,7 +31,7 @@ func NewRouter(options RouterOptions) http.Handler {
 	if configManager == nil {
 		configManager = options.Projects.Configuration
 	}
-	RegisterConfigurationRoutes(protected, ConfigurationOptions{Orchestrator: configManager, Auth: options.Auth.Service, PublicOrigin: options.Auth.PublicOrigin, Projects: options.Projects.Projects})
+	RegisterConfigurationRoutes(protected, ConfigurationOptions{Orchestrator: configManager, Auth: options.Auth.Service, PublicOrigin: options.Auth.PublicOrigin, Projects: options.Projects.Projects, ManagedTLS: options.Projects.ManagedTLS})
 	public.Handle("/api/projects", ProtectAPI(options.Auth, protected))
 	public.Handle("/api/projects/", ProtectAPI(options.Auth, protected))
 	public.Handle("/api/host/", ProtectAPI(options.Auth, protected))

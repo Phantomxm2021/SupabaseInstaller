@@ -231,7 +231,11 @@ type fakeManagedTLSStager struct {
 
 func (fake *fakeManagedTLSStager) StageManagedTLS(_ context.Context, input contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error) {
 	fake.input = input
-	return contracts.StageManagedTLSResponse{ManagedTLSConfig: contracts.ManagedTLSConfig{CertificateName: input.CertificateName, CertificateFile: "/etc/nginx/ssl/cloudflare-origin-example.pem", PrivateKeyFile: "/etc/nginx/ssl/cloudflare-origin-example.key"}, Created: true}, nil
+	config, err := contracts.ManagedTLSPaths(input.CertificateName, "https://"+input.BaseDomain)
+	if err != nil {
+		return contracts.StageManagedTLSResponse{}, err
+	}
+	return contracts.StageManagedTLSResponse{ManagedTLSConfig: config, Created: true}, nil
 }
 
 func (fake *fakeInstaller) CreateOperation(_ context.Context, projectID string) (operation.Operation, error) {

@@ -101,6 +101,57 @@ it("shows the General server controls and enables saving after a domain change",
   expect(screen.getByRole("button", { name: "Save General" })).toBeEnabled();
 });
 
+it("uploads a named TLS certificate from Server Settings without placing PEM in JSON configuration", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "PATCH")
+      return new Response(
+        JSON.stringify({ projectId: "bee", operationId: "tls-op", revision: 5 }),
+        { status: 202 },
+      );
+    return new Response(JSON.stringify(redactedSnapshot()), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderConfiguration("network");
+
+  const name = await screen.findByLabelText("Certificate name");
+  await user.clear(name);
+  await user.type(name, "platform-origin");
+  await user.upload(
+    screen.getByLabelText("Certificate (.pem or .crt)"),
+    new File(["certificate-pem"], "certificate.pem", { type: "application/x-pem-file" }),
+  );
+  await user.upload(
+    screen.getByLabelText("Private key (.key or .pem)"),
+    new File(["private-key-pem"], "private-key.pem", { type: "application/x-pem-file" }),
+  );
+  const upload = screen.getByRole("button", { name: "Upload TLS certificate" });
+  expect(upload).toBeEnabled();
+  await user.click(upload);
+
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(
+        ([path, init]) =>
+          String(path).endsWith("/configuration/network/tls") &&
+          (init as RequestInit | undefined)?.method === "PATCH",
+      ),
+    ).toBe(true),
+  );
+  const [, request] = fetchMock.mock.calls.find(
+    ([path, init]) =>
+      String(path).endsWith("/configuration/network/tls") &&
+      (init as RequestInit | undefined)?.method === "PATCH",
+  ) as [string, RequestInit];
+  expect(request.method).toBe("PATCH");
+  expect(request.body).toBeInstanceOf(FormData);
+  const body = request.body as FormData;
+  expect(body.get("certificateName")).toBe("platform-origin");
+  expect(body.get("certificate")).toBeInstanceOf(File);
+  expect(body.get("privateKey")).toBeInstanceOf(File);
+});
+
 function redactedSnapshot(
   domain = "bee.example.com",
   siteUrl = "https://example.com",

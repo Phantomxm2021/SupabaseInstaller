@@ -38,7 +38,7 @@ import { OperationPanel } from "../../operations/OperationPanel";
 import { DatabaseSection } from "./DatabaseSection";
 import { FunctionsSection } from "./FunctionsSection";
 import { GeneralSection } from "./GeneralSection";
-import { NetworkSection } from "./NetworkSection";
+import { NetworkSection, type TLSUpload } from "./NetworkSection";
 import { PoolerSection } from "./PoolerSection";
 import { RealtimeSection } from "./RealtimeSection";
 import { SecretsSection } from "./SecretsSection";
@@ -177,29 +177,55 @@ export function ConfigurationPage() {
         : undefined,
     [configuration.data?.configuration, configuration.data?.revision],
   );
+  const handleConfigurationQueued = (result: {
+    projectId: string;
+    operationId: string;
+  }) => {
+    setPending(undefined);
+    setOperation({
+      projectId: result.projectId,
+      operationId: result.operationId,
+    });
+    setConflict(false);
+    setFieldErrors({});
+  };
+  const handleConfigurationError = (error: Error) => {
+    if (error instanceof APIError && error.status === 409) {
+      setConflict(true);
+      setPending(undefined);
+    }
+    if (error instanceof APIError && error.fields) setFieldErrors(error.fields);
+    toast.error(error.message);
+  };
   const update = useConfigurationMutation(
     projectId,
     configuration.data?.revision ?? 0,
     (result) => {
-      setPending(undefined);
-      setOperation({
-        projectId: result.projectId,
-        operationId: result.operationId,
-      });
-      setConflict(false);
-      setFieldErrors({});
+      handleConfigurationQueued(result);
       toast.success("Configuration update queued");
     },
-    (error) => {
-      if (error instanceof APIError && error.status === 409) {
-        setConflict(true);
-        setPending(undefined);
-      }
-      if (error instanceof APIError && error.fields)
-        setFieldErrors(error.fields);
-      toast.error(error.message);
-    },
+    handleConfigurationError,
   );
+  const uploadTLS = useMutation({
+    mutationFn: (input: TLSUpload) => {
+      const body = new FormData();
+      body.set("certificateName", input.certificateName);
+      body.set("certificate", input.certificate);
+      body.set("privateKey", input.privateKey);
+      return apiFetch<{ projectId: string; operationId: string }>(
+        `/api/projects/${projectId}/configuration/network/tls`,
+        { method: "PATCH", body },
+      );
+    },
+    onSuccess: (result) => {
+      handleConfigurationQueued(result);
+      toast.success("TLS certificate update queued");
+    },
+    onError: (error) =>
+      handleConfigurationError(
+        error instanceof Error ? error : new Error("TLS certificate upload failed"),
+      ),
+  });
   const rotate = useMutation({
     mutationFn: () =>
       apiFetch<{ projectId: string; operationId: string }>(
@@ -400,6 +426,8 @@ export function ConfigurationPage() {
                 revision={configuration.data.revision}
                 initial={config.network}
                 onSave={save}
+                onUploadTLS={(input) => uploadTLS.mutate(input)}
+                tlsUploading={uploadTLS.isPending}
               />
             )}
             {section === "secrets" && (
