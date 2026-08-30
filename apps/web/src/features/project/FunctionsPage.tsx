@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useOperationEvents } from '../operations/useOperationEvents'
+import { FunctionsNavigation } from './FunctionsNavigation'
 
 const functionStepLabels: Record<string, string> = {
   VALIDATING_ARCHIVE: 'Validating ZIP archive',
@@ -79,6 +80,7 @@ export function FunctionsPage() {
   const operationInProgress = Boolean(activeOperationId && !terminalOperation(operation.data?.status))
   return <main className="page functions-page" data-testid="functions-page">
     <PageHeader eyebrow="Edge Functions" title="Functions" description="Deploy a function ZIP and keep one previous release ready for rollback." />
+    <FunctionsNavigation projectId={projectId} />
     <Card className="functions-upload-card">
       <CardHeader className="functions-card-header"><CardTitle>Upload a function</CardTitle><CardDescription>The ZIP must contain index.ts at its root, inside a same-named folder, or under supabase/functions/function-name/ (a project wrapper is okay). The filename can be function-name.zip.</CardDescription></CardHeader>
       {!enabled && <CardContent className="functions-service-alert"><Alert>Enable the Functions service in Server Settings before deploying code.</Alert></CardContent>}

@@ -38,3 +38,14 @@ it('tracks a queued deployment and refreshes the function list after it succeeds
   expect(await screen.findByText('Function operation complete')).toBeVisible()
   expect(await screen.findByText('hello-world')).toBeVisible()
 })
+
+it('shows a secondary Functions menu', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input) === '/api/projects/bee/functions') return new Response(JSON.stringify({ functions: [], enabled: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    throw new Error(`Unexpected request: ${input}`)
+  }))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /></Routes></MemoryRouter></QueryClientProvider>)
+
+  expect(await screen.findByRole('tab', { name: 'Deployments' })).toBeVisible()
+  expect(screen.getByRole('tab', { name: 'Secrets' })).toBeVisible()
+})
