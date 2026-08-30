@@ -395,9 +395,9 @@ h2 {
   max-width: none;
   margin: 0;
   padding: 48px 40px 80px 41px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 450;
-  line-height: 19px;
+  line-height: 22.5px;
 }
 .authentication-content .page-heading {
   margin-bottom: 24px;
@@ -723,11 +723,13 @@ h2 {
 .auth-emails-page .auth-email-tabs {
   gap: 48px;
 }
-.auth-emails-page .auth-template-list {
-  gap: 56px;
+.dashboard-stack {
+  display: grid;
+  gap: var(--dashboard-stack-gap, 48px);
 }
-.auth-emails-page .auth-template-list > section {
-  gap: 8px;
+.dashboard-section {
+  display: grid;
+  gap: var(--dashboard-section-gap, 24px);
 }
 .auth-emails-page .auth-template-row > a > span:first-child,
 .auth-emails-page .auth-template-row > span > span {
@@ -2208,9 +2210,9 @@ a.auth-template-row:hover {
   max-width: none;
   margin: 0;
   padding: 48px 40px 80px 41px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 450;
-  line-height: 19px;
+  line-height: 22.5px;
 }
 .project-settings-content .page-heading { margin-bottom: 24px; }
 .project-settings-content .page h1 {

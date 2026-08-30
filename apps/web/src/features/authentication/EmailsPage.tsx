@@ -211,7 +211,7 @@ function TemplateList({
     `/projects/${context.projectId}/authentication/emails/${key}`;
   return (
     <form
-      className="auth-template-list space-y-14"
+      className="auth-template-list dashboard-stack"
       onSubmit={form.handleSubmit((mailer) =>
         context.requestSave({
           section: "auth",
@@ -284,7 +284,7 @@ function TemplateGroup({
   footer?: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4">
+    <section className="dashboard-section">
       <h2>{title}</h2>
       <div className="auth-settings-card" aria-label={`${title} templates`}>
         {children}

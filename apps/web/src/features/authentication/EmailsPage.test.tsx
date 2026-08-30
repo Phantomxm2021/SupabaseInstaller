@@ -56,6 +56,9 @@ describe("EmailsPage", () => {
       screen.getByRole("heading", { name: "Security" }),
     ).toBeInTheDocument();
     expect(
+      screen.getByRole("heading", { name: "Authentication" }).closest("section"),
+    ).toHaveClass("dashboard-section");
+    expect(
       screen.getByRole("switch", {
         name: "Enable password changed notification",
       }),
