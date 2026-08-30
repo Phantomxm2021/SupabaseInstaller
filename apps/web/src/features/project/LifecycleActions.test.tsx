@@ -42,7 +42,7 @@ it('deletes through the API, refreshes caches, toasts, and replaces route', asyn
   render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={['/projects/old', '/projects/bee']} initialIndex={1}><LifecycleActions project={project} /><Location /></MemoryRouter></QueryClientProvider>)
   timeline.length = 0
   await user.click(screen.getByRole('button', { name: 'Actions' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'Delete Server' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Delete Project' }))
   await user.click(screen.getByRole('button', { name: /delete permanently/i }))
   expect(await screen.findByTestId('location')).toHaveTextContent('/projects')
   expect(requests[0].input).toBe('/api/projects/bee')
@@ -63,7 +63,7 @@ it('shows an error toast and stays on the project when deletion fails', async ()
   render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={['/projects/bee']}><LifecycleActions project={project} /><CurrentLocation /></MemoryRouter></QueryClientProvider>)
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: 'Actions' }))
-  await user.click(await screen.findByRole('menuitem', { name: 'Delete Server' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Delete Project' }))
   await user.click(screen.getByRole('button', { name: /delete permanently/i }))
   await waitFor(() => expect(screen.getByText('delete failed')).toBeInTheDocument())
   expect(timeline).toEqual(['toast:error'])
@@ -78,19 +78,19 @@ it('offers stopped-server lifecycle and deletion actions in the menu', async () 
   const actions = screen.getByRole('button', { name: 'Actions' })
   expect(actions).toHaveAttribute('aria-haspopup', 'menu')
   await user.click(actions)
-  const start = await screen.findByRole('menuitem', { name: 'Start Server' })
-  expect(screen.getByRole('menuitem', { name: 'Delete Server' })).toBeInTheDocument()
-  expect(screen.queryByRole('menuitem', { name: 'Stop Server' })).not.toBeInTheDocument()
+  const start = await screen.findByRole('menuitem', { name: 'Start Project' })
+  expect(screen.getByRole('menuitem', { name: 'Delete Project' })).toBeInTheDocument()
+  expect(screen.queryByRole('menuitem', { name: 'Stop Project' })).not.toBeInTheDocument()
   await user.click(start)
   await user.click(actions)
-  const pendingStart = await screen.findByRole('menuitem', { name: 'Starting Server…' })
+  const pendingStart = await screen.findByRole('menuitem', { name: 'Starting Project…' })
   expect(pendingStart).toHaveAttribute('aria-disabled', 'true')
 })
 
 it.each([
-  ['FAILED', 'Retry Server'],
-  ['RUNNING', 'Stop Server'],
-  ['DEGRADED', 'Restart Server'],
+  ['FAILED', 'Retry Project'],
+  ['RUNNING', 'Stop Project'],
+  ['DEGRADED', 'Restart Project'],
 ] as const)('shows the %s server action in the Actions menu', async (status, action) => {
   const project = { id: 'bee', name: 'Bee', status, health: status, services: {} } as never
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><LifecycleActions project={project} /></MemoryRouter></QueryClientProvider>)
@@ -99,5 +99,5 @@ it.each([
 
   expect(await screen.findByRole('menuitem', { name: action })).toBeInTheDocument()
   expect(screen.getByRole('separator')).toBeInTheDocument()
-  expect(screen.getByRole('menuitem', { name: 'Delete Server' })).toBeInTheDocument()
+  expect(screen.getByRole('menuitem', { name: 'Delete Project' })).toBeInTheDocument()
 })

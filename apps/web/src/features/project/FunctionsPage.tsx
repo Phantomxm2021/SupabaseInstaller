@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Archive, Check, ChevronDown, Code2, LoaderCircle, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react'
+import { AlertTriangle, Archive, Check, ChevronDown, Code2, FileArchive, LoaderCircle, RotateCcw, ShieldAlert, Trash2, Upload, X } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { apiFetch } from '@/api/client'
@@ -37,6 +37,7 @@ export function FunctionsPage() {
   const [activeOperationId, setActiveOperationId] = useState<string | null>(null)
   const [operationSurface, setOperationSurface] = useState<'dialog' | 'page' | null>(null)
   const handledTerminalOperation = useRef<string | null>(null)
+  const archiveInputRef = useRef<HTMLInputElement>(null)
   const functions = useQuery({ queryKey: ['project-functions', projectId], queryFn: () => apiFetch<{ functions: FunctionSummary[]; enabled: boolean }>(`/api/projects/${projectId}/functions`), enabled: Boolean(projectId) })
   const operation = useQuery({
     queryKey: ['operation', activeOperationId],
@@ -83,7 +84,10 @@ export function FunctionsPage() {
     onSuccess: (result) => { trackOperation(result.operationId); toast.success('Function deletion queued'); setDeleteName(null) },
     onError: (error) => toast.error(error.message),
   })
-  const archiveLabel = useMemo(() => archive?.name ?? 'No ZIP selected', [archive])
+  const clearArchive = () => {
+    setArchive(null)
+    if (archiveInputRef.current) archiveInputRef.current.value = ''
+  }
   if (functions.isLoading) return <main className="page">Loading functions…</main>
   if (functions.error) return <main className="page"><Alert variant="destructive">{functions.error.message}</Alert></main>
   const items = functions.data?.functions ?? []
@@ -91,8 +95,8 @@ export function FunctionsPage() {
   const operationInProgress = Boolean(activeOperationId && !terminalOperation(operation.data?.status))
   const deploymentStatusVisible = upload.isPending || (activeOperationId !== null && operationSurface === 'dialog')
   return <main className="page functions-page" data-testid="functions-page" data-density="dashboard">
-    <PageHeader eyebrow="Edge Functions" title="Functions" description="Deploy a function ZIP and keep one previous release ready for rollback." actions={<Button onClick={() => openDeploymentDialog()} disabled={!enabled || operationInProgress}><Upload />Deploy</Button>} />
-    {!enabled && <Alert>Enable the Functions service in Server Settings before deploying code.</Alert>}
+    <PageHeader eyebrow="Edge Functions" title="Edge Functions" description="Run server-side logic close to your users." actions={<Button onClick={() => openDeploymentDialog()} disabled={!enabled || operationInProgress}><Upload />Deploy a new function</Button>} />
+    {!enabled && <Alert>Enable the Functions service in Project Settings before deploying code.</Alert>}
     {activeOperationId && operationSurface === 'page' && <FunctionOperationStatus operationId={activeOperationId} operation={operation.data} isLoading={operation.isLoading} />}
     <Card className="functions-list-card">
       <CardHeader className="functions-card-header"><CardTitle>Managed functions</CardTitle><CardDescription>Only Manager-owned releases appear here.</CardDescription></CardHeader>
@@ -103,14 +107,14 @@ export function FunctionsPage() {
     <Dialog open={deployDialogOpen} onOpenChange={setDeployDialogOpen}>
       <DialogContent>
         {deploymentStatusVisible ? <>
-          <DialogHeader><DialogTitle>{upload.isPending && !activeOperationId ? 'Uploading function archive' : 'Function deployment'}</DialogTitle><DialogDescription>The deployment continues on the server if you close this dialog.</DialogDescription></DialogHeader>
-          {upload.isPending && !activeOperationId ? <div className="grid gap-3" role="status"><div className="flex items-center gap-2 text-sm"><LoaderCircle className="size-4 animate-spin" />Uploading function archive…</div><Progress value={55}><span className="sr-only">Uploading function</span></Progress></div> : activeOperationId ? <FunctionOperationStatus operationId={activeOperationId} operation={operation.data} isLoading={operation.isLoading} /> : null}
+          <DialogHeader><DialogTitle>{upload.isPending && !activeOperationId ? 'Uploading function archive' : 'Deployment status'}</DialogTitle><DialogDescription>The deployment continues if you close this dialog.</DialogDescription></DialogHeader>
+          {upload.isPending && !activeOperationId ? <div className="grid gap-3" role="status"><div className="flex items-center gap-2 text-sm"><LoaderCircle className="size-4 animate-spin" />Uploading archive</div><Progress value={55}><span className="sr-only">Uploading function archive</span></Progress></div> : activeOperationId ? <FunctionDeploymentStatus operation={operation.data} isLoading={operation.isLoading} /> : null}
           <DialogFooter><Button variant="outline" onClick={() => setDeployDialogOpen(false)}>Close</Button></DialogFooter>
         </> : <>
-          <DialogHeader><DialogTitle>Deploy a function</DialogTitle><DialogDescription>The ZIP must contain index.ts at its root, inside a same-named folder, or under supabase/functions/function-name/ (a project wrapper is okay). The filename can be function-name.zip.</DialogDescription></DialogHeader>
-          <div className="grid gap-4">
-            <div className="grid gap-2"><Label htmlFor="function-name">Function name</Label><Input id="function-name" placeholder="hello-world" value={name} onChange={(event) => setName(event.target.value)} /><p className="text-xs text-muted-foreground">Use lowercase letters, numbers, and hyphens.</p></div>
-            <div className="grid gap-2"><Label htmlFor="function-archive">ZIP archive</Label><Input id="function-archive" type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setArchive(selected); if (selected && !name) setName(selected.name.replace(/\.zip$/i, '')) }} /><p className="text-xs text-muted-foreground">{archiveLabel}</p></div>
+          <DialogHeader><DialogTitle>Deploy a function</DialogTitle><DialogDescription>Upload a ZIP archive to deploy an Edge Function to this project.</DialogDescription></DialogHeader>
+          <div className="grid gap-6">
+            <div className="grid gap-2"><Label htmlFor="function-name">Function name</Label><Input id="function-name" placeholder="Give your function a name..." value={name} onChange={(event) => setName(event.target.value)} /><p className="text-xs text-muted-foreground">This name is used in the function URL.</p></div>
+            <div className="grid gap-3"><div className="grid gap-1"><Label htmlFor="function-archive">Function ZIP file</Label><p className="text-xs text-muted-foreground">The archive must include <code>index.ts</code> at its root or in the requested function directory.</p></div><Input ref={archiveInputRef} id="function-archive" className="sr-only" type="file" accept=".zip,application/zip" onChange={(event) => { const selected = event.target.files?.[0] ?? null; setArchive(selected); if (selected && !name) setName(selected.name.replace(/\.zip$/i, '')) }} />{archive ? <Card className="border-border shadow-none"><CardContent className="flex items-center gap-3 px-3 py-3"><FileArchive className="size-5 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="truncate text-sm">{archive.name}</p><p className="text-xs text-muted-foreground">ZIP archive ready to deploy</p></div><Button type="button" size="icon-sm" variant="ghost" aria-label="Remove ZIP file" onClick={clearArchive}><X /></Button></CardContent></Card> : <Button type="button" variant="outline" className="w-full justify-center border-dashed" onClick={() => archiveInputRef.current?.click()}><Upload />Choose ZIP file</Button>}</div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setDeployDialogOpen(false)}>Cancel</Button><Button onClick={() => upload.mutate()} disabled={!enabled || upload.isPending || operationInProgress || !archive || !name.trim()}><Upload />Deploy function</Button></DialogFooter>
         </>}
@@ -139,6 +143,19 @@ function FunctionOperationStatus({ operationId, operation, isLoading }: { operat
     {!succeeded && <CardContent className="functions-operation-progress"><Progress value={operation?.progress ?? 0}><span className="sr-only">Function operation progress</span></Progress></CardContent>}
     {operation?.errorMessage && <CardContent className="functions-operation-error"><Alert variant="destructive"><ShieldAlert className="size-4" /><span>{operation.errorMessage}</span></Alert></CardContent>}
   </Card>
+}
+
+function FunctionDeploymentStatus({ operation, isLoading }: { operation?: Operation; isLoading: boolean }) {
+  const status = operation?.status ?? 'QUEUED'
+  const failed = status === 'FAILED' || status === 'ROLLED_BACK'
+  const succeeded = status === 'SUCCEEDED'
+  const title = succeeded ? 'Deployment complete' : failed ? 'Deployment failed' : isLoading ? 'Loading deployment status' : 'Deployment in progress'
+  const step = functionStepLabels[operation?.currentStep ?? ''] ?? operation?.currentStep ?? 'Waiting for deployment to begin'
+  return <div className="grid gap-4 rounded-lg border border-border bg-muted/20 p-4" role="status">
+    <div className="flex items-start gap-3"><span className={`mt-0.5 grid size-7 place-items-center rounded-full ${failed ? 'bg-destructive/15 text-destructive' : succeeded ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'}`}>{failed ? <AlertTriangle className="size-4" /> : succeeded ? <Check className="size-4" /> : <LoaderCircle className="size-4 animate-spin" />}</span><div className="min-w-0 flex-1"><p className="text-sm font-medium">{title}</p><p className="mt-1 text-xs text-muted-foreground">{step}</p></div><Badge variant={failed ? 'destructive' : succeeded ? 'default' : 'outline'}>{status}</Badge></div>
+    {!succeeded && !failed && <Progress value={operation?.progress ?? 0}><span className="sr-only">Function deployment progress</span></Progress>}
+    {operation?.errorMessage && <Alert variant="destructive"><ShieldAlert className="size-4" /><span>{operation.errorMessage}</span></Alert>}
+  </div>
 }
 
 function ReleaseBadge({ release }: { release: { sha256: string; deployedAt: string } }) {

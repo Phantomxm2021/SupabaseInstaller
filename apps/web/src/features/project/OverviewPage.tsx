@@ -10,7 +10,7 @@ import { ServiceTable } from './ServiceTable'
 export function OverviewPage() {
   const { projectId = '' } = useParams()
   const project = useQuery({ queryKey: ['project', projectId], queryFn: () => apiFetch<Project>(`/api/projects/${projectId}`), enabled: Boolean(projectId) })
-  if (project.isLoading) return <main className="page">Loading server…</main>
+  if (project.isLoading) return <main className="page">Loading project…</main>
   if (project.error) return <main className="page"><Alert variant="destructive">{project.error.message}</Alert></main>
   if (!project.data) return null
   const data = project.data
@@ -24,7 +24,7 @@ export function OverviewPage() {
         <h1>{data.name}</h1>
         <div className="project-overview-origin">
           <span>{studioURL}</span>
-          <button type="button" aria-label="Copy server URL" onClick={() => void navigator.clipboard?.writeText(studioURL)}><Copy />Copy</button>
+          <button type="button" aria-label="Copy project URL" onClick={() => void navigator.clipboard?.writeText(studioURL)}><Copy />Copy</button>
         </div>
       </div>
       <LifecycleActions project={data} />
@@ -33,9 +33,9 @@ export function OverviewPage() {
       <div className="project-overview-facts">
         <OverviewFact icon={<ShieldCheck />} label="Status" value={humanize(data.health)} detail={humanize(data.status)} />
         <OverviewFact icon={<ServerCog />} label="Compute" value="Self-hosted" detail={`${humanize(data.preset)} stack`} />
-        <OverviewFact icon={<Globe2 />} label="Supabase Studio" value={studioURL} detail={data.services.studio && data.status === 'RUNNING' ? <a href={studioURL} target="_blank" rel="noreferrer">Open Supabase Studio <ExternalLink /></a> : 'Studio unavailable while the server is stopped'} />
+        <OverviewFact icon={<Globe2 />} label="Supabase Studio" value={studioURL} detail={data.services.studio && data.status === 'RUNNING' ? <a href={studioURL} target="_blank" rel="noreferrer">Open Supabase Studio <ExternalLink /></a> : 'Studio unavailable while the project is stopped'} />
         <OverviewFact icon={<Package />} label="Version" value={data.supabaseVersion} detail="Pinned runtime template" />
-        <OverviewFact icon={<Database />} label="Services" value={`${enabledServiceCount} active services`} detail="Components enabled for this server" />
+        <OverviewFact icon={<Database />} label="Services" value={`${enabledServiceCount} active services`} detail="Components enabled for this project" />
         <OverviewFact icon={<ServerCog />} label="Configuration" value={`Revision ${data.configurationRevision ?? 0}`} detail={`${data.slug} · ${humanize(data.preset)} preset`} />
       </div>
       <aside className="project-overview-runtime" aria-label="Runtime summary">

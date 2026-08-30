@@ -29,24 +29,27 @@ it('tracks a queued deployment and refreshes the function list after it succeeds
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /></Routes></MemoryRouter></QueryClientProvider>)
 
   const archive = new File(['zip-body'], 'hello-world.zip', { type: 'application/zip' })
-  await user.click(await screen.findByRole('button', { name: 'Deploy' }))
-  await user.upload(await screen.findByLabelText('ZIP archive'), archive)
+  await user.click(await screen.findByRole('button', { name: 'Deploy a new function' }))
+  await user.click(await screen.findByRole('button', { name: 'Choose ZIP file' }))
+  await user.upload(await screen.findByLabelText('Function ZIP file'), archive)
+  expect(screen.getByText('hello-world.zip')).toBeVisible()
+  expect(screen.getByText('ZIP archive ready to deploy')).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Deploy function' }))
 
   await waitFor(() => expect(requests).toContain('/api/projects/bee/functions/hello-world/deploy'))
   await waitFor(() => expect(operationReads).toBeGreaterThan(0))
   await waitFor(() => expect(functionReads).toBeGreaterThan(1))
-  expect(await screen.findByText('Function operation complete')).toBeVisible()
+  expect(await screen.findByText('Deployment complete')).toBeVisible()
   expect(screen.getByRole('dialog')).toBeVisible()
-  expect(screen.queryByLabelText('ZIP archive')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Function ZIP file')).not.toBeInTheDocument()
   expect(await screen.findByText('hello-world')).toBeVisible()
 
   await user.click(within(screen.getByRole('dialog')).getAllByRole('button', { name: 'Close' })[0])
-  expect(screen.queryByText('Function operation complete')).not.toBeInTheDocument()
+  expect(screen.queryByText('Deployment complete')).not.toBeInTheDocument()
   expect(screen.queryByText('Finalizing function deployment')).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Deploy' }))
+  await user.click(screen.getByRole('button', { name: 'Deploy a new function' }))
 
-  expect(await screen.findByLabelText('ZIP archive')).toBeVisible()
+  expect(await screen.findByLabelText('Function ZIP file')).toBeVisible()
 })
 
 it('does not render Functions navigation as in-page tabs', async () => {
@@ -68,11 +71,12 @@ it('opens the deployment dialog from the page header', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /></Routes></MemoryRouter></QueryClientProvider>)
 
-  await user.click(await screen.findByRole('button', { name: 'Deploy' }))
+  await user.click(await screen.findByRole('button', { name: 'Deploy a new function' }))
 
   expect(await screen.findByRole('heading', { name: 'Deploy a function' })).toBeVisible()
   expect(screen.getByLabelText('Function name')).toBeVisible()
-  expect(screen.getByLabelText('ZIP archive')).toBeVisible()
+  expect(screen.getByLabelText('Function ZIP file')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Choose ZIP file' })).toBeVisible()
 })
 
 it('opens the deployment dialog with the selected managed function name', async () => {

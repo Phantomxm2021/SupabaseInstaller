@@ -22,9 +22,9 @@ export async function refreshProjectQueriesAfterDelete(queryClient: Pick<QueryCl
 }
 
 const actionLabels: Record<LifecycleAction, string> = {
-  start: 'Starting Server',
-  stop: 'Stopping Server',
-  restart: 'Restarting Server',
+  start: 'Starting Project',
+  stop: 'Stopping Project',
+  restart: 'Restarting Project',
 }
 
 export function LifecycleActions({ project }: { project: Project }) {
@@ -39,18 +39,18 @@ export function LifecycleActions({ project }: { project: Project }) {
   })
   const retry = useMutation({
     mutationFn: () => apiFetch<{ projectId: string; operationId: string }>(`/api/projects/${project.id}/retry`, { method: 'POST' }),
-    onMutate: () => setMessage('Retrying Server…'),
+    onMutate: () => setMessage('Retrying Project…'),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['project', project.id] })
       await queryClient.invalidateQueries({ queryKey: ['projects'] })
-      setMessage('Server retry queued')
+      setMessage('Project retry queued')
     },
   })
   const remove = useMutation({
     mutationFn: ({ mode, confirmation }: { mode: 'runtime' | 'data'; confirmation: string }) => apiFetch(`/api/projects/${project.id}`, { method: 'DELETE', body: JSON.stringify({ mode, confirmation }) }),
     onSuccess: async () => {
       await refreshProjectQueriesAfterDelete(queryClient, project.id)
-      toast.success('Server deleted')
+      toast.success('Project deleted')
       navigate('/projects', { replace: true })
     },
     onError: (error) => toast.error(error.message),
@@ -64,14 +64,14 @@ export function LifecycleActions({ project }: { project: Project }) {
             Actions <ChevronDown className="size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={8}>
-            {project.status === 'FAILED' && <DropdownMenuItem disabled={retry.isPending} onClick={() => retry.mutate()}><RotateCw /> {retry.isPending ? 'Retrying Server…' : 'Retry Server'}</DropdownMenuItem>}
-            {project.status === 'STOPPED' && <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('start')}><Play /> {lifecycle.isPending ? 'Starting Server…' : 'Start Server'}</DropdownMenuItem>}
+            {project.status === 'FAILED' && <DropdownMenuItem disabled={retry.isPending} onClick={() => retry.mutate()}><RotateCw /> {retry.isPending ? 'Retrying Project…' : 'Retry Project'}</DropdownMenuItem>}
+            {project.status === 'STOPPED' && <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('start')}><Play /> {lifecycle.isPending ? 'Starting Project…' : 'Start Project'}</DropdownMenuItem>}
             {['RUNNING', 'DEGRADED'].includes(project.status) && <>
-              <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('stop')}><Pause /> {lifecycle.isPending ? 'Stopping Server…' : 'Stop Server'}</DropdownMenuItem>
-              <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('restart')}><RotateCw /> {lifecycle.isPending ? 'Restarting Server…' : 'Restart Server'}</DropdownMenuItem>
+              <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('stop')}><Pause /> {lifecycle.isPending ? 'Stopping Project…' : 'Stop Project'}</DropdownMenuItem>
+              <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('restart')}><RotateCw /> {lifecycle.isPending ? 'Restarting Project…' : 'Restart Project'}</DropdownMenuItem>
             </>}
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}><Trash2 /> Delete Server</DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}><Trash2 /> Delete Project</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

@@ -18,7 +18,7 @@ export function MultiFactorPage({ context: provided }: { context?: Authenticatio
   const mfa = form.watch('mfa')
   const set = <K extends keyof MFAConfig>(field: K, value: MFAConfig[K]) => form.setValue(`mfa.${field}` as never, value as never, { shouldDirty: true, shouldValidate: true })
   return <main className="page auth-page auth-reference-page auth-mfa-reference-page dashboard-stack">
-    <header className="page-heading"><div><h1>Multi-Factor Authentication (MFA)</h1><p className="muted">Require users to provide additional verification factors to authenticate.</p></div></header>
+    <header className="page-heading"><div><h1>Multi-Factor Authentication (MFA)</h1><p className="muted">Requires users to provide additional verification factors to authenticate.</p></div></header>
     <form className="auth-reference-form" onSubmit={form.handleSubmit((value) => context.requestSave({ section: 'auth', value, dirty: form.formState.dirtyFields, setError: (name, message) => form.setError(name as never, { type: 'server', message }) }))}>
       <MFASection title="Multi-Factor Authentication (MFA)" save={<Button type="submit" disabled={!form.formState.isDirty}>Save changes</Button>}>
         <FactorRow id="totp-factor" label="TOTP (App Authenticator)" description="Control use of TOTP (App Authenticator) factors" enabled={mfa.totpEnrollEnabled && mfa.totpVerifyEnabled} onChange={(enabled) => { set('totpEnrollEnabled', enabled); set('totpVerifyEnabled', enabled) }} />

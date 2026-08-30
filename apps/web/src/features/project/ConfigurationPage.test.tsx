@@ -57,14 +57,14 @@ it("renders the installed server configuration workspace from the redacted snaps
   ).toBeVisible();
   expect(screen.getByLabelText("Maximum connections")).toBeVisible();
   const settings = screen.getByRole("navigation", {
-    name: "Server settings navigation",
+    name: "Project settings navigation",
   });
   expect(within(settings).getAllByRole("link")).toHaveLength(9);
   expect(
-    within(settings).getByRole("heading", { name: "Server Settings" }),
+    within(settings).getByRole("heading", { name: "Project Settings" }),
   ).toBeVisible();
   expect(
-    within(settings).getByRole("heading", { name: "SERVER" }),
+    within(settings).getByRole("heading", { name: "PROJECT" }),
   ).toBeVisible();
   expect(
     within(settings).getByRole("heading", { name: "INFRASTRUCTURE" }),
@@ -87,10 +87,10 @@ it("shows the General server controls and enables saving after a domain change",
   renderConfiguration();
 
   const siteUrl = await screen.findByLabelText("Site URL base domain");
-  expect(screen.getByLabelText("Public server hostname")).toHaveValue(
+  expect(screen.getByLabelText("Public project hostname")).toHaveValue(
     "bee.example.com",
   );
-  expect(screen.getByLabelText("Server URL")).toHaveValue(
+  expect(screen.getByLabelText("Project URL")).toHaveValue(
     "https://bee.example.com",
   );
   expect(screen.getByRole("button", { name: "Save General" })).toBeDisabled();
@@ -301,10 +301,10 @@ it("keeps dirty input when preview is dismissed with Keep editing", async () => 
   expect(screen.getByLabelText("Site URL base domain")).toHaveValue(
     "https://edited.example.com",
   );
-  expect(screen.getByLabelText("Public server hostname")).toHaveValue(
+  expect(screen.getByLabelText("Public project hostname")).toHaveValue(
     "bee.example.com",
   );
-  expect(screen.getByLabelText("Public server hostname")).toHaveAttribute(
+  expect(screen.getByLabelText("Public project hostname")).toHaveAttribute(
     "aria-readonly",
     "true",
   );
@@ -355,7 +355,7 @@ it("preserves dirty fields on 409 and only Reload resets to new server data", as
       "https://server.example.com",
     ),
   );
-  expect(screen.getByLabelText("Public server hostname")).toHaveValue(
+  expect(screen.getByLabelText("Public project hostname")).toHaveValue(
     "bee.server.example.com",
   );
 });

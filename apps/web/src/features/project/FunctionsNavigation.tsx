@@ -37,11 +37,11 @@ export function FunctionsNavigation() {
 
 function FunctionsNavigationContent({ projectId, onNavigate }: { projectId: string; onNavigate?: () => void }) {
   return <nav aria-label="Functions navigation" className="functions-navigation">
-    <header className="functions-navigation-title"><h1>Functions</h1></header>
+    <header className="functions-navigation-title"><h1>Edge Functions</h1></header>
     <section className="functions-navigation-group" aria-labelledby="functions-workspace">
       <h2 id="functions-workspace" className="functions-navigation-label">WORKSPACE</h2>
       <ul className="functions-navigation-list">
-        <li><NavLink end to={`/projects/${projectId}/functions`} className="functions-navigation-link" onClick={onNavigate}><span>Deployments</span></NavLink></li>
+        <li><NavLink end to={`/projects/${projectId}/functions`} className="functions-navigation-link" onClick={onNavigate}><span>Functions</span></NavLink></li>
         <li><NavLink to={`/projects/${projectId}/functions/secrets`} className="functions-navigation-link" onClick={onNavigate}><span>Secrets</span></NavLink></li>
       </ul>
     </section>

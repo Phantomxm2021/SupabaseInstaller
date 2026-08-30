@@ -22,7 +22,7 @@ it('shows server health and the new server action', async () => {
 
   expect(await screen.findByText('Bee')).toBeVisible()
   expect(screen.getByText('Healthy')).toBeVisible()
-  expect(screen.getByRole('link', { name: 'New server' })).toHaveAttribute('href', '/projects/new')
+  expect(screen.getByRole('link', { name: 'New project' })).toHaveAttribute('href', '/projects/new')
   expect(screen.getByRole('link', { name: 'View Details' })).toHaveAttribute('href', '/projects/bee/overview')
   expect(screen.getByTestId('projects-card')).toHaveAttribute('data-slot', 'card')
   expect(screen.getByRole('table')).toHaveAttribute('data-slot', 'table')
@@ -40,9 +40,9 @@ it('uses the shared page header and filters servers by name or domain', async ()
   const user = userEvent.setup()
   renderProjectsPage()
 
-  expect(await screen.findByRole('heading', { name: 'Servers' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Projects' })).toBeVisible()
   expect(screen.getByText('Runtime orchestration')).toBeVisible()
-  await user.type(screen.getByRole('textbox', { name: 'Search servers' }), 'atlas.example')
+  await user.type(screen.getByRole('textbox', { name: 'Search projects' }), 'atlas.example')
 
   expect(screen.getByText('Atlas')).toBeVisible()
   expect(screen.queryByText('Bee')).not.toBeInTheDocument()
@@ -72,7 +72,7 @@ it('shows the project-list loading AsyncState until the projects request resolve
   expect(loadingState.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
 
   resolveProjects!(new Response(JSON.stringify({ projects: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-  expect(await screen.findByText('No servers yet')).toBeVisible()
+  expect(await screen.findByText('No projects yet')).toBeVisible()
 })
 
 it('retries a failed project-list query from its destructive alert', async () => {
@@ -86,7 +86,7 @@ it('retries a failed project-list query from its destructive alert', async () =>
   const user = userEvent.setup()
   renderProjectsPage()
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Servers unavailable')
+  expect(await screen.findByRole('alert')).toHaveTextContent('Projects unavailable')
   await user.click(screen.getByRole('button', { name: 'Retry' }))
 
   expect(await screen.findByText('Bee')).toBeVisible()
@@ -97,22 +97,22 @@ it('offers server creation from the empty state', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ projects: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
   renderProjectsPage()
 
-  expect(await screen.findByText('No servers yet')).toBeVisible()
-  expect(screen.getByRole('link', { name: 'Create server' })).toHaveAttribute('href', '/projects/new')
+  expect(await screen.findByText('No projects yet')).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Create project' })).toHaveAttribute('href', '/projects/new')
 })
 
 it('announces server query failures as alerts', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: 'Projects unavailable' } }), { status: 503 })))
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><ProjectsPage /></MemoryRouter></QueryClientProvider>)
-  expect(await screen.findByRole('alert')).toHaveTextContent('Servers unavailable')
+  expect(await screen.findByRole('alert')).toHaveTextContent('Projects unavailable')
 })
 
 it('hides the server table header while the server list is empty', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ projects: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><ProjectsPage /></MemoryRouter></QueryClientProvider>)
 
-  expect(await screen.findByText('No servers yet')).toBeVisible()
-  expect(screen.queryByRole('columnheader', { name: 'Server' })).not.toBeInTheDocument()
+  expect(await screen.findByText('No projects yet')).toBeVisible()
+  expect(screen.queryByRole('columnheader', { name: 'Project' })).not.toBeInTheDocument()
 })
 
 it('renders host CPU, memory, and disk metrics from the resources endpoint', async () => {
@@ -157,7 +157,7 @@ it('retries a failed project from the project list', async () => {
   await user.click(await screen.findByRole('button', { name: 'Retry Bee' }))
 
   await waitFor(() => expect(requests).toContainEqual({ path: '/api/projects/bee/retry', method: 'POST' }))
-  expect(await screen.findByRole('status')).toHaveTextContent('Retrying server…')
+  expect(await screen.findByRole('status')).toHaveTextContent('Retrying project…')
   resolveRetry!(new Response(JSON.stringify({ projectId: 'bee', operationId: 'retry-1' }), { status: 202, headers: { 'Content-Type': 'application/json' } }))
   expect(await screen.findByRole('status')).toHaveTextContent('Retry queued')
 })

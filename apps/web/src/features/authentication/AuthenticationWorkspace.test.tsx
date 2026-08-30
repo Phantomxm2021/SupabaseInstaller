@@ -41,7 +41,7 @@ it('keeps only the requested Authentication configuration links', async () => {
 
   render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>)
 
-  expect(await screen.findByRole('link', { name: 'Server Overview' })).toBeVisible()
+  expect(await screen.findByRole('link', { name: 'Project Overview' })).toBeVisible()
   expect(await screen.findByRole('link', { name: 'Emails' })).toHaveAttribute('aria-current', 'page')
   expect(screen.getByRole('heading', { name: 'Authentication', level: 1 })).toBeVisible()
   expect(screen.getByText('NOTIFICATIONS')).toBeVisible()
