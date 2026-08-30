@@ -137,11 +137,17 @@ func TestActivateFunctionReleaseCreatesCurrentPointer(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Lstat(current)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("current pointer = %v, %v; want symlink", info, err)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("current function = %v, %v; want regular directory", info, err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("current function mode = %o, want 755", info.Mode().Perm())
 	}
 	if body, err := os.ReadFile(filepath.Join(current, "index.ts")); err != nil || string(body) != "one" {
 		t.Fatalf("current index = %q, %v", body, err)
+	}
+	if info, err := os.Stat(filepath.Join(current, "index.ts")); err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("current index mode = %v, %v; want 644", info, err)
 	}
 }
 
@@ -173,6 +179,114 @@ func TestRollbackFunctionReleaseRestoresPreviousRelease(t *testing.T) {
 	}
 	if body, err := os.ReadFile(filepath.Join(current, "index.ts")); err != nil || string(body) != "one" {
 		t.Fatalf("current index = %q, %v", body, err)
+	}
+}
+
+func TestActivateFunctionReleaseRepairsLegacySymlink(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := zipFixture(t, map[string]string{"index.ts": "legacy"})
+	stage, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.ActivateFunctionRelease("bee", "demo", stage); err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	functionsRoot := filepath.Join(project, "volumes", "functions")
+	current := filepath.Join(functionsRoot, "demo")
+	managerDir := filepath.Join(functionsRoot, ".manager", "demo")
+	releases := filepath.Join(managerDir, "releases")
+	state, err := readManagedFunctionState(releases)
+	if err != nil || state.Current == nil {
+		t.Fatalf("read state = %#v, %v", state, err)
+	}
+	if err := os.RemoveAll(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(".manager", "demo", "releases", state.Current.SHA256), current); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := root.StageFunctionRelease("bee", "demo", "operation-2", bytes.NewReader(archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.ActivateFunctionRelease("bee", "demo", retry); err != nil {
+		t.Fatalf("repair activation = %v", err)
+	}
+	info, err := os.Lstat(current)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("repaired current = %v, %v; want regular directory", info, err)
+	}
+	if body, err := os.ReadFile(filepath.Join(current, "index.ts")); err != nil || string(body) != "legacy" {
+		t.Fatalf("repaired index = %q, %v", body, err)
+	}
+}
+
+func TestDeleteFunctionRemovesMaterializedCurrentDirectory(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(zipFixture(t, map[string]string{"index.ts": "one"})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.ActivateFunctionRelease("bee", "demo", stage); err != nil {
+		t.Fatal(err)
+	}
+	current, err := root.FunctionCurrentPath("bee", "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.DeleteFunction("bee", "demo"); err != nil {
+		t.Fatalf("DeleteFunction() error = %v", err)
+	}
+	if _, err := os.Lstat(current); !os.IsNotExist(err) {
+		t.Fatalf("current function = %v, want removed", err)
+	}
+}
+
+func TestStartupRepairsLegacyFunctionSymlink(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewReader(zipFixture(t, map[string]string{"index.ts": "one"})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.ActivateFunctionRelease("bee", "demo", stage); err != nil {
+		t.Fatal(err)
+	}
+	project, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	functionsRoot := filepath.Join(project, "volumes", "functions")
+	current := filepath.Join(functionsRoot, "demo")
+	state, err := readManagedFunctionState(filepath.Join(functionsRoot, ".manager", "demo", "releases"))
+	if err != nil || state.Current == nil {
+		t.Fatalf("read state = %#v, %v", state, err)
+	}
+	if err := os.RemoveAll(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(".manager", "demo", "releases", state.Current.SHA256), current); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.repairLegacyFunctionDirectoriesAtStartup(); err != nil {
+		t.Fatalf("startup repair = %v", err)
+	}
+	info, err := os.Lstat(current)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("startup repaired current = %v, %v; want regular directory", info, err)
 	}
 }
 

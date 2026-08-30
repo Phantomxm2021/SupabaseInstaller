@@ -49,6 +49,58 @@ type managedFunctionState struct {
 	Previous *contracts.FunctionRelease `json:"previous,omitempty"`
 }
 
+// repairLegacyFunctionDirectoriesAtStartup migrates live function symlinks
+// written by Manager versions predating materialized runtime directories. The
+// migration is deliberately limited to Manager-owned entries and runs before
+// the Provisioner starts serving requests, so an existing deployment is fixed
+// without requiring the user to upload its archive again.
+func (r *Root) repairLegacyFunctionDirectoriesAtStartup() error {
+	entries, err := os.ReadDir(r.base)
+	if err != nil {
+		return fmt.Errorf("list project root: %w", err)
+	}
+	for _, projectEntry := range entries {
+		if !projectEntry.IsDir() || !slugPattern.MatchString(projectEntry.Name()) {
+			continue
+		}
+		functionsRoot := filepath.Join(r.base, projectEntry.Name(), "volumes", "functions")
+		managerRoot := filepath.Join(functionsRoot, ".manager")
+		functionEntries, err := os.ReadDir(managerRoot)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("list managed functions for %s: %w", projectEntry.Name(), err)
+		}
+		for _, functionEntry := range functionEntries {
+			if !functionEntry.IsDir() || contracts.ValidateFunctionName(functionEntry.Name()) != nil {
+				continue
+			}
+			managerDir := filepath.Join(managerRoot, functionEntry.Name())
+			releases := filepath.Join(managerDir, "releases")
+			state, err := readManagedFunctionState(releases)
+			if err != nil {
+				return err
+			}
+			if state.Current == nil || !isValidFunctionSHA(state.Current.SHA256) {
+				continue
+			}
+			current := filepath.Join(functionsRoot, functionEntry.Name())
+			info, err := os.Lstat(current)
+			if err != nil || info.Mode()&os.ModeSymlink == 0 {
+				continue
+			}
+			if !isManagedFunctionPointer(current, releases) {
+				continue
+			}
+			if err := switchFunctionDirectory(functionsRoot, managerDir, functionEntry.Name(), "startup-repair", state.Current.SHA256); err != nil {
+				return fmt.Errorf("repair function %s/%s: %w", projectEntry.Name(), functionEntry.Name(), err)
+			}
+		}
+	}
+	return nil
+}
+
 // ListFunctions reads only Manager-owned state and returns no filesystem paths
 // or source content. Unmanaged function directories are deliberately omitted.
 func (r *Root) ListFunctions(slug string) ([]contracts.FunctionSummary, error) {
@@ -81,7 +133,8 @@ func (r *Root) ListFunctions(slug string) ([]contracts.FunctionSummary, error) {
 	return result, nil
 }
 
-// FunctionCurrentPath returns the current managed pointer for a function.
+// FunctionCurrentPath returns the current managed runtime directory for a
+// function.
 func (r *Root) FunctionCurrentPath(slug, name string) (string, error) {
 	if err := contracts.ValidateFunctionName(name); err != nil {
 		return "", err
@@ -231,9 +284,10 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 	return FunctionReleaseStage{SHA256: hex.EncodeToString(hash[:]), OperationID: operationID, Name: name, path: stage}, nil
 }
 
-// ActivateFunctionRelease publishes a complete stage through an atomically
-// replaced relative symlink. The target and link live on the same project
-// filesystem, so readers observe either the former pointer or the new one.
+// ActivateFunctionRelease publishes a complete stage through a materialized
+// runtime directory. Edge Runtime copies function directories into a compiler
+// scratch tree without following symlinks, so the live path must contain real
+// files even though releases remain versioned under .manager.
 func (r *Root) ActivateFunctionRelease(slug, name string, stage FunctionReleaseStage) (FunctionActivation, error) {
 	if err := contracts.ValidateFunctionName(name); err != nil || stage.Name != name || stage.path == "" {
 		return FunctionActivation{}, fmt.Errorf("invalid function release stage")
@@ -245,31 +299,55 @@ func (r *Root) ActivateFunctionRelease(slug, name string, stage FunctionReleaseS
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
 	functionsRoot := filepath.Join(project, "volumes", "functions")
-	releases := filepath.Join(functionsRoot, ".manager", name, "releases")
+	managerDir := filepath.Join(functionsRoot, ".manager", name)
+	releases := filepath.Join(managerDir, "releases")
 	if err := os.MkdirAll(releases, 0o700); err != nil {
 		return FunctionActivation{}, fmt.Errorf("create function releases directory: %w", err)
 	}
+	state, err := readManagedFunctionState(releases)
+	if err != nil {
+		return FunctionActivation{}, err
+	}
 	release := filepath.Join(releases, stage.SHA256)
 	if _, err := os.Lstat(release); err == nil {
+		// Retrying the same deployment also repairs releases published by older
+		// Manager versions, which used a symlink at the live function path.
+		if state.Current != nil && state.Current.SHA256 == stage.SHA256 {
+			if err := switchFunctionDirectory(functionsRoot, managerDir, name, stage.OperationID, stage.SHA256); err != nil {
+				_ = os.RemoveAll(stage.path)
+				return FunctionActivation{}, err
+			}
+			_ = os.RemoveAll(stage.path)
+			if err := syncDirectory(functionsRoot); err != nil {
+				return FunctionActivation{}, err
+			}
+			return FunctionActivation{Current: state.Current, Previous: state.Previous}, nil
+		}
+		_ = os.RemoveAll(stage.path)
 		return FunctionActivation{}, fmt.Errorf("function release already exists")
 	} else if !os.IsNotExist(err) {
+		_ = os.RemoveAll(stage.path)
 		return FunctionActivation{}, err
 	}
 	if err := os.Rename(stage.path, release); err != nil {
 		return FunctionActivation{}, fmt.Errorf("publish function release: %w", err)
 	}
 	current := filepath.Join(functionsRoot, name)
-	if info, err := os.Lstat(current); err == nil && (info.Mode()&os.ModeSymlink == 0 || !isManagedFunctionPointer(current, releases)) {
-		_ = os.RemoveAll(release)
-		return FunctionActivation{}, fmt.Errorf("function is not managed by Manager")
-	} else if err != nil && !os.IsNotExist(err) {
+	if info, err := os.Lstat(current); err == nil {
+		managed := false
+		if info.Mode()&os.ModeSymlink != 0 {
+			managed = isManagedFunctionPointer(current, releases)
+		} else if info.IsDir() {
+			managed = isManagedFunctionDirectory(current, managerDir, releases)
+		}
+		if !managed {
+			_ = os.RemoveAll(release)
+			return FunctionActivation{}, fmt.Errorf("function is not managed by Manager")
+		}
+	} else if !os.IsNotExist(err) {
 		return FunctionActivation{}, err
 	}
-	state, err := readManagedFunctionState(releases)
-	if err != nil {
-		return FunctionActivation{}, err
-	}
-	if err := switchFunctionPointer(functionsRoot, name, stage.OperationID, stage.SHA256); err != nil {
+	if err := switchFunctionDirectory(functionsRoot, managerDir, name, stage.OperationID, stage.SHA256); err != nil {
 		return FunctionActivation{}, err
 	}
 	if err := syncDirectory(functionsRoot); err != nil {
@@ -314,10 +392,14 @@ func (r *Root) DeleteFunction(slug, name string) (FunctionActivation, error) {
 	}
 	current := filepath.Join(functionsRoot, name)
 	if info, err := os.Lstat(current); err == nil {
-		if info.Mode()&os.ModeSymlink == 0 || !isManagedFunctionPointer(current, managerDir) {
+		if !isManagedFunctionCurrent(current, managerDir, releases) {
 			return FunctionActivation{}, fmt.Errorf("function is not managed by Manager")
 		}
-		_ = os.Remove(current)
+		if info.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(current)
+		} else if err := os.RemoveAll(current); err != nil {
+			return FunctionActivation{}, fmt.Errorf("remove current function: %w", err)
+		}
 	} else if !os.IsNotExist(err) {
 		return FunctionActivation{}, err
 	}
@@ -383,7 +465,8 @@ func (r *Root) RollbackFunctionRelease(slug, name, operationID string) (Function
 	if _, err := os.Stat(filepath.Join(releases, state.Previous.SHA256, "index.ts")); err != nil {
 		return FunctionActivation{}, fmt.Errorf("previous function release is unavailable: %w", err)
 	}
-	if err := switchFunctionPointer(functionsRoot, name, operationID, state.Previous.SHA256); err != nil {
+	managerDir := filepath.Join(functionsRoot, ".manager", name)
+	if err := switchFunctionDirectory(functionsRoot, managerDir, name, operationID, state.Previous.SHA256); err != nil {
 		return FunctionActivation{}, err
 	}
 	if err := syncDirectory(functionsRoot); err != nil {
@@ -411,8 +494,9 @@ func (r *Root) RestoreFunctionRelease(slug, name string, activation FunctionActi
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
 	functionsRoot := filepath.Join(project, "volumes", "functions")
+	managerDir := filepath.Join(functionsRoot, ".manager", name)
 	releases := filepath.Join(functionsRoot, ".manager", name, "releases")
-	if err := switchFunctionPointer(functionsRoot, name, "restore", activation.Previous.SHA256); err != nil {
+	if err := switchFunctionDirectory(functionsRoot, managerDir, name, "restore", activation.Previous.SHA256); err != nil {
 		return err
 	}
 	if err := syncDirectory(functionsRoot); err != nil {
@@ -421,18 +505,183 @@ func (r *Root) RestoreFunctionRelease(slug, name string, activation FunctionActi
 	return writeManagedFunctionState(releases, managedFunctionState{Current: activation.Previous, Previous: activation.Current})
 }
 
-func switchFunctionPointer(functionsRoot, name, operationID, sha string) error {
-	temporary := filepath.Join(functionsRoot, "."+name+".next-"+operationID)
-	_ = os.Remove(temporary)
-	target := filepath.ToSlash(filepath.Join(".manager", name, "releases", sha))
-	if err := os.Symlink(target, temporary); err != nil {
-		return fmt.Errorf("create function pointer: %w", err)
+func isValidFunctionSHA(sha string) bool {
+	if len(sha) != sha256.Size*2 {
+		return false
 	}
-	if err := os.Rename(temporary, filepath.Join(functionsRoot, name)); err != nil {
-		_ = os.Remove(temporary)
-		return fmt.Errorf("activate function pointer: %w", err)
+	_, err := hex.DecodeString(sha)
+	return err == nil
+}
+
+func isManagedFunctionDirectory(current, managerDir, releases string) bool {
+	info, err := os.Lstat(current)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	marker, err := os.ReadFile(filepath.Join(managerDir, "active"))
+	if err != nil {
+		return false
+	}
+	sha := strings.TrimSpace(string(marker))
+	if !isValidFunctionSHA(sha) {
+		return false
+	}
+	releaseInfo, err := os.Lstat(filepath.Join(releases, sha))
+	return err == nil && releaseInfo.IsDir() && releaseInfo.Mode()&os.ModeSymlink == 0
+}
+
+func isManagedFunctionCurrent(current, managerDir, releases string) bool {
+	info, err := os.Lstat(current)
+	if err != nil {
+		return false
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return isManagedFunctionPointer(current, releases)
+	}
+	return info.IsDir() && isManagedFunctionDirectory(current, managerDir, releases)
+}
+
+// switchFunctionDirectory atomically publishes a real directory tree at the
+// stable runtime path. Edge Runtime copies function directories into a
+// compiler scratch tree without following directory symlinks.
+func switchFunctionDirectory(functionsRoot, managerDir, name, operationID, sha string) error {
+	if !isValidFunctionSHA(sha) {
+		return fmt.Errorf("invalid function release checksum")
+	}
+	source := filepath.Join(managerDir, "releases", sha)
+	sourceInfo, err := os.Lstat(source)
+	if err != nil {
+		return fmt.Errorf("inspect function release: %w", err)
+	}
+	if !sourceInfo.IsDir() || sourceInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("function release is not a directory")
+	}
+	current := filepath.Join(functionsRoot, name)
+	if _, err := os.Lstat(current); err == nil {
+		if !isManagedFunctionCurrent(current, managerDir, filepath.Join(managerDir, "releases")) {
+			return fmt.Errorf("function is not managed by Manager")
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect current function: %w", err)
+	}
+	temporary := filepath.Join(functionsRoot, "."+name+".next-"+operationID)
+	backup := filepath.Join(functionsRoot, "."+name+".previous-"+operationID)
+	_ = os.RemoveAll(temporary)
+	_ = os.RemoveAll(backup)
+	if err := copyFunctionTree(source, temporary); err != nil {
+		_ = os.RemoveAll(temporary)
+		return err
+	}
+	if err := syncDirectory(temporary); err != nil {
+		_ = os.RemoveAll(temporary)
+		return err
+	}
+	hadCurrent := false
+	if _, err := os.Lstat(current); err == nil {
+		if err := os.Rename(current, backup); err != nil {
+			_ = os.RemoveAll(temporary)
+			return fmt.Errorf("stage current function replacement: %w", err)
+		}
+		hadCurrent = true
+	} else if !os.IsNotExist(err) {
+		_ = os.RemoveAll(temporary)
+		return fmt.Errorf("inspect current function replacement: %w", err)
+	}
+	if err := os.Rename(temporary, current); err != nil {
+		if hadCurrent {
+			_ = os.Rename(backup, current)
+		}
+		_ = os.RemoveAll(temporary)
+		return fmt.Errorf("activate function directory: %w", err)
+	}
+	if err := writeAtomic(managerDir, "active", []byte(sha+"\n"), 0o600); err != nil {
+		_ = os.RemoveAll(current)
+		if hadCurrent {
+			_ = os.Rename(backup, current)
+		}
+		return fmt.Errorf("publish active function release: %w", err)
+	}
+	if hadCurrent {
+		_ = os.RemoveAll(backup)
+	}
+	if err := syncDirectory(functionsRoot); err != nil {
+		return err
 	}
 	return nil
+}
+
+func copyFunctionTree(source, destination string) error {
+	if err := os.Mkdir(destination, 0o755); err != nil {
+		return fmt.Errorf("create function runtime directory: %w", err)
+	}
+	if err := copyFunctionTreeContents(source, destination); err != nil {
+		return err
+	}
+	return os.Chmod(destination, 0o755)
+}
+
+func copyFunctionTreeContents(source, destination string) error {
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return fmt.Errorf("read function release: %w", err)
+	}
+	for _, entry := range entries {
+		sourcePath := filepath.Join(source, entry.Name())
+		destinationPath := filepath.Join(destination, entry.Name())
+		info, err := os.Lstat(sourcePath)
+		if err != nil {
+			return fmt.Errorf("inspect function release entry: %w", err)
+		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("function release contains unsupported symlink")
+		case info.IsDir():
+			if err := os.Mkdir(destinationPath, 0o755); err != nil {
+				return fmt.Errorf("create function runtime subdirectory: %w", err)
+			}
+			if err := copyFunctionTreeContents(sourcePath, destinationPath); err != nil {
+				return err
+			}
+			if err := os.Chmod(destinationPath, 0o755); err != nil {
+				return fmt.Errorf("set function runtime directory permissions: %w", err)
+			}
+			if err := syncDirectory(destinationPath); err != nil {
+				return err
+			}
+		case info.Mode().IsRegular():
+			if err := copyFunctionFile(sourcePath, destinationPath); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("function release contains unsupported file type")
+		}
+	}
+	return syncDirectory(destination)
+}
+
+func copyFunctionFile(source, destination string) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return fmt.Errorf("open function release file: %w", err)
+	}
+	defer input.Close()
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("create function runtime file: %w", err)
+	}
+	_, copyErr := io.Copy(output, input)
+	syncErr := output.Sync()
+	closeErr := output.Close()
+	if copyErr != nil {
+		return fmt.Errorf("copy function runtime file: %w", copyErr)
+	}
+	if syncErr != nil {
+		return fmt.Errorf("sync function runtime file: %w", syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close function runtime file: %w", closeErr)
+	}
+	return os.Chmod(destination, 0o644)
 }
 
 func readManagedFunctionState(releases string) (managedFunctionState, error) {

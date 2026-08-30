@@ -1047,6 +1047,9 @@ func New(base string) (*Root, error) {
 	if err := root.cleanupAbandonedRuntimeCandidatesAtStartup(); err != nil {
 		return nil, fmt.Errorf("clean abandoned runtime candidates: %w", err)
 	}
+	if err := root.repairLegacyFunctionDirectoriesAtStartup(); err != nil {
+		return nil, fmt.Errorf("repair legacy function directories: %w", err)
+	}
 	return root, nil
 }
 
