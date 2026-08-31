@@ -64,6 +64,9 @@
   --sidebar-accent-foreground: #eef2ef;
   --sidebar-border: rgba(238, 242, 239, 0.12);
   --sidebar-ring: #3ecf8e;
+  font-size: 15px;
+  font-weight: 450;
+  line-height: 22.5px;
 }
 
 * {
@@ -74,6 +77,10 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background: var(--bg);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 450;
+  line-height: 22.5px;
 }
 html,
 body {
@@ -85,7 +92,9 @@ body::-webkit-scrollbar {
   height: 0;
 }
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 a {
@@ -773,13 +782,17 @@ h2 {
 }
 .auth-provider-row {
   display: flex;
-  min-height: 82px;
+  min-height: 58px;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 18px 24px;
+  padding: 12px 16px;
   border-bottom: 1px solid #2d312f;
   color: #e7ebe8;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 450;
+  line-height: 18.5714px;
   text-align: left;
   transition: background 0.12s ease;
 }
@@ -1244,7 +1257,20 @@ a.auth-template-row:hover {
   border-radius: 6px !important;
 }
 .auth-template-editor [aria-label="Breadcrumb"] {
-  margin-bottom: -12px;
+  margin: 0 0 20px;
+}
+.auth-template-editor > .page-heading {
+  margin: 0 0 24px;
+}
+.auth-template-section {
+  display: grid;
+  gap: 16px;
+}
+.auth-template-section + .auth-template-section {
+  margin-top: 48px;
+}
+.auth-providers-page > .page-heading {
+  margin-bottom: 24px;
 }
 .auth-docs-link {
   display: inline-flex;
@@ -2422,8 +2448,47 @@ a.auth-template-row:hover {
   }
 }
 
-/* Dashboard controls are deliberately regular-weight. Keep this at the token
- * boundary so page-local utility classes cannot create inconsistent buttons. */
-[data-slot="button"][data-typography="regular"] {
-  font-weight: 400 !important;
+/*
+ * Supabase Studio uses a compact Inter control scale. These rules are placed
+ * after page CSS intentionally: controls must not inherit an individual
+ * screen's body size or heading weight.
+ */
+[data-density="dashboard"][data-slot="button"] {
+  font-family: var(--font-ui) !important;
+  font-size: 12px !important;
+  font-weight: 450 !important;
+  line-height: 16px !important;
+}
+[data-density="dashboard"][data-slot="button"][data-size="xs"] {
+  font-size: 11px !important;
+  line-height: 14px !important;
+}
+[data-density="dashboard"][data-slot="button"][data-size="lg"] {
+  font-size: 13px !important;
+  line-height: 18px !important;
+}
+[data-density="dashboard"][data-slot="input"],
+[data-density="dashboard"][data-slot="textarea"],
+[data-density="dashboard"][data-slot="select-trigger"] {
+  font-family: var(--font-ui) !important;
+  font-size: 13px !important;
+  font-weight: 450 !important;
+  line-height: 16px !important;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #8f9792;
+  font-family: var(--font-ui);
+  font-size: inherit;
+  font-style: normal;
+  font-weight: 450;
+  opacity: 1;
+}
+.auth-template-variables button {
+  min-height: 26px;
+  padding-block: 4px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 16px;
 }

@@ -33,6 +33,21 @@ const context = {
 } as unknown as AuthenticationWorkspaceContext;
 
 describe("EmailTemplateEditorPage", () => {
+  it("uses explicit template layout hooks instead of page spacing utilities", () => {
+    render(
+      <MemoryRouter>
+        <EmailTemplateEditorPage context={context} templateKey="confirm-signup" />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Confirm sign up" }).closest("main")).not.toHaveClass(
+      "space-y-10",
+    );
+    expect(screen.getByRole("heading", { name: "Template" }).closest("section")).toHaveClass(
+      "auth-template-section",
+    );
+  });
+
   it("edits the visible source template and persists its HTML body", async () => {
     const user = userEvent.setup();
     const requestSave = vi.fn();

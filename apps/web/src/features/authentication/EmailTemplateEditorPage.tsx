@@ -129,7 +129,7 @@ function TemplateEditor({
   };
   const lines = Math.max(1, body.split("\n").length);
   return (
-    <main className="page auth-page auth-template-editor space-y-10">
+    <main className="page auth-page auth-template-editor">
       <nav
         aria-label="Breadcrumb"
         className="flex items-center gap-2 text-sm text-muted-foreground"
@@ -156,7 +156,7 @@ function TemplateEditor({
         </a>
       </header>
       {info.notification && (
-        <section className="space-y-4">
+        <section className="auth-template-section">
           <h2>Configuration</h2>
           <div className="auth-settings-card">
             <div className="auth-settings-row">
@@ -182,7 +182,7 @@ function TemplateEditor({
           </div>
         </section>
       )}
-      <section className="space-y-4">
+      <section className="auth-template-section">
         <h2>{info.notification ? "Content" : "Template"}</h2>
         <form
           id="email-template-form"

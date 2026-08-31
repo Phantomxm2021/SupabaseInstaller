@@ -115,6 +115,14 @@ it('uses shared dashboard section gaps between provider headings and cards', asy
   router.dispose()
 })
 
+it('marks provider rows as compact dashboard controls', async () => {
+  const { router } = renderSignInProviders()
+
+  const email = await screen.findByRole('button', { name: /Email.*Enabled/i })
+  expect(email).toHaveAttribute('data-density', 'dashboard-compact-row')
+  router.dispose()
+})
+
 it('exposes the official email security and OTP controls in the provider drawer', async () => {
   const { router } = renderSignInProviders()
   const user = userEvent.setup()

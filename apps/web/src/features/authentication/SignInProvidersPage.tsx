@@ -20,7 +20,7 @@ export function SignInProvidersPage() {
   const policy = form.watch()
   const status = (item: Provider) => item === 'email' ? policy.email.enabled : item === 'phone' ? policy.phone.enabled : (auth.oauth[item] ?? emptyProvider()).enabled
 
-  return <main className="page auth-page space-y-12">
+  return <main className="page auth-page auth-providers-page">
     <header className="page-heading"><div><h1>Sign In / Providers</h1><p className="muted">Configure authentication providers and login methods for your users.</p></div></header>
     <Tabs defaultValue="supabase" className="auth-provider-tabs gap-10">
       <TabsList aria-label="Authentication provider source" variant="line" className="auth-tabs-list border-b border-border">
@@ -55,7 +55,7 @@ export function SignInProvidersPage() {
 
 function ProviderRow({ item, enabled, onClick }: { item: Provider; enabled: boolean; onClick: () => void }) {
   const Icon = item === 'email' ? Mail : item === 'phone' ? Smartphone : KeyRound
-  return <button type="button" className="auth-provider-row" onClick={onClick}>
+  return <button type="button" className="auth-provider-row" data-density="dashboard-compact-row" onClick={onClick}>
     <span className="auth-provider-name"><Icon aria-hidden="true" />{providerLabel(item)}</span>
     <span className="auth-provider-action"><span className={enabled ? 'auth-provider-status is-enabled' : 'auth-provider-status'}>{enabled && <CircleCheck aria-hidden="true" />}{enabled ? 'Enabled' : 'Disabled'}</span><ChevronRight aria-hidden="true" /></span>
   </button>
