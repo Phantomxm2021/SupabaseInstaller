@@ -406,8 +406,13 @@ func (o *Orchestrator) QueueAuthKeysOperation(ctx context.Context, projectID, ki
 }
 
 func (o *Orchestrator) RunAuthKeys(ctx context.Context, p contracts.Project, op operation.Operation, snapshot store.ConfigurationSnapshot, candidate contracts.AuthKeysCandidate) (operation.Operation, error) {
-	defer o.release(p.ID)
-	defer o.releaseLease(context.Background(), p.ID)
+	retainDurableLease := false
+	defer func() {
+		o.release(p.ID)
+		if !retainDurableLease {
+			_ = o.releaseLease(context.Background(), p.ID)
+		}
+	}()
 	if op.Status == operation.Queued {
 		if err := o.operations.Start(ctx, op.ID); err != nil {
 			return op, err
@@ -427,7 +432,18 @@ func (o *Orchestrator) RunAuthKeys(ctx context.Context, p contracts.Project, op 
 		result, e := auth.ReconcileAuthKeys(ctx, contracts.AuthKeysReconcileRequest{Request: req, Candidate: candidate})
 		if e != nil {
 			if shouldRestoreConfiguration(e) {
-				_ = o.restoreConfigurationState(ctx, p.ID, op.ID, snapshot)
+				if restoreErr := o.restoreConfigurationState(ctx, p.ID, op.ID, snapshot); restoreErr != nil {
+					retainDurableLease = true
+					return op, restoreErr
+				}
+			} else {
+				// A transport timeout or typed unknown outcome may have applied the
+				// candidate. Keep the durable operation and lease for Resume replay.
+				if markerErr := o.store.MarkAuthKeysRecoverable(ctx, p.ID, op.ID, snapshot.Fence); markerErr != nil {
+					return op, markerErr
+				}
+				retainDurableLease = true
+				return op, e
 			}
 			return o.fail(ctx, op, "COMPOSE_UP", errors.New("auth key runtime reconciliation failed"), false)
 		}
@@ -435,7 +451,11 @@ func (o *Orchestrator) RunAuthKeys(ctx context.Context, p contracts.Project, op 
 			// The runtime may already be serving the candidate despite malformed
 			// verification metadata. Keep the admitted snapshot and lease for
 			// recovery; never delete a potentially active candidate speculatively.
-			return o.fail(ctx, op, "VERIFY_SERVICES", errors.New("auth key runtime verification failed"), false)
+			if markerErr := o.store.MarkAuthKeysRecoverable(ctx, p.ID, op.ID, snapshot.Fence); markerErr != nil {
+				return op, markerErr
+			}
+			retainDurableLease = true
+			return op, errors.New("auth key runtime verification failed")
 		}
 	} else {
 		return o.fail(ctx, op, "COMPOSE_UP", errors.New("auth key provisioner is unavailable"), false)
@@ -450,8 +470,13 @@ func (o *Orchestrator) RunAuthKeys(ctx context.Context, p contracts.Project, op 
 		values[field] = env
 	}
 	if err := o.store.PublishSecretsAndMarkConfigurationGoodOwned(ctx, p.ID, snapshot.Revision, op.ID, snapshot.Fence, "COMMITTED", values, o.now()); err != nil {
-		_ = o.restoreConfigurationState(ctx, p.ID, op.ID, snapshot)
-		return o.fail(ctx, op, "PERSIST_CONFIGURATION", err, false)
+		// Runtime reconciliation already succeeded; retain the durable candidate
+		// and lease so Resume can retry publication without splitting state.
+		if markerErr := o.store.MarkAuthKeysRecoverable(ctx, p.ID, op.ID, snapshot.Fence); markerErr != nil {
+			return op, markerErr
+		}
+		retainDurableLease = true
+		return op, err
 	}
 	if err := o.operations.Succeed(ctx, op.ID); err != nil {
 		return op, err
@@ -1106,7 +1131,9 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 			// Resume owns the admission resources before payload decoding. Keep a
 			// single scope around every exit, including corrupt/missing payloads.
 			defer o.release(project.ID)
-			defer o.releaseLeaseToken(context.Background(), project.ID, op.ID, leaseFence)
+			if commandKind != "MIGRATE_AUTH_KEYS" && commandKind != "ROTATE_API_KEYS" && commandKind != "ROTATE_SIGNING_KEYS" {
+				defer o.releaseLeaseToken(context.Background(), project.ID, op.ID, leaseFence)
+			}
 			if commandKind != "UPDATE_CONFIG" && commandKind != "ROTATE_DATABASE_PASSWORD" && commandKind != "MIGRATE_AUTH_KEYS" && commandKind != "ROTATE_API_KEYS" && commandKind != "ROTATE_SIGNING_KEYS" {
 				if op.Status == operation.Queued {
 					_ = o.operations.Start(context.Background(), op.ID)
@@ -1148,6 +1175,7 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 						_ = o.operations.Start(context.Background(), op.ID)
 					}
 					_ = o.operations.Fail(context.Background(), op.ID, "RESUME", errors.New("auth key command payload is unavailable"))
+					_ = o.releaseLeaseToken(context.Background(), project.ID, op.ID, lease.Fence)
 					return
 				}
 				_, _ = o.RunAuthKeys(context.Background(), project, op, snap, candidate)

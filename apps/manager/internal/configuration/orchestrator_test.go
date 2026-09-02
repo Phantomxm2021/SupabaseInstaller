@@ -522,18 +522,23 @@ func TestRunDoesNotRestoreOrCompareLegacyCandidateRevision(t *testing.T) {
 	}
 }
 
-type unknownAuthKeysProvisioner struct{}
+type unknownAuthKeysProvisioner struct{ calls *int }
 
 func (unknownAuthKeysProvisioner) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
 	return contracts.ReconcileProjectResponse{}, nil
 }
-func (unknownAuthKeysProvisioner) ReconcileAuthKeys(context.Context, contracts.AuthKeysReconcileRequest) (contracts.ReconcileProjectResponse, error) {
+
+func (s unknownAuthKeysProvisioner) ReconcileAuthKeys(context.Context, contracts.AuthKeysReconcileRequest) (contracts.ReconcileProjectResponse, error) {
+	if s.calls != nil {
+		*s.calls++
+	}
 	return contracts.ReconcileProjectResponse{}, &provisioner.ClientError{Code: "AUTH_KEYS_RECONCILE_FAILED", Message: "outcome unavailable", RuntimeStateChanged: true}
 }
 
 func TestRunAuthKeysUnknownOutcomeRetainsAdmittedCandidate(t *testing.T) {
 	orchestrator, database, operations, currentProject, snapshot, lease, op := newRecoveryFixture(t, "MIGRATE_AUTH_KEYS")
-	orchestrator.provisioner = unknownAuthKeysProvisioner{}
+	calls := 0
+	orchestrator.provisioner = unknownAuthKeysProvisioner{calls: &calls}
 	candidate := contracts.AuthKeysCandidate{SupabasePublishableKey: "candidate-publishable"}
 	_, err := orchestrator.RunAuthKeys(context.Background(), currentProject, op, snapshot, candidate)
 	if err == nil {
@@ -550,8 +555,8 @@ func TestRunAuthKeysUnknownOutcomeRetainsAdmittedCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != operation.Failed {
-		t.Fatalf("operation status=%s, want FAILED", stored.Status)
+	if stored.Status != operation.Running {
+		t.Fatalf("operation status=%s, want RUNNING for recovery", stored.Status)
 	}
 	if _, err := database.GetSecret(context.Background(), currentProject.ID, "publishable-api-key"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("candidate secret persisted on unknown outcome: %v", err)

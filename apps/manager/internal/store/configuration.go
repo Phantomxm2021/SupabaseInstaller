@@ -60,6 +60,30 @@ func (s *Store) SetOperationCompensation(ctx context.Context, operationID, phase
 	return err
 }
 
+func (s *Store) MarkAuthKeysRecoverable(ctx context.Context, projectID, operationID string, fence int64) error {
+	if err := validateConfigurationOwner(operationID, fence); err != nil {
+		return err
+	}
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var owner string
+		var currentFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&owner, &currentFence); err != nil {
+			return err
+		}
+		if owner != operationID || currentFence != fence {
+			return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase='AUTH_KEYS_RECOVERABLE', compensation_idempotency_key=? WHERE id=? AND project_id=? AND status=?`, operationID+":auth-keys", operationID, projectID, string(contracts.OperationRunning))
+		if err != nil {
+			return err
+		}
+		if n, _ := result.RowsAffected(); n != 1 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
 func (s *Store) GetOperationCompensation(ctx context.Context, operationID string) (OperationCompensation, error) {
 	var state OperationCompensation
 	err := s.db.QueryRowContext(ctx, `SELECT compensation_phase,compensation_idempotency_key FROM operations WHERE id=?`, operationID).Scan(&state.Phase, &state.Key)
@@ -333,7 +357,24 @@ func (s *Store) AcquireConfigurationLeaseForOperation(ctx context.Context, proje
 		}
 		count, _ := res.RowsAffected()
 		if count != 1 {
-			return ErrConfigurationBusy
+			var operationKind string
+			if err := tx.QueryRowContext(ctx, `SELECT operation_kind FROM operation_configurations WHERE operation_id=? AND project_id=?`, operationID, projectID).Scan(&operationKind); err != nil || (operationKind != "MIGRATE_AUTH_KEYS" && operationKind != "ROTATE_API_KEYS" && operationKind != "ROTATE_SIGNING_KEYS") {
+				return ErrConfigurationBusy
+			}
+			var currentOwner string
+			if err := tx.QueryRowContext(ctx, `SELECT owner FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&currentOwner); err != nil || currentOwner != owner {
+				return ErrConfigurationBusy
+			}
+			var phase string
+			if err := tx.QueryRowContext(ctx, `SELECT compensation_phase FROM operations WHERE id=? AND project_id=? AND status=?`, owner, projectID, string(contracts.OperationRunning)).Scan(&phase); err != nil || phase != "AUTH_KEYS_RECOVERABLE" {
+				return ErrConfigurationBusy
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE project_configuration_leases SET fence=fence+1, acquired_at=?, expires_at=? WHERE project_id=? AND owner=?`, formatTime(now), formatTime(now.Add(ttl)), projectID, owner); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase='AUTH_KEYS_RECOVERY_CLAIMED' WHERE id=? AND project_id=? AND status=? AND compensation_phase='AUTH_KEYS_RECOVERABLE'`, owner, projectID, string(contracts.OperationRunning)); err != nil {
+				return err
+			}
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT fence FROM project_configuration_leases WHERE project_id=? AND owner=?`, projectID, owner).Scan(&lease.Fence); err != nil {
 			return err

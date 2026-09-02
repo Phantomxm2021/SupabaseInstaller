@@ -56,4 +56,24 @@ Auth-key typed failures now set `RuntimeStateKnown` to the inverse of
 `RuntimeOutcomeUnknown`, matching database-rotation semantics; deterministic
 and unknown endpoint/client regressions are both covered.
 
+Unknown or post-runtime publication failures now leave the operation RUNNING
+with its fenced lease/candidate intact for durable Resume replay. Verification
+mismatches likewise avoid speculative restoration because the candidate may be
+active. The integration regression confirms no candidate secret is published
+before recovery succeeds.
+
+Same-owner lease takeover is restricted to operations explicitly marked
+`AUTH_KEYS_RECOVERABLE`; an active runner therefore remains exclusive while a
+crashed/lost-response runner can be resumed promptly.
+
+Recovery claims now atomically re-fence the lease and transition the marker to
+`AUTH_KEYS_RECOVERY_CLAIMED`, so competing Manager instances cannot replay the
+same operation concurrently. Marker writes are ownership-checked and failures
+remain recoverable rather than being silently ignored.
+
+The same-owner exception is scoped to auth-key operation kinds; normal config
+and database rotation resume behavior remains unchanged. Recoverability is set
+only after its ownership-checked marker write succeeds, so canceled marker
+writes release the durable lease instead of leaving an unmarked RUNNING task.
+
 Commit: `feat: add explicit auth key migration operations`

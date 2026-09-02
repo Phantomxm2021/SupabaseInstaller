@@ -787,6 +787,22 @@ func (source *serverSequenceSource) Containers(context.Context, string) ([]healt
 
 type reconcileStub struct{ err error }
 
+func TestAuthKeysReconcileEndpointPreservesTypedFailureOutcome(t *testing.T) {
+	backend := &reconcileStub{err: &contracts.ReconcileFailure{Cause: errors.New("render rejected"), RuntimeChanged: false, Response: contracts.ReconcileProjectResponse{RuntimeChanged: false, RolledBack: false}}}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), Backend: backend})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile-auth-keys", contracts.AuthKeysReconcileRequest{Request: contracts.ReconcileProjectRequest{OperationID: "op-1", ProjectID: "project-1", Slug: "bee"}})
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d", response.Code)
+	}
+	var result contracts.ReconcileProjectResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.OperationID != "op-1" || result.ProjectID != "project-1" || result.DiagnosticVersion != contracts.DiagnosticVersionCompleteRedaction || result.RuntimeChanged {
+		t.Fatalf("typed outcome = %#v", result)
+	}
+}
+
 type rotationFailureStub struct {
 	err    error
 	result contracts.RotateDatabasePasswordResponse
