@@ -1430,7 +1430,14 @@ func (o *Orchestrator) authKeysOperationCandidate(ctx context.Context, projectID
 }
 
 func (o *Orchestrator) Reveal(ctx context.Context, projectID, kind string) (string, error) {
-	allowed := map[string]string{"anonKey": "anon-key", "serviceRoleKey": "service-role-key", "jwtSecret": "jwt-secret", "databasePassword": "database-password"}
+	allowed := map[string]string{
+		"anonKey":             "anon-key",
+		"serviceRoleKey":      "service-role-key",
+		"jwtSecret":           "jwt-secret",
+		"databasePassword":    "database-password",
+		"publishable-api-key": "publishable-api-key",
+		"secret-api-key":      "secret-api-key",
+	}
 	stored, ok := allowed[strings.TrimSpace(kind)]
 	if !ok {
 		return "", fmt.Errorf("unsupported secret kind")

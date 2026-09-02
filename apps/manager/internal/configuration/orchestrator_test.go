@@ -310,6 +310,56 @@ func TestHydrateUsesDedicatedStudioPasswordOverRuntimeDashboardPassword(t *testi
 	}
 }
 
+func TestRevealAllowsOnlyOpaqueAPIKeys(t *testing.T) {
+	orchestrator, database, _, project, _, _, _ := newRecoveryFixture(t, "UPDATE_CONFIG")
+	for kind, value := range map[string]string{
+		"publishable-api-key": "publishable-secret-value",
+		"secret-api-key":      "secret-secret-value",
+	} {
+		envelope, err := orchestrator.cipher.Encrypt(project.ID, kind, []byte(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.PutSecret(context.Background(), project.ID, kind, envelope); err != nil {
+			t.Fatal(err)
+		}
+		got, err := orchestrator.Reveal(context.Background(), project.ID, kind)
+		if err != nil {
+			t.Fatalf("Reveal(%q) error = %v", kind, err)
+		}
+		if got != value {
+			t.Fatalf("Reveal(%q) = %q, want %q", kind, got, value)
+		}
+	}
+}
+
+func TestRevealRejectsSigningAndUnknownKindsWithoutLeakingValues(t *testing.T) {
+	orchestrator, database, _, project, _, _, _ := newRecoveryFixture(t, "UPDATE_CONFIG")
+	const forbiddenValue = "forbidden-private-material"
+	for _, kind := range []string{
+		"jwt-keys",
+		"jwt-jwks",
+		"anon-key-asymmetric",
+		"service-role-key-asymmetric",
+		"unknown-secret-kind",
+	} {
+		envelope, err := orchestrator.cipher.Encrypt(project.ID, kind, []byte(forbiddenValue))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.PutSecret(context.Background(), project.ID, kind, envelope); err != nil {
+			t.Fatal(err)
+		}
+		got, err := orchestrator.Reveal(context.Background(), project.ID, kind)
+		if err == nil {
+			t.Fatalf("Reveal(%q) succeeded with value %q", kind, got)
+		}
+		if got != "" || strings.Contains(err.Error(), forbiddenValue) {
+			t.Fatalf("Reveal(%q) leaked value/error: value=%q error=%q", kind, got, err)
+		}
+	}
+}
+
 func TestDatabasePasswordRotationReportsUnavailableRuntimeSecret(t *testing.T) {
 	orchestrator, _, operations, currentProject, snapshot, _, queued := newRecoveryFixture(t, "ROTATE_DATABASE_PASSWORD")
 	snapshot.Configuration.General.StudioPasswordSet = true
