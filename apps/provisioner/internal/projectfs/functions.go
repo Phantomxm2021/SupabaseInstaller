@@ -274,17 +274,8 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 			return fail(archiveIngestionError(fmt.Errorf("function archive file exceeds 20 MiB")))
 		}
 		copied := int64(len(contents))
-		destination, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err != nil {
-			return fail(archiveIngestionError(fmt.Errorf("create function archive entry: %w", err)))
-		}
-		_, err = destination.Write(contents)
-		closeErr := destination.Close()
-		if err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			return fail(fmt.Errorf("write function archive entry: %w", err))
+		if err := r.writeFunctionArchiveEntry(output, contents); err != nil {
+			return fail(archiveIngestionError(fmt.Errorf("write function archive entry: %w", err)))
 		}
 		extracted += copied
 		if extracted > maxFunctionExtractedBytes {
@@ -303,6 +294,24 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 	}
 	hash := sha256.Sum256(contents)
 	return FunctionReleaseStage{SHA256: hex.EncodeToString(hash[:]), OperationID: operationID, Name: name, path: stage}, nil
+}
+
+func (r *Root) writeFunctionArchiveEntry(destination string, contents []byte) error {
+	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	var writeErr error
+	if r.hooks.writeFunctionArchiveEntry != nil {
+		writeErr = r.hooks.writeFunctionArchiveEntry(file.Name(), contents)
+	} else {
+		_, writeErr = file.Write(contents)
+	}
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }
 
 // ActivateFunctionRelease publishes a complete stage through a materialized

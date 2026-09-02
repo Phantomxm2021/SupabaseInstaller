@@ -987,17 +987,24 @@ func (r *Root) BasePath() string { return r.base }
 // filesystem-failure state transitions without relying on host-specific faults.
 // Production Roots leave all hooks nil and use the operating-system calls.
 type runtimeHooks struct {
-	syncDirectory func(string) error
-	moveLegacy    func(string, string) error
-	removeAll     func(string) error
-	writeMetadata func(string, Metadata) error
-	operation     func(string)
+	syncDirectory             func(string) error
+	moveLegacy                func(string, string) error
+	removeAll                 func(string) error
+	writeMetadata             func(string, Metadata) error
+	writeFunctionArchiveEntry func(string, []byte) error
+	operation                 func(string)
 }
 
 // SetMetadataWriteHookForTest injects a metadata publication fault in package
 // tests; production callers never set this hook.
 func (r *Root) SetMetadataWriteHookForTest(hook func(string, Metadata) error) {
 	r.hooks.writeMetadata = hook
+}
+
+// SetFunctionArchiveWriteHookForTest injects a failure after a function
+// archive output file is opened. Production callers never set this hook.
+func (r *Root) SetFunctionArchiveWriteHookForTest(hook func(string, []byte) error) {
+	r.hooks.writeFunctionArchiveEntry = hook
 }
 
 func (r *Root) syncRuntimeDirectory(directory string) error {

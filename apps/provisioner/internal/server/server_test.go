@@ -266,6 +266,54 @@ func TestFunctionDeployEndpointRedactsArchiveDerivedFilesystemPath(t *testing.T)
 	}
 }
 
+func TestFunctionDeployEndpointRedactsArchiveDerivedWritePath(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	project, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const entrySentinel = "archive-write-sentinel"
+	root.SetFunctionArchiveWriteHookForTest(func(destination string, _ []byte) error {
+		if strings.Contains(destination, entrySentinel) {
+			return &os.PathError{Op: "write", Path: destination, Err: errors.New("injected write failure")}
+		}
+		return nil
+	})
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	for _, name := range []string{"index.ts", entrySentinel + ".ts"} {
+		file, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Write([]byte("export default {}")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: &projectfsFunctionBackend{root: root}, Logger: logger})
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/projects/bee/functions/demo/deploy", bytes.NewReader(archive.Bytes()))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	request.Header.Set("Content-Type", "application/zip")
+	request.Header.Set("X-Operation-ID", "operation-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var body contracts.ErrorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || body.Diagnostic != "Function archive processing failed" || strings.Contains(response.Body.String(), entrySentinel) || strings.Contains(logs.String(), entrySentinel) {
+		t.Fatalf("response=%d body=%#v logs=%s", response.Code, body, logs.String())
+	}
+}
+
 func TestFunctionDeployEndpointReturnsSanitizedRuntimeFailureDiagnostic(t *testing.T) {
 	root, _ := projectfs.New(t.TempDir())
 	var logs bytes.Buffer
