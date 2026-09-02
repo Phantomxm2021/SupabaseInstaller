@@ -275,6 +275,44 @@ func TestReconcileRejectsCurrentRuntimeExternalTargetBeforeQuery(t *testing.T) {
 	}
 }
 
+func TestReconcileRejectsSymlinkedGenerationDirectoryBeforeQuery(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	projectPath, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
+	target, err := os.Readlink(filepath.Join(runtimeRoot, "current"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := filepath.Join(runtimeRoot, target)
+	external := filepath.Join(root.BasePath(), "outside-generation")
+	if err := os.Rename(generation, external); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, generation); err != nil {
+		t.Fatal(err)
+	}
+	changed := baseConfig()
+	changed.Storage.Bucket = "new-bucket"
+	_, err = backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil || !strings.Contains(errors.Unwrap(err).Error(), "resolve previous runtime generation") {
+		t.Fatalf("error=%v", err)
+	}
+	if runner.storageCountCalls != 0 || runner.validated != 1 || len(runner.recreated) != 0 {
+		t.Fatalf("side effects: count=%d validated=%d recreated=%v", runner.storageCountCalls, runner.validated, runner.recreated)
+	}
+}
+
 func projectPathForTest(t *testing.T, root *projectfs.Root) string {
 	t.Helper()
 	path, err := root.ProjectPath("bee")

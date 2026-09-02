@@ -191,10 +191,17 @@ func (r *Root) RuntimeGeneration(slug, name string) (RuntimeRef, error) {
 	if !regexp.MustCompile(`^generation-[0-9]+$`).MatchString(name) {
 		return RuntimeRef{}, fmt.Errorf("invalid runtime generation")
 	}
-	generation := filepath.Join(base, ".manager-runtime", "generations", name)
-	if _, err := os.Stat(generation); err != nil {
-		return RuntimeRef{}, err
+	runtimeRoot := filepath.Join(base, ".manager-runtime")
+	for _, directory := range []string{runtimeRoot, filepath.Join(runtimeRoot, "generations"), filepath.Join(runtimeRoot, "generations", name)} {
+		info, err := os.Lstat(directory)
+		if err != nil {
+			return RuntimeRef{}, err
+		}
+		if !info.IsDir() {
+			return RuntimeRef{}, fmt.Errorf("runtime generation path is not a directory")
+		}
 	}
+	generation := filepath.Join(runtimeRoot, "generations", name)
 	return RuntimeRef{ProjectDir: base, ComposeFile: filepath.Join(generation, "docker-compose.yml"), EnvFile: filepath.Join(generation, ".env"), FunctionsFile: filepath.Join(generation, ".env.functions")}, nil
 }
 

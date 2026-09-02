@@ -13,3 +13,5 @@
 - Security follow-up RED/GREEN: an existing external `current -> ../../outside` target with readable files bypassed prior checks. `CurrentRuntimeGeneration` now accepts only canonical `generations/generation-*` targets, and preflight uses `Lstat` to reject symlinked Compose/.env inputs. The external-target test proves no query/staging/publish/recreate.
 - Docker still reopens validated pathnames after preflight; eliminating that residual TOCTOU requires a descriptor-based compose runner interface. Ownership/path constraints and symlink rejection provide the strongest safe fix within the current interface.
 - Follow-up commit: `fix: constrain runtime generation targets`
+- Final security RED/GREEN: a symlinked `generation-*` directory still passed `os.Stat`; `RuntimeGeneration` now uses `Lstat` and requires `.manager-runtime`, `generations`, and selected generation components to be non-symlink directories. Coverage proves no count/stage/publish/recreate.
+- Follow-up commit: `fix: reject symlinked runtime generations`
