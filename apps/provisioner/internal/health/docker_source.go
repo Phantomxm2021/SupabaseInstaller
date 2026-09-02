@@ -12,6 +12,7 @@ import (
 )
 
 const dockerAPIVersion = "v1.41"
+const dockerRequestTimeout = 15 * time.Second
 
 type DockerSource struct {
 	client *http.Client
@@ -33,7 +34,7 @@ func NewDockerSource(dockerHost string) (*DockerSource, error) {
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socketPath)
 		},
 	}
-	return NewDockerSourceWithClient(&http.Client{Transport: transport, Timeout: 15 * time.Second}), nil
+	return NewDockerSourceWithClient(&http.Client{Transport: transport, Timeout: dockerRequestTimeout}), nil
 }
 
 func NewDockerSourceWithClient(client *http.Client) *DockerSource {

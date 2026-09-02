@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
@@ -567,6 +569,17 @@ func TestReconcilePollsRealInspectorTransientServiceState(t *testing.T) {
 	}
 }
 
+func TestWaitHealthyClassifiesPersistentDockerProbeTimeout(t *testing.T) {
+	backend := NewBackend(nil, nil, &sequenceInspector{persistentErr: fmt.Errorf("list server containers: call Docker API: %w", context.DeadlineExceeded)})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := backend.waitHealthy(ctx, "bee", []string{"db"})
+	var unavailable *dockerControlPlaneUnavailableError
+	if !errors.As(err, &unavailable) || !strings.Contains(err.Error(), "list server containers") {
+		t.Fatalf("waitHealthy error = %v, want classified Docker control-plane timeout", err)
+	}
+}
+
 func TestRealComposeParserValidatesRevisionZeroFunctionsCandidateWithoutCurrent(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
@@ -960,12 +973,22 @@ func (r *fakeReconcileRunner) RemoveStopped(_ context.Context, project compose.P
 }
 
 type sequenceInspector struct {
-	reports []health.Report
-	calls   int
+	reports       []health.Report
+	errors        []error
+	persistentErr error
+	calls         int
 }
 
 func (i *sequenceInspector) Project(context.Context, health.ProjectRef) (health.Report, error) {
 	i.calls++
+	if i.persistentErr != nil {
+		return health.Report{}, i.persistentErr
+	}
+	if len(i.errors) > 0 {
+		err := i.errors[0]
+		i.errors = i.errors[1:]
+		return health.Report{}, err
+	}
 	if len(i.reports) == 0 {
 		return health.Report{Health: contracts.HealthHealthy}, nil
 	}

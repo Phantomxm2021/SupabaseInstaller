@@ -180,9 +180,11 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		defer func() {
 			var failure *contracts.ReconcileFailure
 			if errors.As(callbackErr, &failure) {
-				result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}, Diagnostic: redactedRotationFailureDiagnostic(request, failure.Cause), DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction}
-				if raw, marshalErr := json.Marshal(result); marshalErr == nil {
-					metadata.Idempotency[request.IdempotencyKey] = raw
+				result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, RuntimeOutcomeUnknown: failure.RuntimeOutcomeUnknown, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}, Diagnostic: redactedRotationFailureDiagnostic(request, failure.Cause), DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction}
+				if !failure.RuntimeOutcomeUnknown {
+					if raw, marshalErr := json.Marshal(result); marshalErr == nil {
+						metadata.Idempotency[request.IdempotencyKey] = raw
+					}
 				}
 			}
 		}()
@@ -336,6 +338,10 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 			return &contracts.ReconcileFailure{Cause: fmt.Errorf("dependent service restart: %w", err), RollbackSucceeded: true, RuntimeChanged: true}
 		}
 		if err := backend.waitHealthy(ctx, request.Slug, enabledServices(metadata.Configuration)); err != nil {
+			var unavailable *dockerControlPlaneUnavailableError
+			if errors.As(err, &unavailable) {
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("dependent service health check unavailable: %w", err), RollbackSucceeded: false, RuntimeChanged: true, RuntimeOutcomeUnknown: true}
+			}
 			cause := fmt.Errorf("dependent service health check failed: %w", err)
 			if rollbackErr := rollback(); rollbackErr != nil {
 				if restoreErr := restoreRuntime(); restoreErr != nil {

@@ -471,6 +471,20 @@ func TestClientPreservesProvisionerRotationDiagnostic(t *testing.T) {
 	}
 }
 
+func TestClientTreatsUnavailableRotationVerificationAsUnknownRuntimeOutcome(t *testing.T) {
+	const diagnostic = "dependent service health check unavailable: Docker control plane unavailable"
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(`{"operationId":"op-1","projectId":"project-1","rolledBack":false,"runtimeChanged":true,"runtimeOutcomeUnknown":true,"error":{"code":"ROTATE_DATABASE_PASSWORD_FAILED","message":"Database password rotation failed"},"diagnostic":"` + diagnostic + `","diagnosticVersion":1}`)), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+
+	_, err := client.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{OperationID: "op-1", ProjectID: "project-1"})
+	var clientErr *ClientError
+	if err == nil || !errors.As(err, &clientErr) || clientErr.RuntimeOutcomeKnown() || !clientErr.RuntimeChanged() || !strings.Contains(clientErr.Message, diagnostic) {
+		t.Fatalf("RotateDatabasePassword() error = %#v, want unknown runtime outcome", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

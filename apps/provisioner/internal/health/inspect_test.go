@@ -41,6 +41,12 @@ func TestProjectUsesServerTerminologyWhenContainerInspectionFails(t *testing.T) 
 	}
 }
 
+func TestProjectProbeTimeoutExceedsDockerRequestTimeout(t *testing.T) {
+	if projectProbeTimeout <= dockerRequestTimeout {
+		t.Fatalf("project probe timeout=%s, want greater than Docker request timeout", projectProbeTimeout)
+	}
+}
+
 type staticSource struct {
 	containers []Container
 	err        error

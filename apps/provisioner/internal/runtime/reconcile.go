@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -375,7 +376,9 @@ func writeCandidateCompose(path string, contents []byte) error {
 // the HTTP request lifecycle; the Manager runs reconciliation in a durable
 // background operation.
 const reconcileHealthTimeout = 5 * time.Minute
-const reconcileHealthPoll = 50 * time.Millisecond
+
+var reconcileHealthInitialPoll = time.Second
+var reconcileHealthMaxPoll = 5 * time.Second
 
 func (backend *Backend) waitHealthy(ctx context.Context, slug string, enabled []string) error {
 	if len(enabled) == 0 {
@@ -384,28 +387,77 @@ func (backend *Backend) waitHealthy(ctx context.Context, slug string, enabled []
 	checkCtx, cancel := context.WithTimeout(ctx, reconcileHealthTimeout)
 	defer cancel()
 	var lastReport health.Report
+	var lastProbeErr error
+	pollDelay := reconcileHealthInitialPoll
 	for {
 		report, err := backend.inspector.Project(checkCtx, health.ProjectRef{Slug: slug, Enabled: enabled})
 		if err != nil {
+			if !retryableHealthProbeError(err) {
+				return err
+			}
+			lastProbeErr = err
+		} else {
+			lastReport = report
+			lastProbeErr = nil
+			if report.Health == contracts.HealthHealthy {
+				return nil
+			}
+			if !reportHasTransientService(report) {
+				return healthFailureError(report)
+			}
+		}
+		if err := waitForHealthPoll(checkCtx, pollDelay); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return healthTimeoutError(lastReport, lastProbeErr)
+			}
 			return err
 		}
-		lastReport = report
-		if report.Health == contracts.HealthHealthy {
-			return nil
-		}
-		if !reportHasTransientService(report) {
-			return healthFailureError(report)
-		}
-		timer := time.NewTimer(reconcileHealthPoll)
-		select {
-		case <-checkCtx.Done():
-			if errors.Is(checkCtx.Err(), context.DeadlineExceeded) {
-				return healthTimeoutError(lastReport)
-			}
-			return checkCtx.Err()
-		case <-timer.C:
-		}
+		pollDelay = nextHealthPollDelay(pollDelay)
 	}
+}
+
+func retryableHealthProbeError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var timeout net.Error
+	return errors.As(err, &timeout) && timeout.Timeout()
+}
+
+// dockerControlPlaneUnavailableError means the runtime could not be observed
+// during its verification window. It is deliberately distinct from an
+// unhealthy service: callers must not turn an observation outage into another
+// Docker/Compose mutation by attempting compensation immediately.
+type dockerControlPlaneUnavailableError struct {
+	cause error
+}
+
+func (e *dockerControlPlaneUnavailableError) Error() string {
+	return fmt.Sprintf("Docker control plane unavailable while verifying runtime: %v", e.cause)
+}
+
+func (e *dockerControlPlaneUnavailableError) Unwrap() error { return e.cause }
+
+func waitForHealthPoll(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func nextHealthPollDelay(current time.Duration) time.Duration {
+	if current >= reconcileHealthMaxPoll {
+		return reconcileHealthMaxPoll
+	}
+	next := current * 2
+	if next > reconcileHealthMaxPoll {
+		return reconcileHealthMaxPoll
+	}
+	return next
 }
 
 // healthFailureError preserves the per-service Docker state that caused a
@@ -430,7 +482,10 @@ func healthFailureError(report health.Report) error {
 	return fmt.Errorf("runtime health is %s; services: %s", report.Health, strings.Join(failed, ", "))
 }
 
-func healthTimeoutError(report health.Report) error {
+func healthTimeoutError(report health.Report, probeErr ...error) error {
+	if len(probeErr) > 0 && probeErr[0] != nil {
+		return &dockerControlPlaneUnavailableError{cause: probeErr[0]}
+	}
 	starting := make([]string, 0)
 	for _, service := range report.Services {
 		if service.Health != contracts.HealthStarting {

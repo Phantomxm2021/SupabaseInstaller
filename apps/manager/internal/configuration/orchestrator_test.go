@@ -46,7 +46,9 @@ func TestResumeAfterCommittedPublicationOnlyCompletesOperation(t *testing.T) {
 
 func TestResumeMissingProjectUsesServerTerminology(t *testing.T) {
 	orchestrator, _, operations, _, _, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
-	if err := orchestrator.Resume(context.Background(), func(context.Context, string) (contracts.Project, error) { return contracts.Project{}, errors.New("missing") }); err != nil {
+	if err := orchestrator.Resume(context.Background(), func(context.Context, string) (contracts.Project, error) {
+		return contracts.Project{}, errors.New("missing")
+	}); err != nil {
 		t.Fatal(err)
 	}
 	got := waitRecoveryOperation(t, operations, op.ID)
@@ -358,6 +360,24 @@ func TestDatabasePasswordRotationPersistsClientErrorUnchanged(t *testing.T) {
 	}
 	if stored.ErrorMessage != clientErr.Error() {
 		t.Fatalf("stored error = %q, want unchanged ClientError %q", stored.ErrorMessage, clientErr.Error())
+	}
+}
+
+func TestDatabasePasswordRotationKeepsOperationRunningWhenRuntimeOutcomeIsUnknown(t *testing.T) {
+	orchestrator, _, operations, currentProject, snapshot, _, queued := newRecoveryFixture(t, "ROTATE_DATABASE_PASSWORD")
+	clientErr := &provisioner.ClientError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Docker control plane unavailable while verifying runtime", Status: 422, RuntimeStateKnown: false, RuntimeStateChanged: true}
+	orchestrator.provisioner = rotationFailureProvisioner{err: clientErr}
+
+	_, err := orchestrator.RunDatabasePasswordRotation(context.Background(), currentProject, queued, snapshot, "new-password-for-test")
+	if !errors.Is(err, clientErr) {
+		t.Fatalf("RunDatabasePasswordRotation() error = %v, want ClientError", err)
+	}
+	stored, err := operations.Get(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != operation.Running || stored.ErrorMessage != "" {
+		t.Fatalf("operation = %#v, want recoverable running operation without a terminal failure", stored)
 	}
 }
 

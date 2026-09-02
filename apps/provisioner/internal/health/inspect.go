@@ -63,7 +63,10 @@ func (i *Inspector) HostPortAvailable(ctx context.Context, port int) (bool, erro
 	return source.HostPortAvailable(ctx, port)
 }
 
-const projectProbeTimeout = 10 * time.Second
+// Keep the outer probe deadline above the Docker client deadline so a slow
+// Docker Engine reports its own request timeout instead of being cancelled by
+// the health-check context first.
+const projectProbeTimeout = 20 * time.Second
 
 func NewInspector(source Source) *Inspector {
 	return &Inspector{source: source, now: time.Now}

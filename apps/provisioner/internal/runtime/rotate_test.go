@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
@@ -121,6 +122,56 @@ func TestRotateDatabasePasswordHealthFailureRestoresOldRoleAndReportsRollback(t 
 	}
 	if len(runner.rotations) != 2 || runner.rotations[1] != [2]string{"new-db-password", "db-password"} {
 		t.Fatalf("role recovery calls = %#v", runner.rotations)
+	}
+}
+
+func TestRotateDatabasePasswordRetriesTransientDockerHealthProbeWithoutRollback(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &rotationTestRunner{}
+	inspector := &sequenceInspector{}
+	backend := NewBackend(root, runner, inspector)
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	inspector.errors = []error{fmt.Errorf("list server containers: call Docker API: %w", context.DeadlineExceeded)}
+	request := contracts.RotateDatabasePasswordRequest{OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: "rotate-transient-probe", IdempotencyKey: "rotate-transient-probe-key", ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", ExpectedRevision: 1, NextRevision: 2, OldPassword: "db-password", NewPassword: "new-db-password", Configuration: baseConfig(), Secrets: contracts.ProjectSecrets{DatabasePassword: "new-db-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}}
+	if _, err := backend.RotateDatabasePassword(context.Background(), request); err != nil {
+		t.Fatalf("rotation returned a transient Docker probe error: %v", err)
+	}
+	if len(runner.rotations) != 1 || runner.rotations[0] != [2]string{"db-password", "new-db-password"} {
+		t.Fatalf("rotation calls = %#v, want no password compensation", runner.rotations)
+	}
+}
+
+func TestRotateDatabasePasswordDoesNotCompensateWhenDockerControlPlaneIsUnavailable(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &rotationTestRunner{}
+	inspector := &sequenceInspector{}
+	backend := NewBackend(root, runner, inspector)
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	previousInitial, previousMax := reconcileHealthInitialPoll, reconcileHealthMaxPoll
+	reconcileHealthInitialPoll, reconcileHealthMaxPoll = time.Millisecond, time.Millisecond
+	defer func() { reconcileHealthInitialPoll, reconcileHealthMaxPoll = previousInitial, previousMax }()
+	inspector.persistentErr = fmt.Errorf("list server containers: call Docker API: %w", context.DeadlineExceeded)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	request := contracts.RotateDatabasePasswordRequest{OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: "rotate-unavailable-probe", IdempotencyKey: "rotate-unavailable-probe-key", ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", ExpectedRevision: 1, NextRevision: 2, OldPassword: "db-password", NewPassword: "new-db-password", Configuration: baseConfig(), Secrets: contracts.ProjectSecrets{DatabasePassword: "new-db-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}}
+	_, err = backend.RotateDatabasePassword(ctx, request)
+	var failure *contracts.ReconcileFailure
+	var unavailable *dockerControlPlaneUnavailableError
+	if err == nil || !errors.As(err, &failure) || failure.RollbackSucceeded || !failure.RuntimeOutcomeUnknown || !errors.As(failure.Cause, &unavailable) {
+		t.Fatalf("rotation failure = %#v, want unrecovered Docker control-plane outcome", failure)
+	}
+	if len(runner.rotations) != 1 || runner.rotations[0] != [2]string{"db-password", "new-db-password"} {
+		t.Fatalf("rotation calls = %#v, want no password compensation", runner.rotations)
 	}
 }
 

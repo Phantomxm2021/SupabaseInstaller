@@ -51,6 +51,12 @@ No raw error crosses a process boundary.  `diagnostic` is created at the
 boundary where the complete set of request secrets is still available, then
 the Manager trusts only that typed field for an allow-listed operational code.
 
+Runtime verification also distinguishes an observed unhealthy service from an
+unavailable Docker control plane. A Docker timeout is retried with bounded
+backoff; if the verification window expires, the typed response sets
+`runtimeOutcomeUnknown`. The Manager keeps that operation recoverable and
+does not attempt speculative password compensation or configuration restore.
+
 ### Contracts and compatibility
 
 Add `Diagnostic string \`json:"diagnostic,omitempty"\`` to the operation

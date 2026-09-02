@@ -27,7 +27,11 @@ type ReconcileFailure struct {
 	// safely restore an admitted desired revision only for the former or after
 	// a confirmed rollback.
 	RuntimeChanged bool
-	Response       ReconcileProjectResponse
+	// RuntimeOutcomeUnknown distinguishes an unobservable runtime (for example,
+	// Docker control-plane timeout) from a runtime proven unhealthy. Callers
+	// must keep the operation recoverable and avoid speculative compensation.
+	RuntimeOutcomeUnknown bool
+	Response              ReconcileProjectResponse
 }
 
 func (e *ReconcileFailure) Error() string { return "runtime reconciliation failed" }
@@ -52,16 +56,17 @@ type ReconcileProjectRequest struct {
 }
 
 type ReconcileProjectResponse struct {
-	OperationID       string    `json:"operationId"`
-	ProjectID         string    `json:"projectId"`
-	Revision          int64     `json:"revision"`
-	EnabledServices   []string  `json:"enabledServices"`
-	RecreatedServices []string  `json:"recreatedServices"`
-	RolledBack        bool      `json:"rolledBack"`
-	RuntimeChanged    bool      `json:"runtimeChanged,omitempty"`
-	Error             *APIError `json:"error,omitempty"`
-	Diagnostic        string    `json:"diagnostic,omitempty"`
-	DiagnosticVersion int       `json:"diagnosticVersion,omitempty"`
+	OperationID           string    `json:"operationId"`
+	ProjectID             string    `json:"projectId"`
+	Revision              int64     `json:"revision"`
+	EnabledServices       []string  `json:"enabledServices"`
+	RecreatedServices     []string  `json:"recreatedServices"`
+	RolledBack            bool      `json:"rolledBack"`
+	RuntimeChanged        bool      `json:"runtimeChanged,omitempty"`
+	RuntimeOutcomeUnknown bool      `json:"runtimeOutcomeUnknown,omitempty"`
+	Error                 *APIError `json:"error,omitempty"`
+	Diagnostic            string    `json:"diagnostic,omitempty"`
+	DiagnosticVersion     int       `json:"diagnosticVersion,omitempty"`
 }
 
 // RotateDatabasePasswordRequest is a narrowly scoped sensitive RPC. The
@@ -87,14 +92,15 @@ type RotateDatabasePasswordRequest struct {
 }
 
 type RotateDatabasePasswordResponse struct {
-	OperationID       string    `json:"operationId"`
-	ProjectID         string    `json:"projectId"`
-	Revision          int64     `json:"revision"`
-	RolledBack        bool      `json:"rolledBack"`
-	RuntimeChanged    bool      `json:"runtimeChanged,omitempty"`
-	Error             *APIError `json:"error,omitempty"`
-	Diagnostic        string    `json:"diagnostic,omitempty"`
-	DiagnosticVersion int       `json:"diagnosticVersion,omitempty"`
+	OperationID           string    `json:"operationId"`
+	ProjectID             string    `json:"projectId"`
+	Revision              int64     `json:"revision"`
+	RolledBack            bool      `json:"rolledBack"`
+	RuntimeChanged        bool      `json:"runtimeChanged,omitempty"`
+	RuntimeOutcomeUnknown bool      `json:"runtimeOutcomeUnknown,omitempty"`
+	Error                 *APIError `json:"error,omitempty"`
+	Diagnostic            string    `json:"diagnostic,omitempty"`
+	DiagnosticVersion     int       `json:"diagnosticVersion,omitempty"`
 }
 
 // ConfirmDatabasePasswordRotation closes the durable rotation journal only

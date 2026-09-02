@@ -310,7 +310,7 @@ func clientErrorForPayload(path string, status int, payload []byte, expected ...
 			typedResponse = true
 			code = result.Error.Code
 			if hasCompleteTypedFailureIdentity(fields, expectedIdentity, result.OperationID, result.ProjectID, result.Error, result.DiagnosticVersion) {
-				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
+				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, !result.RuntimeOutcomeUnknown, result.RuntimeChanged
 				diagnostic = result.Diagnostic
 			}
 		}
@@ -356,11 +356,16 @@ func expectedFailureIdentityFor(input any) expectedFailureIdentity {
 }
 
 func hasCompleteTypedFailureIdentity(fields map[string]json.RawMessage, expected expectedFailureIdentity, operationID, projectID string, apiError *contracts.APIError, diagnosticVersion int) bool {
-	return expected.operationID != "" && expected.projectID != "" && operationID == expected.operationID && projectID == expected.projectID && apiError != nil && apiError.Code != "" && contracts.SupportsDiagnosticVersion(diagnosticVersion) && isJSONBoolean(fields["rolledBack"]) && hasValidOptionalRuntimeChanged(fields)
+	return expected.operationID != "" && expected.projectID != "" && operationID == expected.operationID && projectID == expected.projectID && apiError != nil && apiError.Code != "" && contracts.SupportsDiagnosticVersion(diagnosticVersion) && isJSONBoolean(fields["rolledBack"]) && hasValidOptionalRuntimeChanged(fields) && hasValidOptionalRuntimeOutcomeUnknown(fields)
 }
 
 func hasValidOptionalRuntimeChanged(fields map[string]json.RawMessage) bool {
 	raw, exists := fields["runtimeChanged"]
+	return !exists || isJSONBoolean(raw)
+}
+
+func hasValidOptionalRuntimeOutcomeUnknown(fields map[string]json.RawMessage) bool {
+	raw, exists := fields["runtimeOutcomeUnknown"]
 	return !exists || isJSONBoolean(raw)
 }
 
