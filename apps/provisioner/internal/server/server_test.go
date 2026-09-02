@@ -22,6 +22,7 @@ import (
 type functionDeployStub struct {
 	archive     string
 	err         error
+	listErr     error
 	rollbackErr error
 	deleteErr   error
 }
@@ -39,7 +40,7 @@ func (s *functionDeployStub) DeployFunction(_ context.Context, request contracts
 	return contracts.FunctionDeploymentResult{}, s.err
 }
 func (s *functionDeployStub) ListFunctions(context.Context, contracts.FunctionOperationRequest) ([]contracts.FunctionSummary, error) {
-	return []contracts.FunctionSummary{{Name: "demo"}}, nil
+	return []contracts.FunctionSummary{{Name: "demo"}}, s.listErr
 }
 func (s *functionDeployStub) RollbackFunction(context.Context, contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
 	return contracts.FunctionDeploymentResult{}, s.rollbackErr
@@ -188,7 +189,7 @@ func TestFunctionDeployEndpointDoesNotReturnArchiveControlledFailureDetail(t *te
 	const archiveSentinel = "archive-content-sentinel"
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
-	backend := &functionDeployStub{err: errors.New("function archive entry " + archiveSentinel + " could not be extracted")}
+	backend := &functionDeployStub{err: archiveIngestionError{detail: "function archive entry " + archiveSentinel + " could not be extracted"}}
 	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
 	request := httptest.NewRequest(http.MethodPost, "/internal/v1/projects/bee/functions/demo/deploy", strings.NewReader("zip-body"))
 	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
@@ -202,6 +203,27 @@ func TestFunctionDeployEndpointDoesNotReturnArchiveControlledFailureDetail(t *te
 	}
 	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || body.Diagnostic != "Function archive processing failed" || strings.Contains(response.Body.String(), archiveSentinel) || strings.Contains(logs.String(), archiveSentinel) {
 		t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
+	}
+}
+
+func TestFunctionDeployEndpointReturnsSanitizedRuntimeFailureDiagnostic(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	backend := &functionDeployStub{err: errors.New("compose action failed: functions exited; POSTGRES_PASSWORD=secret-value")}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/projects/bee/functions/demo/deploy", strings.NewReader("zip-body"))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	request.Header.Set("Content-Type", "application/zip")
+	request.Header.Set("X-Operation-ID", "operation-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var body contracts.ErrorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || !strings.Contains(body.Diagnostic, "compose action failed: functions exited") || strings.Contains(body.Diagnostic, "secret-value") || !strings.Contains(logs.String(), body.Diagnostic) {
+		t.Fatalf("response=%d body=%#v logs=%s", response.Code, body, logs.String())
 	}
 }
 
@@ -448,6 +470,40 @@ func TestHostResourcesEndpointReturnsReadOnlySnapshot(t *testing.T) {
 	}
 }
 
+func TestInspectionEndpointsReturnCanonicalRedactedDiagnostics(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	backend := &hostResourcesStub{
+		resourcesErr: errors.New("docker resources failed: token=secret-value"),
+		portErr:      errors.New("docker binding check failed: password=secret-value"),
+	}
+	functionBackend := &functionDeployStub{listErr: errors.New("functions listing failed: token=secret-value")}
+	for _, endpoint := range []struct {
+		name, path, code, message, detail string
+		backend                           Backend
+	}{
+		{"functions", "/internal/v1/projects/bee/functions", "FUNCTIONS_LIST_FAILED", "Unable to list functions", "functions listing failed", functionBackend},
+		{"resources", "/internal/v1/host/resources", "HOST_RESOURCES_UNAVAILABLE", "Host resource inspection failed", "docker resources failed", backend},
+		{"port", "/internal/v1/host/ports/8001", "HOST_PORT_UNAVAILABLE", "Host port inspection failed", "docker binding check failed", backend},
+	} {
+		t.Run(endpoint.name, func(t *testing.T) {
+			handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: endpoint.backend, Logger: logger})
+			request := httptest.NewRequest(http.MethodGet, endpoint.path, nil)
+			request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			var body contracts.ErrorEnvelope
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error.Code != endpoint.code || body.Error.Message != endpoint.message || !strings.Contains(body.Diagnostic, endpoint.detail) || strings.Contains(response.Body.String(), "secret-value") || !strings.Contains(logs.String(), body.Diagnostic) {
+				t.Fatalf("response=%d body=%#v logs=%s", response.Code, body, logs.String())
+			}
+		})
+	}
+}
+
 type serverCaptureExecutor struct{ calls [][]string }
 
 func (e *serverCaptureExecutor) Run(_ context.Context, _ string, args, _ []string) ([]byte, error) {
@@ -557,6 +613,8 @@ func (*lifecycleFailureStub) Reconcile(context.Context, contracts.ReconcileProje
 type hostResourcesStub struct {
 	resources     contracts.HostResources
 	portAvailable map[int]bool
+	resourcesErr  error
+	portErr       error
 }
 
 func (*hostResourcesStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
@@ -567,11 +625,16 @@ func (*hostResourcesStub) Reconcile(context.Context, contracts.ReconcileProjectR
 	return contracts.ReconcileProjectResponse{}, nil
 }
 func (stub *hostResourcesStub) HostResources(context.Context) (contracts.HostResources, error) {
-	return stub.resources, nil
+	return stub.resources, stub.resourcesErr
 }
 func (stub *hostResourcesStub) HostPortAvailable(_ context.Context, port int) (bool, error) {
-	return stub.portAvailable[port], nil
+	return stub.portAvailable[port], stub.portErr
 }
+
+type archiveIngestionError struct{ detail string }
+
+func (err archiveIngestionError) Error() string        { return err.detail }
+func (archiveIngestionError) ArchiveIngestionFailure() {}
 
 func (s *reconcileStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
 func (s *reconcileStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {

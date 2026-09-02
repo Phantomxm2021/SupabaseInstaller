@@ -18,6 +18,15 @@ type FunctionReleaseStore interface {
 	DeleteFunction(slug, name string) (projectfs.FunctionActivation, error)
 }
 
+// ArchiveIngestionError marks failures while consuming a caller-supplied
+// function archive. Its wrapped error can include untrusted entry names or
+// source content, so HTTP handlers must not expose its text.
+type ArchiveIngestionError struct{ Cause error }
+
+func (err *ArchiveIngestionError) Error() string        { return err.Cause.Error() }
+func (err *ArchiveIngestionError) Unwrap() error        { return err.Cause }
+func (*ArchiveIngestionError) ArchiveIngestionFailure() {}
+
 func (s *FunctionService) Delete(ctx context.Context, project compose.ProjectRef, request contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
 	if s.releases == nil || s.runner == nil {
 		return contracts.FunctionDeploymentResult{}, fmt.Errorf("functions deployment is unavailable")
@@ -74,7 +83,7 @@ func (s *FunctionService) Deploy(ctx context.Context, project compose.ProjectRef
 	}
 	stage, err := s.releases.StageFunctionRelease(project.Slug, request.Name, request.OperationID, archive)
 	if err != nil {
-		return contracts.FunctionDeploymentResult{}, err
+		return contracts.FunctionDeploymentResult{}, &ArchiveIngestionError{Cause: err}
 	}
 	activation, err := s.releases.ActivateFunctionRelease(project.Slug, request.Name, stage)
 	if err != nil {

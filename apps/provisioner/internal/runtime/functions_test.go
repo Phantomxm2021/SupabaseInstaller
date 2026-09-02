@@ -53,6 +53,17 @@ func TestFunctionServiceDeployPreservesRestartAndRestoreCauses(t *testing.T) {
 	}
 }
 
+func TestFunctionServiceDeployClassifiesArchiveIngestionFailures(t *testing.T) {
+	stageErr := errors.New("archive entry sentinel could not be extracted")
+	releases := &functionReleaseFake{stageErr: stageErr}
+	service := NewFunctionService(releases, &functionRunnerFake{})
+	_, err := service.Deploy(context.Background(), compose.ProjectRef{Slug: "bee"}, contracts.DeployFunctionRequest{Name: "demo", OperationID: "op-1"}, bytes.NewBufferString("zip"))
+	var ingestion *ArchiveIngestionError
+	if err == nil || !errors.As(err, &ingestion) || !errors.Is(err, stageErr) {
+		t.Fatalf("Deploy() error = %v, want classified archive ingestion failure wrapping %v", err, stageErr)
+	}
+}
+
 func TestFunctionServiceRollbackRestartsOnlyFunctions(t *testing.T) {
 	releases := &functionReleaseFake{}
 	runner := &functionRunnerFake{}
@@ -68,13 +79,14 @@ func TestFunctionServiceRollbackRestartsOnlyFunctions(t *testing.T) {
 
 type functionReleaseFake struct {
 	stage      projectfs.FunctionReleaseStage
+	stageErr   error
 	restored   bool
 	rolledBack bool
 	restoreErr error
 }
 
 func (f *functionReleaseFake) StageFunctionRelease(string, string, string, io.Reader) (projectfs.FunctionReleaseStage, error) {
-	return f.stage, nil
+	return f.stage, f.stageErr
 }
 func (f *functionReleaseFake) ActivateFunctionRelease(string, string, projectfs.FunctionReleaseStage) (projectfs.FunctionActivation, error) {
 	return projectfs.FunctionActivation{Current: &contracts.FunctionRelease{SHA256: "abc"}}, nil

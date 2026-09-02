@@ -111,10 +111,7 @@ func (s *server) deployFunction(response http.ResponseWriter, request *http.Requ
 	request.Body = http.MaxBytesReader(response, request.Body, 20<<20)
 	result, err := backend.DeployFunction(request.Context(), contracts.DeployFunctionRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID, Archive: request.Body})
 	if err != nil {
-		// Deployment errors can originate from archive ingestion, where the
-		// error text may include untrusted filenames or source. Keep the
-		// diagnostic actionable without reflecting archive-controlled data.
-		failure := operationalErrorEnvelope("FUNCTION_DEPLOY_FAILED", "Function deployment failed", errors.New("Function archive processing failed"), nil)
+		failure := deployFunctionFailureEnvelope(err)
 		s.logger.Error("function deployment failed", "slug", request.PathValue("slug"), "function", name, "operation_id", operationID, "error", failure.Diagnostic)
 		if result.RolledBack {
 			result.Error = &failure.Error
@@ -136,7 +133,9 @@ func (s *server) listFunctions(response http.ResponseWriter, request *http.Reque
 	}
 	items, err := backend.ListFunctions(request.Context(), contracts.FunctionOperationRequest{Slug: request.PathValue("slug")})
 	if err != nil {
-		writeError(response, http.StatusUnprocessableEntity, "FUNCTIONS_LIST_FAILED", "Unable to list functions")
+		failure := operationalErrorEnvelope("FUNCTIONS_LIST_FAILED", "Unable to list functions", err, nil)
+		s.logger.Error("functions listing failed", "slug", request.PathValue("slug"), "error", failure.Diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, failure)
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"functions": items})
@@ -216,7 +215,9 @@ func (s *server) hostResources(response http.ResponseWriter, request *http.Reque
 	}
 	resources, err := backend.HostResources(request.Context())
 	if err != nil {
-		writeError(response, http.StatusServiceUnavailable, "HOST_RESOURCES_UNAVAILABLE", "Host resource inspection failed")
+		failure := operationalErrorEnvelope("HOST_RESOURCES_UNAVAILABLE", "Host resource inspection failed", err, nil)
+		s.logger.Error("host resource inspection failed", "error", failure.Diagnostic)
+		writeJSON(response, http.StatusServiceUnavailable, failure)
 		return
 	}
 	writeJSON(response, http.StatusOK, resources)
@@ -235,7 +236,9 @@ func (s *server) hostPortAvailable(response http.ResponseWriter, request *http.R
 	}
 	available, err := backend.HostPortAvailable(request.Context(), port)
 	if err != nil {
-		writeError(response, http.StatusServiceUnavailable, "HOST_PORT_UNAVAILABLE", "Host port inspection failed")
+		failure := operationalErrorEnvelope("HOST_PORT_UNAVAILABLE", "Host port inspection failed", err, nil)
+		s.logger.Error("host port inspection failed", "port", port, "error", failure.Diagnostic)
+		writeJSON(response, http.StatusServiceUnavailable, failure)
 		return
 	}
 	writeJSON(response, http.StatusOK, contracts.HostPortAvailability{Port: port, Available: available})
@@ -367,6 +370,18 @@ func configurationSecretValues(configuration contracts.ProjectConfiguration) []s
 func rotationKnownValues(input contracts.RotateDatabasePasswordRequest) []string {
 	values := reconcileKnownValues(contracts.ReconcileProjectRequest{Configuration: input.Configuration, Secrets: input.Secrets, RuntimeSecrets: input.RuntimeSecrets})
 	return append(values, input.OldPassword, input.NewPassword)
+}
+
+type archiveIngestionFailure interface {
+	ArchiveIngestionFailure()
+}
+
+func deployFunctionFailureEnvelope(cause error) contracts.ErrorEnvelope {
+	var archiveFailure archiveIngestionFailure
+	if errors.As(cause, &archiveFailure) {
+		return operationalErrorEnvelope("FUNCTION_DEPLOY_FAILED", "Function deployment failed", errors.New("Function archive processing failed"), nil)
+	}
+	return operationalErrorEnvelope("FUNCTION_DEPLOY_FAILED", "Function deployment failed", cause, nil)
 }
 
 func operationalErrorEnvelope(code, message string, cause error, knownValues []string) contracts.ErrorEnvelope {
