@@ -290,10 +290,8 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 		if json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
 			code = result.Error.Code
-			if hasExplicitOutcomeField(fields) {
+			if hasCompleteTypedFailureIdentity(fields, result.OperationID, result.ProjectID, result.Error, result.DiagnosticVersion) {
 				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
-			}
-			if hasCompleteTypedFailureIdentity(fields, result.OperationID, result.ProjectID, result.Error) && contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
 				diagnostic = result.Diagnostic
 			}
 		}
@@ -302,10 +300,8 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 		if json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
 			code = result.Error.Code
-			if hasExplicitOutcomeField(fields) {
+			if hasCompleteTypedFailureIdentity(fields, result.OperationID, result.ProjectID, result.Error, result.DiagnosticVersion) {
 				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
-			}
-			if hasCompleteTypedFailureIdentity(fields, result.OperationID, result.ProjectID, result.Error) && contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
 				diagnostic = result.Diagnostic
 			}
 		}
@@ -337,16 +333,13 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 	return &ClientError{Code: code, Message: message, Status: status, RollbackComplete: rollbackComplete, RuntimeStateKnown: runtimeStateKnown, RuntimeStateChanged: runtimeStateChanged}
 }
 
-func hasCompleteTypedFailureIdentity(fields map[string]json.RawMessage, operationID, projectID string, apiError *contracts.APIError) bool {
-	return operationID != "" && projectID != "" && apiError != nil && apiError.Code != "" && hasExplicitOutcomeFields(fields)
+func hasCompleteTypedFailureIdentity(fields map[string]json.RawMessage, operationID, projectID string, apiError *contracts.APIError, diagnosticVersion int) bool {
+	return operationID != "" && projectID != "" && apiError != nil && apiError.Code != "" && contracts.SupportsDiagnosticVersion(diagnosticVersion) && isJSONBoolean(fields["rolledBack"]) && hasValidOptionalRuntimeChanged(fields)
 }
 
-func hasExplicitOutcomeFields(fields map[string]json.RawMessage) bool {
-	return isJSONBoolean(fields["rolledBack"]) && isJSONBoolean(fields["runtimeChanged"])
-}
-
-func hasExplicitOutcomeField(fields map[string]json.RawMessage) bool {
-	return isJSONBoolean(fields["rolledBack"]) || isJSONBoolean(fields["runtimeChanged"])
+func hasValidOptionalRuntimeChanged(fields map[string]json.RawMessage) bool {
+	raw, exists := fields["runtimeChanged"]
+	return !exists || isJSONBoolean(raw)
 }
 
 func isJSONBoolean(raw json.RawMessage) bool {

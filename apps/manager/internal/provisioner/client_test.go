@@ -310,6 +310,67 @@ func TestClientRejectsVersionedTypedDiagnosticsWithoutCompleteIdentity(t *testin
 	}
 }
 
+func TestClientDoesNotTrustOutcomeFromIncompleteTypedFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(*Client) error
+		code string
+	}{
+		{"reconcile", func(c *Client) error {
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+			return err
+		}, "RECONCILE_FAILED"},
+		{"rotation", func(c *Client) error {
+			_, err := c.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{})
+			return err
+		}, "ROTATE_DATABASE_PASSWORD_FAILED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"runtimeChanged":true,"error":{"code":"` + tc.code + `","message":"untrusted"},"diagnostic":"unsafe-incomplete-outcome","diagnosticVersion":1}`
+			httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})}
+			client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+			var clientErr *ClientError
+			err := tc.call(client)
+			if !errors.As(err, &clientErr) || clientErr.RuntimeOutcomeKnown() || clientErr.RuntimeChanged() {
+				t.Fatalf("error = %#v, want unknown runtime outcome", err)
+			}
+		})
+	}
+}
+
+func TestClientTrustsCompleteVersionedFailureWithOmittedFalseRuntimeChange(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		call       func(*Client) error
+		code       string
+		diagnostic string
+	}{
+		{"reconcile", func(c *Client) error {
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+			return err
+		}, "RECONCILE_FAILED", "reconcile diagnostic with unchanged runtime"},
+		{"rotation", func(c *Client) error {
+			_, err := c.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{})
+			return err
+		}, "ROTATE_DATABASE_PASSWORD_FAILED", "rotation diagnostic with unchanged runtime"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"operationId":"op-1","projectId":"project-1","rolledBack":false,"error":{"code":"` + tc.code + `","message":"untrusted"},"diagnostic":"` + tc.diagnostic + `","diagnosticVersion":1}`
+			httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})}
+			client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+			var clientErr *ClientError
+			err := tc.call(client)
+			if !errors.As(err, &clientErr) || clientErr.Message != tc.diagnostic || !clientErr.RuntimeOutcomeKnown() || clientErr.RuntimeChanged() {
+				t.Fatalf("error = %#v, want trusted unchanged runtime diagnostic %q", err, tc.diagnostic)
+			}
+		})
+	}
+}
+
 func TestClientDiagnosticRoutesRequireExactFunctionAndHostPaths(t *testing.T) {
 	functionPayload, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "FUNCTION_DEPLOY_FAILED"}, Diagnostic: "function diagnostic"})
 	hostPayload, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "HOST_PORT_UNAVAILABLE"}, Diagnostic: "host diagnostic"})
@@ -340,7 +401,7 @@ func TestClientDiagnosticRoutesRequireExactFunctionAndHostPaths(t *testing.T) {
 func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
 	const sentinel = "new-password-sentinel"
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body, _ := json.Marshal(contracts.RotateDatabasePasswordResponse{RolledBack: true, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: sentinel}})
+		body, _ := json.Marshal(contracts.RotateDatabasePasswordResponse{OperationID: "op-1", ProjectID: "project-1", RolledBack: true, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: sentinel}, DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction})
 		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
