@@ -283,7 +283,7 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		if err := backend.runner.Recreate(ctx, ref, services...); err != nil {
 			rollbackErr := rollback()
 			restoreErr := restoreRuntime()
-			return &contracts.ReconcileFailure{Cause: errors.New("dependent service restart failed"), RollbackSucceeded: rollbackErr == nil && restoreErr == nil, RuntimeChanged: true}
+			return &contracts.ReconcileFailure{Cause: fmt.Errorf("dependent service restart failed: %w", err), RollbackSucceeded: rollbackErr == nil && restoreErr == nil, RuntimeChanged: true}
 		}
 		if err := backend.waitHealthy(ctx, request.Slug, enabledServices(metadata.Configuration)); err != nil {
 			if rollbackErr := rollback(); rollbackErr != nil {

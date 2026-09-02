@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"supabase-manager/apps/provisioner/internal/compose"
@@ -83,6 +84,25 @@ func TestRotateDatabasePasswordHealthFailureRestoresOldRoleAndReportsRollback(t 
 	}
 	if len(runner.rotations) != 2 || runner.rotations[1] != [2]string{"new-db-password", "db-password"} {
 		t.Fatalf("role recovery calls = %#v", runner.rotations)
+	}
+}
+
+func TestRotateDatabasePasswordPreservesDependentServiceRestartFailure(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &rotationTestRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	runner.recreateError = errors.New("compose action failed: exit status 1; output=auth dependency failed to start")
+	request := contracts.RotateDatabasePasswordRequest{OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: "rotate-recreate-fail", IdempotencyKey: "rotate-recreate-fail-key", ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", ExpectedRevision: 1, NextRevision: 2, OldPassword: "db-password", NewPassword: "new-db-password", Configuration: baseConfig(), Secrets: contracts.ProjectSecrets{DatabasePassword: "new-db-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}}
+	_, err = backend.RotateDatabasePassword(context.Background(), request)
+	var failure *contracts.ReconcileFailure
+	if err == nil || !errors.As(err, &failure) || failure.Cause == nil || !strings.Contains(failure.Cause.Error(), "auth dependency failed to start") {
+		t.Fatalf("rotation failure = %#v, want dependent-service Compose diagnostic", failure)
 	}
 }
 
