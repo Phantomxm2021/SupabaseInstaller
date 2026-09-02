@@ -87,8 +87,10 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			if previousRefErr != nil {
 				return fail(fmt.Errorf("resolve previous runtime generation: %w", previousRefErr))
 			}
-			if _, statErr := os.Stat(previousProject.ComposeFile); statErr != nil {
-				return fail(fmt.Errorf("resolve previous runtime generation: %w", statErr))
+			for _, inputPath := range []string{previousProject.ComposeFile, previousProject.EnvFile} {
+				if inputErr := validateRuntimeInput(inputPath); inputErr != nil {
+					return fail(fmt.Errorf("resolve previous runtime generation: %w", inputErr))
+				}
 			}
 			count, countErr := backend.runner.StorageObjectCount(ctx, previousProject)
 			if countErr != nil {
@@ -344,6 +346,21 @@ func routeForProxy(slug string, configuration contracts.ProjectConfiguration, se
 
 func storageLocationChanged(before, after contracts.StorageConfig) bool {
 	return before.Backend != after.Backend || before.Bucket != after.Bucket || before.Region != after.Region || before.Endpoint != after.Endpoint || before.AccountID != after.AccountID || before.LocalPath != after.LocalPath
+}
+
+func validateRuntimeInput(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("runtime input %q is not a regular file", path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return file.Close()
 }
 
 func managedTLSCertificateFile(config *contracts.ManagedTLSConfig) string {

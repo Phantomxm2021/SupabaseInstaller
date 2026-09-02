@@ -175,6 +175,9 @@ func TestReconcileFailsClosedWhenCurrentRuntimeGenerationIsCorrupt(t *testing.T)
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
 		t.Fatalf("initial reconcile: %v", err)
 	}
+	generationDir := filepath.Join(projectPathForTest(t, root), ".manager-runtime", "generations")
+	beforeEntries := directoryEntries(t, generationDir)
+	validated, upCalls := runner.validated, len(runner.up)
 	projectPath, err := root.ProjectPath("bee")
 	if err != nil {
 		t.Fatal(err)
@@ -195,9 +198,62 @@ func TestReconcileFailsClosedWhenCurrentRuntimeGenerationIsCorrupt(t *testing.T)
 	if runner.storageCountCalls != 0 || len(runner.recreated) != 0 {
 		t.Fatalf("storage count calls=%d recreated=%v, want no query/recreate", runner.storageCountCalls, runner.recreated)
 	}
+	if runner.validated != validated || len(runner.up) != upCalls || !reflect.DeepEqual(directoryEntries(t, generationDir), beforeEntries) {
+		t.Fatalf("candidate side effects: validated=%d up=%d generations=%v", runner.validated, len(runner.up), directoryEntries(t, generationDir))
+	}
 	if target, readErr := os.Readlink(current); readErr != nil || target != "generations/missing" {
 		t.Fatalf("current link=%q err=%v, want unchanged corrupt link", target, readErr)
 	}
+}
+
+func TestReconcileFailsClosedWhenPreviousRuntimeEnvIsMissing(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	ref, err := root.CurrentRuntimeGeneration("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(ref.EnvFile); err != nil {
+		t.Fatal(err)
+	}
+	changed := baseConfig()
+	changed.Storage.Bucket = "new-bucket"
+	_, err = backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil || !strings.Contains(errors.Unwrap(err).Error(), "resolve previous runtime generation") {
+		t.Fatalf("error=%v, want missing env rejection", err)
+	}
+	if runner.storageCountCalls != 0 || runner.validated != 1 || len(runner.recreated) != 0 {
+		t.Fatalf("side effects: count=%d validated=%d recreated=%v", runner.storageCountCalls, runner.validated, runner.recreated)
+	}
+}
+
+func projectPathForTest(t *testing.T, root *projectfs.Root) string {
+	t.Helper()
+	path, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func directoryEntries(t *testing.T, path string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, entry.Name())
+	}
+	return result
 }
 
 func TestReconcileAppliesProxyOnlyAfterHealthyRuntime(t *testing.T) {

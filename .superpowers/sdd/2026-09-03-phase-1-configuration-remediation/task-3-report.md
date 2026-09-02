@@ -8,3 +8,5 @@
 - Tests cover exact query argv, malformed output, non-empty/unavailable rejection before recreate/publish, zero transition, unchanged location, and previously-disabled Storage.
 - Commit: `fix: guard non-empty storage transitions`
 - Follow-up RED: corrupted `.manager-runtime/current` initially still allowed the count query because generation lookup errors were discarded. GREEN now validates the resolved previous compose file before querying; the focused corruption test proves no query, write, or recreate.
+- Follow-up RED/GREEN: missing previous-generation `.env` was accepted after only Compose validation. The gate now requires both Compose and `.env` to be regular readable files; corruption coverage snapshots generation entries and runner validation/up calls to prove no candidate side effects.
+- Follow-up commit: `fix: fail closed on missing runtime inputs`
