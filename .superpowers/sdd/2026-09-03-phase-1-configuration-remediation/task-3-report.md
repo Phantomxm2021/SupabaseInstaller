@@ -15,3 +15,4 @@
 - Follow-up commit: `fix: constrain runtime generation targets`
 - Final security RED/GREEN: a symlinked `generation-*` directory still passed `os.Stat`; `RuntimeGeneration` now uses `Lstat` and requires `.manager-runtime`, `generations`, and selected generation components to be non-symlink directories. Coverage proves no count/stage/publish/recreate.
 - Follow-up commit: `fix: reject symlinked runtime generations`
+- Proof follow-up: symlinked-generation coverage now snapshots generation entries and the `current` target, and asserts validation/up calls remain unchanged in addition to zero query/recreate.

@@ -302,6 +302,8 @@ func TestReconcileRejectsSymlinkedGenerationDirectoryBeforeQuery(t *testing.T) {
 	if err := os.Symlink(external, generation); err != nil {
 		t.Fatal(err)
 	}
+	generationEntries := directoryEntries(t, filepath.Join(runtimeRoot, "generations"))
+	validated, upCalls := runner.validated, len(runner.up)
 	changed := baseConfig()
 	changed.Storage.Bucket = "new-bucket"
 	_, err = backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
@@ -310,6 +312,12 @@ func TestReconcileRejectsSymlinkedGenerationDirectoryBeforeQuery(t *testing.T) {
 	}
 	if runner.storageCountCalls != 0 || runner.validated != 1 || len(runner.recreated) != 0 {
 		t.Fatalf("side effects: count=%d validated=%d recreated=%v", runner.storageCountCalls, runner.validated, runner.recreated)
+	}
+	if runner.validated != validated || len(runner.up) != upCalls || !reflect.DeepEqual(directoryEntries(t, filepath.Join(runtimeRoot, "generations")), generationEntries) {
+		t.Fatalf("candidate side effects: validated=%d up=%d generations=%v", runner.validated, len(runner.up), directoryEntries(t, filepath.Join(runtimeRoot, "generations")))
+	}
+	if got, readErr := os.Readlink(filepath.Join(runtimeRoot, "current")); readErr != nil || got != target {
+		t.Fatalf("current link=%q err=%v, want unchanged target %q", got, readErr, target)
 	}
 }
 
