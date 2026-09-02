@@ -385,6 +385,7 @@ export const storageSchema = z
     secretAccessKeySet: z.boolean(),
     secretAccessKey: secretAction,
     forcePathStyle: z.boolean(),
+    uploadFileSizeLimit: z.number().int().min(1 * 1024 * 1024).max(5120 * 1024 * 1024),
     localPath: z.string(),
   })
   .superRefine((value, context) => {
@@ -447,11 +448,11 @@ export const storageSchema = z
         path: ["endpoint"],
         message: "Enter an http or https URL",
       });
-    if (value.backend === "r2" && !value.accountId.trim())
+    if (value.backend === "r2" && !/^[a-f0-9]{32}$/.test(value.accountId))
       context.addIssue({
         code: "custom",
         path: ["accountId"],
-        message: "Account ID is required for R2",
+        message: "Account ID must be exactly 32 lowercase hexadecimal characters",
       });
     if (value.backend === "r2" && value.endpoint)
       context.addIssue({
@@ -459,6 +460,8 @@ export const storageSchema = z
         path: ["endpoint"],
         message: "R2 endpoint is derived from account ID",
       });
+    if (value.backend === "r2" && !value.forcePathStyle)
+      context.addIssue({ code: "custom", path: ["forcePathStyle"], message: "Cloudflare R2 requires path-style addressing" });
   });
 export const realtimeSchema = projectConfigurationSchema.shape.realtime;
 const environmentName = /^[A-Z_][A-Z0-9_]*$/;
@@ -474,7 +477,6 @@ const reservedEnvironmentNames = new Set([
 export const functionsSchema = z
   .object({
     defaultJwtVerification: z.boolean(),
-    directory: z.string(),
     variables: z.array(
       z.object({
         name: z.string(),

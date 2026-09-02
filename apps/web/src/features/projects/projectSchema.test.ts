@@ -55,6 +55,9 @@ it('accepts IPv6/localhost parity and rejects Caddy without its gateway dependen
   caddy.services.rest = false
   caddy.services.studio = false
   expect(projectConfigurationSchema.safeParse(caddy).success).toBe(false)
+  const supportedCaddy = validProject().configuration as any
+  supportedCaddy.network.httpsMode = 'caddy'
+  expect(projectConfigurationSchema.safeParse(supportedCaddy).success).toBe(false)
 })
 
 it('does not require hidden phone fields while disabled, but validates Twilio fields when enabled', () => {
@@ -89,6 +92,32 @@ it('does not expose unsupported manual TLS fields in defaults or create payload'
   expect('certificate' in configuration.network).toBe(false)
   expect('manual').not.toBe(configuration.network.httpsMode)
   expect(JSON.stringify(normalizeCreateConfiguration(configuration))).not.toContain('certificate')
+})
+
+it('requires a lowercase 32-character hexadecimal R2 account ID', () => {
+  const configuration = validProject().configuration as any
+  configuration.services.storage = true
+  configuration.storage = { ...configuration.storage, backend: 'r2', bucket: 'objects', accessKeyId: 'key', secretAccessKey: { action: 'replace', value: 'secret' } }
+  configuration.storage.accountId = 'ABCDEF0123456789ABCDEF0123456789'
+  expect(projectConfigurationSchema.safeParse(configuration).success).toBe(false)
+  configuration.storage.accountId = 'abcdef0123456789abcdef0123456789'
+  configuration.storage.forcePathStyle = true
+  expect(projectConfigurationSchema.safeParse(configuration).success).toBe(true)
+})
+
+it('carries upload size limits as bytes and rejects values outside 1–5120 MiB', () => {
+  const configuration = validProject().configuration as any
+  expect(configuration.storage.uploadFileSizeLimit).toBe(50 * 1024 * 1024)
+  configuration.storage.uploadFileSizeLimit = 5120 * 1024 * 1024
+  expect(projectConfigurationSchema.safeParse(configuration).success).toBe(true)
+  configuration.storage.uploadFileSizeLimit = 5120 * 1024 * 1024 + 1
+  expect(projectConfigurationSchema.safeParse(configuration).success).toBe(false)
+})
+
+it('does not include the removed Functions directory in defaults or payloads', () => {
+  const configuration = validProject().configuration as any
+  expect('directory' in configuration.functions).toBe(false)
+  expect(JSON.stringify(normalizeCreateConfiguration(configuration))).not.toContain('directory')
 })
 
 it('keeps redacted and update secret truth tables distinct', () => {

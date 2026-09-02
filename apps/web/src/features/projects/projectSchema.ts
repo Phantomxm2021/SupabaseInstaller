@@ -531,6 +531,7 @@ const storage = z
     secretAccessKeySet: z.boolean(),
     secretAccessKey: secret,
     forcePathStyle: z.boolean(),
+    uploadFileSizeLimit: z.number().int().min(1 * 1024 * 1024).max(5120 * 1024 * 1024),
     localPath: z.string(),
   })
   .superRefine((value, context) => {
@@ -597,12 +598,14 @@ const storage = z
         path: ["endpoint"],
         message: "Endpoint is required for generic S3",
       });
-    if (value.backend === "r2" && !value.accountId.trim())
+    if (value.backend === "r2" && !/^[a-f0-9]{32}$/.test(value.accountId))
       context.addIssue({
         code: "custom",
         path: ["accountId"],
-        message: "Account ID is required for Cloudflare R2",
+        message: "Account ID must be exactly 32 lowercase hexadecimal characters",
       });
+    if (value.backend === "r2" && !value.forcePathStyle)
+      context.addIssue({ code: "custom", path: ["forcePathStyle"], message: "Cloudflare R2 requires path-style addressing" });
     if (value.backend === "r2" && value.endpoint)
       context.addIssue({
         code: "custom",
@@ -629,7 +632,6 @@ const reserved = new Set([
 const functions = z
   .object({
     defaultJwtVerification: z.boolean(),
-    directory: z.string(),
     variables: z.array(
       z.object({ name: z.string(), valueSet: z.boolean(), value: secret }),
     ),
@@ -691,7 +693,7 @@ const baseConfiguration = z.object({
   }),
   network: z.object({
     gateway: z.enum(["envoy", "kong"]),
-    httpsMode: z.enum(["external", "caddy"]),
+    httpsMode: z.literal("external"),
     managedTls: z.object({ certificateName: z.string(), certificateFile: z.string(), privateKeyFile: z.string() }).optional(),
     internalGatewayPort: port.optional(),
     apiPort: port,
@@ -743,12 +745,6 @@ export const projectConfigurationSchema = baseConfiguration.superRefine(
         code: "custom",
         path: ["auth", "enabled"],
         message: "Auth service and Auth configuration must match",
-      });
-    if (value.network.httpsMode === "caddy" && !value.services.gateway)
-      context.addIssue({
-        code: "custom",
-        path: ["services", "gateway"],
-        message: "Caddy requires API Gateway",
       });
     if (
       value.services.storage &&
@@ -968,12 +964,12 @@ export function defaultConfiguration(
       secretAccessKeySet: false,
       secretAccessKey: emptySecret(),
       forcePathStyle: false,
+      uploadFileSizeLimit: 50 * 1024 * 1024,
       localPath: "",
     },
     realtime: { maxConnections: 100, databasePoolSize: 5, logLevel: "info" },
     functions: {
       defaultJwtVerification: true,
-      directory: "./functions",
       variables: [],
     },
     database: {

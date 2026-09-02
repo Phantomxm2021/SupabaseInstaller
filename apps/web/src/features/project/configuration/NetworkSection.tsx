@@ -129,7 +129,7 @@ export function NetworkSection({
               </label>
               <Select
                 value={network.httpsMode}
-                onValueChange={(value) =>
+                  onValueChange={(value) =>
                   form.setValue("httpsMode", value as NetworkConfig["httpsMode"], {
                     shouldDirty: true,
                     shouldValidate: true,
@@ -147,7 +147,6 @@ export function NetworkSection({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="external">External reverse proxy</SelectItem>
-                  <SelectItem value="caddy">Caddy managed</SelectItem>
                 </SelectContent>
               </Select>
               {httpsError && <p id="network-https-mode-error" className="text-sm text-destructive">{httpsError}</p>}

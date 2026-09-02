@@ -5,6 +5,13 @@
 `internal/templates/self-hosted-v0.8.0`。对照基准为随仓库固定的上游
 `self-hosted/v0.8.0` 模板及 2026-09-03 的官方文档。
 
+## Phase 1 status (2026-09-03)
+
+CFG-001, CFG-002, CFG-006, CFG-007, CFG-008, CFG-009, and CFG-010 are fixed in
+the Phase 1 remediation. CFG-003, CFG-004, and CFG-005 remain deferred to a
+future phase; the corresponding findings below are retained as historical
+context and are not marked fixed.
+
 本报告只记录已确认的实现问题或产品配置缺口；没有把“未暴露每一个上游环境变量”
 一概视为 bug。Manager 不提供 raw `.env` 编辑是合理的安全边界，但对外承诺的字段
 必须准确地被渲染、验证并在数据变更时保持安全。
