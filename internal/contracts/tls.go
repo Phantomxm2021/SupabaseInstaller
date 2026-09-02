@@ -31,7 +31,8 @@ type StageManagedTLSRequest struct {
 
 type StageManagedTLSResponse struct {
 	ManagedTLSConfig
-	Created bool `json:"created"`
+	Created    bool   `json:"created"`
+	Diagnostic string `json:"diagnostic,omitempty"`
 }
 
 // ManagedTLSPaths derives the only certificate paths that a project may use.

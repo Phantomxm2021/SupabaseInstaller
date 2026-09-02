@@ -51,6 +51,7 @@ type ReconcileProjectResponse struct {
 	RolledBack        bool      `json:"rolledBack"`
 	RuntimeChanged    bool      `json:"runtimeChanged,omitempty"`
 	Error             *APIError `json:"error,omitempty"`
+	Diagnostic        string    `json:"diagnostic,omitempty"`
 }
 
 // RotateDatabasePasswordRequest is a narrowly scoped sensitive RPC. The
@@ -174,7 +175,8 @@ type HostPortAvailability struct {
 }
 
 type ErrorEnvelope struct {
-	Error APIError `json:"error"`
+	Error      APIError `json:"error"`
+	Diagnostic string   `json:"diagnostic,omitempty"`
 }
 
 type APIError struct {

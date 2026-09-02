@@ -26,6 +26,8 @@ type FunctionDeploymentResult struct {
 	Current    *FunctionRelease `json:"current,omitempty"`
 	Previous   *FunctionRelease `json:"previous,omitempty"`
 	RolledBack bool             `json:"rolledBack"`
+	Error      *APIError        `json:"error,omitempty"`
+	Diagnostic string           `json:"diagnostic,omitempty"`
 }
 
 var functionNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)

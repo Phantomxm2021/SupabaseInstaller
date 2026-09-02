@@ -17,3 +17,10 @@ func TestRedactorRemovesKnownValuesAndCredentialAssignments(t *testing.T) {
 		t.Fatalf("redacted log = %q, want marker", got)
 	}
 }
+
+func TestRedactorStillRedactsExistingSupabaseSecretAssignments(t *testing.T) {
+	got := New(nil).String("SUPABASE_SECRET_KEY=secret-value")
+	if strings.Contains(got, "secret-value") {
+		t.Fatalf("redacted log contains a Supabase secret: %s", got)
+	}
+}

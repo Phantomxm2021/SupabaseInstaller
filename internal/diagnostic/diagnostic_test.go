@@ -1,0 +1,39 @@
+package diagnostic
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestSanitizeRedactsLongestKnownSecretsFirst(t *testing.T) {
+	got := Sanitize("failed with overlapping-secret-value", []string{"secret", "overlapping-secret-value"})
+	if strings.Contains(got, "secret") || strings.Contains(got, "overlapping-secret-value") {
+		t.Fatalf("Sanitize leaked a known secret: %q", got)
+	}
+	if got != "failed with [REDACTED]" {
+		t.Fatalf("Sanitize = %q", got)
+	}
+}
+
+func TestSanitizeRedactsCredentialAssignmentsAndBearerTokens(t *testing.T) {
+	input := "POSTGRES_PASSWORD=hunter2 api_key: abc123 Authorization: Bearer header.payload.signature Bearer standalone-token"
+	got := Sanitize(input, nil)
+	for _, leaked := range []string{"hunter2", "abc123", "header.payload.signature", "standalone-token"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("Sanitize leaked %q: %q", leaked, got)
+		}
+	}
+	if strings.Count(got, "[REDACTED]") != 4 {
+		t.Fatalf("Sanitize markers = %d, want 4: %q", strings.Count(got, "[REDACTED]"), got)
+	}
+}
+
+func TestSanitizeFlattensControlsAndBoundsOutput(t *testing.T) {
+	got := Sanitize(" first\nsecond\tthird\x00 "+strings.Repeat("x", maxOutputBytes), nil)
+	if strings.ContainsAny(got, "\n\r\t\x00") {
+		t.Fatalf("Sanitize retained a control character: %q", got)
+	}
+	if len(got) > maxOutputBytes {
+		t.Fatalf("Sanitize length = %d, want at most %d", len(got), maxOutputBytes)
+	}
+}
