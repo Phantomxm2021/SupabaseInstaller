@@ -129,6 +129,12 @@ type ProjectSecrets struct {
 	S3ProtocolAccessKeyID      string `json:"s3ProtocolAccessKeyId"`
 	S3ProtocolAccessKeySecret  string `json:"s3ProtocolAccessKeySecret"`
 	PoolerTenantID             string `json:"poolerTenantId"`
+	SupabasePublishableKey     string `json:"-"`
+	SupabaseSecretKey          string `json:"-"`
+	AnonKeyAsymmetric          string `json:"-"`
+	ServiceRoleKeyAsymmetric   string `json:"-"`
+	JWTKeys                    string `json:"-"`
+	JWTJWKS                    string `json:"-"`
 }
 
 type LifecycleAction string
