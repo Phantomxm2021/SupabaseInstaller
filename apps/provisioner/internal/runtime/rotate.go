@@ -112,6 +112,10 @@ func (backend *Backend) rollbackDatabasePasswordLocked(ctx context.Context, requ
 			_ = restore()
 			return errors.New("rollback candidate validation failed")
 		}
+		if stageErr = writeCandidateCompose(candidate.ComposeFile, []byte(rendered.Compose)); stageErr != nil {
+			_ = restore()
+			return errors.New("rollback candidate restore failed")
+		}
 		if stageErr = commit(); stageErr != nil {
 			_ = restore()
 			return errors.New("rollback candidate commit failed")
@@ -239,6 +243,10 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 			if stageErr != nil {
 				_ = restore()
 				return &contracts.ReconcileFailure{Cause: errors.New("rotation candidate validation failed"), RollbackSucceeded: false}
+			}
+			if stageErr = writeCandidateCompose(candidate.ComposeFile, []byte(rendered.Compose)); stageErr != nil {
+				_ = restore()
+				return &contracts.ReconcileFailure{Cause: errors.New("rotation candidate restore failed"), RollbackSucceeded: false}
 			}
 			if stageErr = commit(); stageErr != nil {
 				_ = restore()

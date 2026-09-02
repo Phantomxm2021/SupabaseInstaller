@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -44,6 +45,20 @@ func TestRotateDatabasePasswordPublishesNewGenerationAndMetadata(t *testing.T) {
 	}
 	if len(runner.rotations) != 1 || runner.rotations[0] != [2]string{"db-password", "new-db-password"} {
 		t.Fatalf("database rotations = %#v", runner.rotations)
+	}
+	current, err := root.CurrentRuntimeFiles("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	composeFile, err := os.ReadFile(current.ComposeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(composeFile), ".candidate-") {
+		t.Fatalf("published Compose retains candidate functions env path: %q", composeFile)
+	}
+	if !strings.Contains(string(composeFile), ".manager-runtime/current/.env.functions") {
+		t.Fatalf("published Compose = %q, want stable functions env path", composeFile)
 	}
 	metadata, err := root.Metadata("bee")
 	if err != nil || metadata.Revision != 2 {
