@@ -7,3 +7,4 @@
 - Reconcile compares Backend, Bucket, Region, Endpoint, AccountID, and LocalPath only when Storage was previously enabled and checks the previous runtime before staging. Nonzero or unavailable counts fail closed; zero permits transition.
 - Tests cover exact query argv, malformed output, non-empty/unavailable rejection before recreate/publish, zero transition, unchanged location, and previously-disabled Storage.
 - Commit: `fix: guard non-empty storage transitions`
+- Follow-up RED: corrupted `.manager-runtime/current` initially still allowed the count query because generation lookup errors were discarded. GREEN now validates the resolved previous compose file before querying; the focused corruption test proves no query, write, or recreate.

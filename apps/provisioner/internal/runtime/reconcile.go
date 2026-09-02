@@ -79,11 +79,17 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if len(previousServices) == 0 && metadata.Revision > 0 {
 			previousServices = enabledServices(previousConfig)
 		}
-		previousRef, _ := backend.projectFS.CurrentRuntimeGeneration(request.Slug)
+		previousRef, previousRefErr := backend.projectFS.CurrentRuntimeGeneration(request.Slug)
 		previousProject := compose.ProjectRef{Slug: request.Slug, Dir: previousRef.ProjectDir, ComposeFile: previousRef.ComposeFile, EnvFile: previousRef.EnvFile}
 		currentRef, _ := backend.projectFS.CurrentRuntimeFiles(request.Slug)
 		currentProject := compose.ProjectRef{Slug: request.Slug, Dir: currentRef.ProjectDir, ComposeFile: currentRef.ComposeFile, EnvFile: currentRef.EnvFile}
 		if previousConfig.Services.Storage && storageLocationChanged(previousConfig.Storage, request.Configuration.Storage) {
+			if previousRefErr != nil {
+				return fail(fmt.Errorf("resolve previous runtime generation: %w", previousRefErr))
+			}
+			if _, statErr := os.Stat(previousProject.ComposeFile); statErr != nil {
+				return fail(fmt.Errorf("resolve previous runtime generation: %w", statErr))
+			}
 			count, countErr := backend.runner.StorageObjectCount(ctx, previousProject)
 			if countErr != nil {
 				return fail(fmt.Errorf("Storage contains objects: unable to determine object count: %w", countErr))

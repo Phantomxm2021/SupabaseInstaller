@@ -165,6 +165,41 @@ func TestReconcileRejectsUnavailableStorageObjectCountBeforePublish(t *testing.T
 	}
 }
 
+func TestReconcileFailsClosedWhenCurrentRuntimeGenerationIsCorrupt(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{storageObjects: 1}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	projectPath, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(projectPath, ".manager-runtime", "current")
+	if err := os.Remove(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("generations/missing", current); err != nil {
+		t.Fatal(err)
+	}
+	changed := baseConfig()
+	changed.Storage.Bucket = "new-bucket"
+	_, err = backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil || !strings.Contains(errors.Unwrap(err).Error(), "resolve previous runtime generation") {
+		t.Fatalf("error=%v, want corrupt generation rejection", err)
+	}
+	if runner.storageCountCalls != 0 || len(runner.recreated) != 0 {
+		t.Fatalf("storage count calls=%d recreated=%v, want no query/recreate", runner.storageCountCalls, runner.recreated)
+	}
+	if target, readErr := os.Readlink(current); readErr != nil || target != "generations/missing" {
+		t.Fatalf("current link=%q err=%v, want unchanged corrupt link", target, readErr)
+	}
+}
+
 func TestReconcileAppliesProxyOnlyAfterHealthyRuntime(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
