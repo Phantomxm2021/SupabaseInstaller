@@ -10,3 +10,6 @@
 - Follow-up RED: corrupted `.manager-runtime/current` initially still allowed the count query because generation lookup errors were discarded. GREEN now validates the resolved previous compose file before querying; the focused corruption test proves no query, write, or recreate.
 - Follow-up RED/GREEN: missing previous-generation `.env` was accepted after only Compose validation. The gate now requires both Compose and `.env` to be regular readable files; corruption coverage snapshots generation entries and runner validation/up calls to prove no candidate side effects.
 - Follow-up commit: `fix: fail closed on missing runtime inputs`
+- Security follow-up RED/GREEN: an existing external `current -> ../../outside` target with readable files bypassed prior checks. `CurrentRuntimeGeneration` now accepts only canonical `generations/generation-*` targets, and preflight uses `Lstat` to reject symlinked Compose/.env inputs. The external-target test proves no query/staging/publish/recreate.
+- Docker still reopens validated pathnames after preflight; eliminating that residual TOCTOU requires a descriptor-based compose runner interface. Ownership/path constraints and symlink rejection provide the strongest safe fix within the current interface.
+- Follow-up commit: `fix: constrain runtime generation targets`

@@ -172,8 +172,12 @@ func (r *Root) CurrentRuntimeGeneration(slug string) (RuntimeRef, error) {
 	if err != nil {
 		return RuntimeRef{}, err
 	}
-	generation := filepath.Join(ref.ProjectDir, ".manager-runtime", filepath.FromSlash(target))
-	return RuntimeRef{ProjectDir: ref.ProjectDir, ComposeFile: filepath.Join(generation, "docker-compose.yml"), EnvFile: filepath.Join(generation, ".env"), FunctionsFile: filepath.Join(generation, ".env.functions")}, nil
+	target = filepath.ToSlash(filepath.Clean(filepath.FromSlash(target)))
+	if !strings.HasPrefix(target, "generations/") {
+		return RuntimeRef{}, fmt.Errorf("invalid runtime generation target")
+	}
+	name := strings.TrimPrefix(target, "generations/")
+	return r.RuntimeGeneration(slug, name)
 }
 
 // RuntimeGeneration returns an immutable generation by its journaled name.

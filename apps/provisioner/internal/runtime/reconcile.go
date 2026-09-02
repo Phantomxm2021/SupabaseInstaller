@@ -349,7 +349,7 @@ func storageLocationChanged(before, after contracts.StorageConfig) bool {
 }
 
 func validateRuntimeInput(path string) error {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return err
 	}
