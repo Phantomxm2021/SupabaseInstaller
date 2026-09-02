@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"supabase-manager/internal/contracts"
@@ -117,6 +116,34 @@ func (c *ManagedClient) callJSON(ctx context.Context, path string, body any, out
 		}
 		return nil
 	}
-	message, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-	return fmt.Errorf("managed nginx proxy agent returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+	if diagnostic := trustedNginxDiagnostic(path, response.Body); diagnostic != "" {
+		return fmt.Errorf("managed nginx proxy request failed: %s", diagnostic)
+	}
+	return fmt.Errorf("managed nginx proxy request failed")
+}
+
+func trustedNginxDiagnostic(path string, body io.Reader) string {
+	type expectedFailure struct {
+		code    string
+		message string
+	}
+	expected, ok := map[string]expectedFailure{
+		"/v1/sites/apply":        {code: "PROXY_APPLY_FAILED", message: "Unable to apply managed Nginx site"},
+		"/v1/sites/remove":       {code: "PROXY_REMOVE_FAILED", message: "Unable to remove managed Nginx site"},
+		"/v1/certificates/stage": {code: "PROXY_TLS_STAGE_FAILED", message: "Unable to stage managed TLS certificate"},
+	}[path]
+	if !ok {
+		return ""
+	}
+
+	decoder := json.NewDecoder(io.LimitReader(body, 16<<10))
+	decoder.DisallowUnknownFields()
+	var failure contracts.ErrorEnvelope
+	if err := decoder.Decode(&failure); err != nil || failure.Error.Code != expected.code || failure.Error.Message != expected.message || failure.Diagnostic == "" {
+		return ""
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return ""
+	}
+	return failure.Diagnostic
 }

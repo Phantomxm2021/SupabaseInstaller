@@ -7,11 +7,12 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 
 	"supabase-manager/apps/nginxproxy/internal/site"
+	"supabase-manager/internal/contracts"
+	"supabase-manager/internal/diagnostic"
 )
 
 const (
@@ -80,7 +81,7 @@ func (h *Handler) stageCertificate(response http.ResponseWriter, request *http.R
 	}
 	result, err := h.certificates.Stage(request.Context(), input)
 	if err != nil {
-		writeError(response, http.StatusUnprocessableEntity, err.Error())
+		writeOperationalFailure(response, http.StatusUnprocessableEntity, "PROXY_TLS_STAGE_FAILED", "Unable to stage managed TLS certificate", err, []string{string(input.CertificatePEM), string(input.PrivateKeyPEM)})
 		return
 	}
 	response.Header().Set("Content-Type", "application/json")
@@ -107,7 +108,7 @@ func (h *Handler) apply(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if err := h.store.Apply(request.Context(), rendered); err != nil {
-		writeError(response, http.StatusInternalServerError, fmt.Sprintf("apply site: %v", err))
+		writeOperationalFailure(response, http.StatusInternalServerError, "PROXY_APPLY_FAILED", "Unable to apply managed Nginx site", err, []string{input.StudioPassword})
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -126,7 +127,7 @@ func (h *Handler) remove(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if err := h.store.Remove(request.Context(), availableName); err != nil {
-		writeError(response, http.StatusInternalServerError, fmt.Sprintf("remove site: %v", err))
+		writeOperationalFailure(response, http.StatusInternalServerError, "PROXY_REMOVE_FAILED", "Unable to remove managed Nginx site", err, nil)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -155,4 +156,19 @@ func writeError(response http.ResponseWriter, status int, message string) {
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(map[string]string{"error": message})
+}
+
+func writeOperationalFailure(response http.ResponseWriter, status int, code, message string, cause error, knownValues []string) {
+	detail := message
+	if cause != nil {
+		if sanitized := diagnostic.Sanitize(cause.Error(), knownValues); sanitized != "" {
+			detail = sanitized
+		}
+	}
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(status)
+	_ = json.NewEncoder(response).Encode(contracts.ErrorEnvelope{
+		Error:      contracts.APIError{Code: code, Message: message},
+		Diagnostic: detail,
+	})
 }

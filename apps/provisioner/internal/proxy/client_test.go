@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"supabase-manager/internal/contracts"
@@ -93,5 +94,89 @@ func TestDisabledClientDoesNothing(t *testing.T) {
 	}
 	if _, err := client.StageCertificate(context.Background(), contracts.StageManagedTLSRequest{}); err == nil {
 		t.Fatal("StageCertificate() succeeded with disabled managed proxy")
+	}
+}
+
+func TestManagedClientTrustsOnlyTypedNginxOperationalDiagnostics(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		response    string
+		want        string
+		mustExclude []string
+	}{
+		{
+			name:     "trusted apply diagnostic",
+			path:     "/v1/sites/apply",
+			response: `{"error":{"code":"PROXY_APPLY_FAILED","message":"Unable to apply managed Nginx site"},"diagnostic":"nginx -t: unknown directive"}`,
+			want:     "nginx -t: unknown directive",
+		},
+		{
+			name:     "trusted remove diagnostic",
+			path:     "/v1/sites/remove",
+			response: `{"error":{"code":"PROXY_REMOVE_FAILED","message":"Unable to remove managed Nginx site"},"diagnostic":"nginx remove failed"}`,
+			want:     "nginx remove failed",
+		},
+		{
+			name:     "trusted tls diagnostic",
+			path:     "/v1/certificates/stage",
+			response: `{"error":{"code":"PROXY_TLS_STAGE_FAILED","message":"Unable to stage managed TLS certificate"},"diagnostic":"certificate staging filesystem unavailable"}`,
+			want:     "certificate staging filesystem unavailable",
+		},
+		{
+			name:        "raw body",
+			path:        "/v1/sites/apply",
+			response:    "raw-body-sentinel",
+			want:        "managed nginx proxy request failed",
+			mustExclude: []string{"raw-body-sentinel"},
+		},
+		{
+			name:        "malformed envelope",
+			path:        "/v1/sites/apply",
+			response:    `{"error":{"code":"PROXY_APPLY_FAILED"},"diagnostic":"malformed-sentinel"}`,
+			want:        "managed nginx proxy request failed",
+			mustExclude: []string{"malformed-sentinel"},
+		},
+		{
+			name:        "lookalike code path pair",
+			path:        "/v1/sites/remove",
+			response:    `{"error":{"code":"PROXY_APPLY_FAILED","message":"untrusted"},"diagnostic":"lookalike-sentinel"}`,
+			want:        "managed nginx proxy request failed",
+			mustExclude: []string{"lookalike-sentinel"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory, err := os.MkdirTemp("/tmp", "npc-error-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(directory) })
+			listener, err := net.Listen("unix", filepath.Join(directory, "agent.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := &http.Server{Handler: http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.WriteHeader(http.StatusInternalServerError)
+				_, _ = response.Write([]byte(test.response))
+			})}
+			go server.Serve(listener)
+			t.Cleanup(func() {
+				_ = server.Close()
+				_ = listener.Close()
+			})
+
+			client := NewManagedClient(filepath.Join(directory, "agent.sock"), "agent-token")
+			err = client.call(context.Background(), test.path, struct{}{})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("call() error = %v, want %q", err, test.want)
+			}
+			for _, value := range test.mustExclude {
+				if strings.Contains(err.Error(), value) {
+					t.Fatalf("call() error leaked untrusted value %q: %v", value, err)
+				}
+			}
+		})
 	}
 }
