@@ -129,7 +129,8 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	if err := NormalizeProjectAddress(project.Slug, &cfg.General); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
-	if err := ValidateConfiguration(cfg); err != nil {
+	legacyCaddy := base.Configuration.Network.HTTPSMode == contracts.HTTPSModeCaddy && cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy
+	if err := validateConfiguration(cfg, legacyCaddy, false); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
 	return cfg, nil

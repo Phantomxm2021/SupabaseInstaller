@@ -55,7 +55,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 			RateLimits:    contracts.RateLimitConfig{EmailSent: 30, SMSSent: 30, TokenRefresh: 150, TokenVerification: 30, AnonymousUsers: 30, SignupsAndSignins: 30},
 			MFA:           contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6},
 		},
-		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
+		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal, UploadFileSizeLimit: defaultStorageUploadFileSizeLimit},
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true, Directory: "./functions"},
 		Database:  contracts.DatabaseConfig{Version: "17", MaxConnections: 100},
@@ -100,7 +100,12 @@ func ApplyConfigurationPreset(preset contracts.Preset) contracts.ProjectConfigur
 	return cfg
 }
 
+const defaultStorageUploadFileSizeLimit int64 = 50 * 1024 * 1024
+const minStorageUploadFileSizeLimit int64 = 1 * 1024 * 1024
+const maxStorageUploadFileSizeLimit int64 = 5 * 1024 * 1024 * 1024
+
 var envNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+var r2AccountIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 var reservedFunctionVariables = map[string]struct{}{
 	"ANON_KEY": {}, "SERVICE_ROLE_KEY": {}, "JWT_SECRET": {}, "SUPABASE_URL": {},
@@ -108,6 +113,10 @@ var reservedFunctionVariables = map[string]struct{}{
 }
 
 func ValidateConfiguration(cfg contracts.ProjectConfiguration) error {
+	return validateConfiguration(cfg, false, true)
+}
+
+func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy, allowOmittedUploadLimit bool) error {
 	validation := &ValidationError{Fields: make(map[string]string)}
 	if strings.TrimSpace(cfg.General.Domain) != "" && !validDomain(cfg.General.Domain) {
 		validation.add("general.domain", "must be a hostname without a scheme or path")
@@ -123,12 +132,15 @@ func ValidateConfiguration(cfg contracts.ProjectConfiguration) error {
 		validation.add("auth.enabled", "must match services.auth")
 	}
 	validateAuth(cfg.Auth, validation)
-	validateStorage(cfg.Storage, validation)
+	validateStorage(cfg.Storage, validation, allowOmittedUploadLimit)
 	validateRealtime(cfg.Realtime, validation)
 	validateFunctions(cfg.Functions, validation)
 	validateDatabase(cfg.Database, validation)
 	validatePooler(cfg.Pooler, validation)
 	validateNetwork(cfg.Network, validation)
+	if cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy && !allowLegacyCaddy {
+		validation.add("network.httpsMode", "Caddy HTTPS is not supported for new configurations")
+	}
 	if cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy && !cfg.Services.Gateway {
 		validation.add("services.gateway", "Caddy HTTPS requires API Gateway")
 	}
@@ -166,7 +178,7 @@ func ValidateStoredConfiguration(cfg contracts.ProjectConfiguration) error {
 			cfg.Functions.Variables[index].Value.Action = "retain"
 		}
 	}
-	return ValidateConfiguration(cfg)
+	return validateConfiguration(cfg, true, true)
 }
 
 func validateServicesConfiguration(services contracts.Services, validation *ValidationError) {
@@ -234,6 +246,11 @@ func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
 	}
 	validateRateLimits(auth.RateLimits, validation)
 	validateMFA(auth.MFA, validation)
+	if auth.MFA.PhoneEnrollEnabled || auth.MFA.PhoneVerifyEnabled {
+		if !auth.Phone.Enabled || strings.TrimSpace(auth.Phone.Provider) == "" || (!auth.Phone.SecretSet && auth.Phone.Secret.Action != "replace") {
+			validation.add("auth.mfa.phoneEnrollEnabled", "requires configured Phone Auth")
+		}
+	}
 	validateMailer(auth.Mailer, validation)
 	validateSecretInput(auth.SMTP.Password, "auth.smtp.password", validation)
 	validatePhone(auth.Phone, validation)
@@ -491,7 +508,12 @@ func phoneRequiredFields(provider string) []string {
 	}
 }
 
-func validateStorage(storage contracts.StorageConfig, validation *ValidationError) {
+func validateStorage(storage contracts.StorageConfig, validation *ValidationError, allowOmittedUploadLimit bool) {
+	// Zero is only accepted by stored/create compatibility validation; incoming
+	// configuration and section patches must provide an explicit bounded value.
+	if (!allowOmittedUploadLimit && storage.UploadFileSizeLimit == 0) || (storage.UploadFileSizeLimit != 0 && (storage.UploadFileSizeLimit < minStorageUploadFileSizeLimit || storage.UploadFileSizeLimit > maxStorageUploadFileSizeLimit)) {
+		validation.add("storage.uploadFileSizeLimit", "must be between 1 MiB and 5 GiB")
+	}
 	switch storage.Backend {
 	case contracts.StorageBackendLocal:
 		// A backend transition may carry an explicit remove command for the
@@ -520,8 +542,11 @@ func validateStorage(storage contracts.StorageConfig, validation *ValidationErro
 		if storage.Backend == contracts.StorageBackendS3 && strings.TrimSpace(storage.Endpoint) == "" {
 			validation.add("storage.endpoint", "is required for generic S3")
 		}
-		if storage.Backend == contracts.StorageBackendR2 && strings.TrimSpace(storage.AccountID) == "" {
-			validation.add("storage.accountId", "is required for Cloudflare R2")
+		if storage.Backend == contracts.StorageBackendR2 && !r2AccountIDPattern.MatchString(storage.AccountID) {
+			validation.add("storage.accountId", "must be a 32-character lowercase hexadecimal Cloudflare Account ID")
+		}
+		if storage.Backend == contracts.StorageBackendR2 && !storage.ForcePathStyle {
+			validation.add("storage.forcePathStyle", "must be enabled for Cloudflare R2")
 		}
 		if storage.Backend == contracts.StorageBackendR2 && storage.Endpoint != "" {
 			validation.add("storage.endpoint", "R2 endpoint is derived from accountId")

@@ -61,6 +61,46 @@ func TestConfigurationServiceRejectsInvalidServiceClosure(t *testing.T) {
 	}
 }
 
+func TestConfigurationServiceAllowsUnrelatedPatchOnLegacyCaddy(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	cfg.Network.HTTPSMode = contracts.HTTPSModeCaddy
+	project := contracts.Project{ID: "legacy-caddy", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	service := NewConfigurationService(database, nil, time.Now)
+	_, err = service.PreparePatch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &contracts.GeneralConfig{Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion}})
+	if err != nil {
+		t.Fatalf("legacy Caddy unrelated patch rejected: %v", err)
+	}
+}
+
+func TestConfigurationServiceRejectsZeroUploadLimitPatch(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "zero-upload", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	service := NewConfigurationService(database, nil, time.Now)
+	_, err = service.PreparePatch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Storage: &contracts.StorageConfig{Backend: contracts.StorageBackendLocal}})
+	var validation *ValidationError
+	if !errors.As(err, &validation) || validation.Fields["storage.uploadFileSizeLimit"] == "" {
+		t.Fatalf("expected upload limit validation, got %v", err)
+	}
+}
+
 func TestConfigurationServiceResetsLegacyAuthConfiguration(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
