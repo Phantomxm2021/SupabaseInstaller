@@ -81,7 +81,7 @@ func (h *Handler) stageCertificate(response http.ResponseWriter, request *http.R
 	}
 	result, err := h.certificates.Stage(request.Context(), input)
 	if err != nil {
-		writeOperationalFailure(response, http.StatusUnprocessableEntity, "PROXY_TLS_STAGE_FAILED", "Unable to stage managed TLS certificate", err, []string{string(input.CertificatePEM), string(input.PrivateKeyPEM)})
+		writeOperationalFailure(response, http.StatusUnprocessableEntity, "PROXY_TLS_STAGE_FAILED", "Unable to stage managed TLS certificate", err, []string{h.token, string(input.CertificatePEM), string(input.PrivateKeyPEM)})
 		return
 	}
 	response.Header().Set("Content-Type", "application/json")
@@ -108,7 +108,7 @@ func (h *Handler) apply(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if err := h.store.Apply(request.Context(), rendered); err != nil {
-		writeOperationalFailure(response, http.StatusInternalServerError, "PROXY_APPLY_FAILED", "Unable to apply managed Nginx site", err, []string{input.StudioPassword})
+		writeOperationalFailure(response, http.StatusInternalServerError, "PROXY_APPLY_FAILED", "Unable to apply managed Nginx site", err, []string{h.token, input.StudioPassword})
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -127,7 +127,7 @@ func (h *Handler) remove(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if err := h.store.Remove(request.Context(), availableName); err != nil {
-		writeOperationalFailure(response, http.StatusInternalServerError, "PROXY_REMOVE_FAILED", "Unable to remove managed Nginx site", err, nil)
+		writeOperationalFailure(response, http.StatusInternalServerError, "PROXY_REMOVE_FAILED", "Unable to remove managed Nginx site", err, []string{h.token})
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)

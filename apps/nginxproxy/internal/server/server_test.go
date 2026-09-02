@@ -85,7 +85,7 @@ func TestApplyRejectsUnauthenticatedAndUnknownFields(t *testing.T) {
 }
 
 func TestOperationalFailuresReturnTypedRedactedDiagnostics(t *testing.T) {
-	const bearerToken = "proxy-token-sentinel"
+	const proxyToken = "proxy-token-sentinel"
 	const studioPassword = "studio-password-sentinel"
 	const certificate = "certificate-sentinel"
 	const privateKey = "private-key-sentinel"
@@ -106,43 +106,43 @@ func TestOperationalFailuresReturnTypedRedactedDiagnostics(t *testing.T) {
 			name:    "apply",
 			path:    "/v1/sites/apply",
 			payload: `{"slug":"bee","domain":"bee.example.com","apiPort":18001,"studioPort":18002,"studioEnabled":true,"studioUsername":"operator","studioPassword":"studio-password-sentinel"}`,
-			store:   &recordingStore{applyErr: errors.New("nginx reload failed Authorization: Bearer proxy-token-sentinel for studio-password-sentinel")},
+			store:   &recordingStore{applyErr: errors.New("nginx reload failed with proxy-token-sentinel for studio-password-sentinel")},
 			status:  http.StatusInternalServerError,
 			code:    "PROXY_APPLY_FAILED",
 			message: "Unable to apply managed Nginx site",
 			cause:   "nginx reload failed",
-			secrets: []string{bearerToken, studioPassword},
+			secrets: []string{proxyToken, studioPassword},
 		},
 		{
 			name:    "remove",
 			path:    "/v1/sites/remove",
 			payload: `{"slug":"bee"}`,
-			store:   &recordingStore{removeErr: errors.New("nginx remove failed Authorization: Bearer proxy-token-sentinel")},
+			store:   &recordingStore{removeErr: errors.New("nginx remove failed with proxy-token-sentinel")},
 			status:  http.StatusInternalServerError,
 			code:    "PROXY_REMOVE_FAILED",
 			message: "Unable to remove managed Nginx site",
 			cause:   "nginx remove failed",
-			secrets: []string{bearerToken},
+			secrets: []string{proxyToken},
 		},
 		{
 			name:    "stage certificate",
 			path:    "/v1/certificates/stage",
 			payload: `{"certificateName":"cloudflare-origin","baseDomain":"bee.example.com","certificatePem":"Y2VydGlmaWNhdGUtc2VudGluZWw=","privateKeyPem":"cHJpdmF0ZS1rZXktc2VudGluZWw="}`,
 			store:   &recordingStore{},
-			stager:  &recordingCertificateStore{stageErr: errors.New("certificate staging failed: certificate-sentinel; private-key-sentinel")},
+			stager:  &recordingCertificateStore{stageErr: errors.New("certificate staging failed: certificate-sentinel; private-key-sentinel; proxy-token-sentinel")},
 			status:  http.StatusUnprocessableEntity,
 			code:    "PROXY_TLS_STAGE_FAILED",
 			message: "Unable to stage managed TLS certificate",
 			cause:   "certificate staging failed",
-			secrets: []string{certificate, privateKey},
+			secrets: []string{certificate, privateKey, proxyToken},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			handler := New("agent-token", site.NewRenderer(site.TLSPaths{CertificateFile: "/etc/nginx/cert.pem", CertificateKeyFile: "/etc/nginx/key.pem"}), test.store, test.stager)
+			handler := New(proxyToken, site.NewRenderer(site.TLSPaths{CertificateFile: "/etc/nginx/cert.pem", CertificateKeyFile: "/etc/nginx/key.pem"}), test.store, test.stager)
 			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.payload))
-			request.Header.Set("Authorization", "Bearer agent-token")
+			request.Header.Set("Authorization", "Bearer "+proxyToken)
 			response := httptest.NewRecorder()
 
 			handler.ServeHTTP(response, request)
