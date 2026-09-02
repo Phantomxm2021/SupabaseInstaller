@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import userEvent from '@testing-library/user-event'
@@ -803,4 +803,33 @@ it('clears Custom SMTP credentials when its module is disabled while Authenticat
   await user.click(screen.getByRole('button', { name: 'Install server' }))
 
   await waitFor(() => expect(body?.configuration.auth.smtp).toEqual({ enabled: false, host: '', port: 587, username: '', passwordSet: false, password: { action: '' }, senderEmail: '', senderName: '' }))
+})
+
+it('forces R2 path-style and submits the upload limit in bytes', async () => {
+  window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
+  let body: any
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
+    body = JSON.parse(String(init.body))
+    return new Response(JSON.stringify({ projectId: 'r2', operationId: 'op-r2' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+  await user.type(screen.getByLabelText('Server name'), 'R2 server')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Standard' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('combobox', { name: 'Storage backend' }))
+  await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+  expect(screen.queryByText('Force path style')).not.toBeInTheDocument()
+  await user.type(screen.getByLabelText('Bucket'), 'objects')
+  await user.type(screen.getByLabelText('Account ID'), 'abcdef0123456789abcdef0123456789')
+  await user.type(screen.getByLabelText('Access key ID'), 'access')
+  await user.type(screen.getByLabelText('Secret access key'), 'secret')
+  fireEvent.change(screen.getByLabelText('Upload limit (MiB)'), { target: { value: '512' } })
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Install server' }))
+  await waitFor(() => expect(body?.configuration.storage).toMatchObject({ backend: 'r2', forcePathStyle: true, uploadFileSizeLimit: 512 * 1024 * 1024 }))
 })
