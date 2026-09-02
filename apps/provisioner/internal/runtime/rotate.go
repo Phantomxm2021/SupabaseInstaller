@@ -11,6 +11,7 @@ import (
 	"supabase-manager/apps/provisioner/internal/projectfs"
 	"supabase-manager/apps/provisioner/internal/render"
 	"supabase-manager/internal/contracts"
+	"supabase-manager/internal/diagnostic"
 )
 
 type PasswordRotator interface {
@@ -179,7 +180,7 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		defer func() {
 			var failure *contracts.ReconcileFailure
 			if errors.As(callbackErr, &failure) {
-				result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
+				result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}, Diagnostic: redactedRotationFailureDiagnostic(request, failure.Cause)}
 				if raw, marshalErr := json.Marshal(result); marshalErr == nil {
 					metadata.Idempotency[request.IdempotencyKey] = raw
 				}
@@ -378,6 +379,9 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		return compensation()
 	})
 	if err == nil && result.Error != nil {
+		if result.Diagnostic != "" {
+			return result, &contracts.ReconcileFailure{Cause: fmt.Errorf("database password rotation failed: %s", result.Diagnostic), RollbackSucceeded: result.RolledBack, RuntimeChanged: result.RuntimeChanged}
+		}
 		return result, &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: result.RolledBack, RuntimeChanged: result.RuntimeChanged}
 	}
 	if errors.Is(err, contracts.ErrStaleConfigRevision) || errors.Is(err, contracts.ErrInvalidReconcileRevision) {
@@ -386,7 +390,7 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 	if err != nil {
 		var failure *contracts.ReconcileFailure
 		if errors.As(err, &failure) {
-			result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
+			result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}, Diagnostic: redactedRotationFailureDiagnostic(request, failure.Cause)}
 			return result, failure
 		}
 		var publication *projectfs.MetadataPublicationError
@@ -399,4 +403,23 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 	}
 	_ = metadata
 	return result, nil
+}
+
+func redactedRotationFailureDiagnostic(request contracts.RotateDatabasePasswordRequest, cause error) string {
+	if cause == nil {
+		return "Database password rotation failed"
+	}
+	secrets := request.Secrets
+	values := []string{
+		request.OldPassword, request.NewPassword,
+		secrets.DatabasePassword, secrets.JWTSecret, secrets.AnonKey, secrets.ServiceRoleKey,
+		secrets.DashboardPassword, secrets.SecretKeyBase, secrets.VaultEncryptionKey,
+		secrets.RealtimeDBEncryptionKey, secrets.LogflarePublicAccessToken,
+		secrets.LogflarePrivateAccessToken, secrets.S3ProtocolAccessKeyID,
+		secrets.S3ProtocolAccessKeySecret, secrets.PoolerTenantID,
+	}
+	for _, value := range request.RuntimeSecrets {
+		values = append(values, value)
+	}
+	return diagnostic.Sanitize(cause.Error(), values)
 }
