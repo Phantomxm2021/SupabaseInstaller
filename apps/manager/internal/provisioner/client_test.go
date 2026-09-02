@@ -157,7 +157,7 @@ func TestClientPreservesDiagnosticsOnlyForAllowListedEndpointAndCode(t *testing.
 			_, err := c.StageManagedTLS(context.Background(), contracts.StageManagedTLSRequest{})
 			return err
 		}, "TLS_STAGE_FAILED", "certificate staging directory is unavailable"},
-		{"invalid request", "/internal/v1/projects/lifecycle", func(c *Client) error { return c.Lifecycle(context.Background(), contracts.LifecycleRequest{}) }, "INVALID_REQUEST", "Provisioner request is invalid"},
+		{"invalid request", "/internal/v1/projects/lifecycle", func(c *Client) error { return c.Lifecycle(context.Background(), contracts.LifecycleRequest{}) }, "INVALID_REQUEST", "untrusted-invalid-request-diagnostic"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -169,7 +169,15 @@ func TestClientPreservesDiagnosticsOnlyForAllowListedEndpointAndCode(t *testing.
 			})}
 			client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
 			var clientErr *ClientError
-			if err := tc.call(client); !errors.As(err, &clientErr) || clientErr.Message != tc.want {
+			err := tc.call(client)
+			if !errors.As(err, &clientErr) {
+				t.Fatalf("error = %#v, want ClientError", err)
+			}
+			if tc.code == "INVALID_REQUEST" {
+				if !strings.Contains(clientErr.Message, "Provisioner request is invalid") || strings.Contains(clientErr.Message, tc.want) {
+					t.Fatalf("invalid request message = %q, want canonical message without %q", clientErr.Message, tc.want)
+				}
+			} else if clientErr.Message != tc.want {
 				t.Fatalf("error = %#v, want message %q", err, tc.want)
 			}
 		})
@@ -233,6 +241,65 @@ func TestClientRejectsUnversionedReconcileDiagnostic(t *testing.T) {
 	var clientErr *ClientError
 	if !errors.As(err, &clientErr) || clientErr.Message != "Server runtime reconciliation failed" {
 		t.Fatalf("Reconcile() error = %#v, want canonical message", err)
+	}
+}
+
+func TestClientRejectsGenericReconcileAndRotationEnvelopeDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		call      func(*Client) error
+		code      string
+		canonical string
+	}{
+		{"reconcile", func(c *Client) error {
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+			return err
+		}, "RECONCILE_FAILED", "Server runtime reconciliation failed"},
+		{"rotation", func(c *Client) error {
+			_, err := c.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{})
+			return err
+		}, "ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const sentinel = "unversioned-generic-envelope-diagnostic"
+			httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: tc.code, Message: "untrusted error message"}, Diagnostic: sentinel})
+				return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+			})}
+			client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+			var clientErr *ClientError
+			err := tc.call(client)
+			if !errors.As(err, &clientErr) || clientErr.Message != tc.canonical || strings.Contains(clientErr.Message, sentinel) {
+				t.Fatalf("error = %#v, want canonical message %q without %q", err, tc.canonical, sentinel)
+			}
+		})
+	}
+}
+
+func TestClientDiagnosticRoutesRequireExactFunctionAndHostPaths(t *testing.T) {
+	functionPayload, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "FUNCTION_DEPLOY_FAILED"}, Diagnostic: "function diagnostic"})
+	hostPayload, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "HOST_PORT_UNAVAILABLE"}, Diagnostic: "host diagnostic"})
+	for _, tc := range []struct {
+		name      string
+		path      string
+		payload   []byte
+		want      string
+		preserved bool
+	}{
+		{"function deploy", "/internal/v1/projects/bee/functions/demo/deploy", functionPayload, "function diagnostic", true},
+		{"function lookalike", "/evil/functions/demo/deploy", functionPayload, "function diagnostic", false},
+		{"host port", "/internal/v1/host/ports/8001", hostPayload, "host diagnostic", true},
+		{"host lookalike", "/internal/v1/host/ports/123/extra", hostPayload, "host diagnostic", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clientErr := clientErrorForPayload(tc.path, http.StatusUnprocessableEntity, tc.payload)
+			if tc.preserved && clientErr.Message != tc.want {
+				t.Fatalf("message = %q, want diagnostic %q", clientErr.Message, tc.want)
+			}
+			if !tc.preserved && strings.Contains(clientErr.Message, tc.want) {
+				t.Fatalf("message = %q, must not preserve diagnostic %q", clientErr.Message, tc.want)
+			}
+		})
 	}
 }
 

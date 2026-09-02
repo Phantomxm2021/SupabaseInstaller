@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -286,7 +287,7 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 
 	if path == "/internal/v1/projects/reconcile" {
 		var result contracts.ReconcileProjectResponse
-		if _, ok := fields["operationId"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
+		if _, ok := fields["rolledBack"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
 			code = result.Error.Code
 			rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
@@ -296,7 +297,7 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 		}
 	} else if isRotationPath(path) {
 		var result contracts.RotateDatabasePasswordResponse
-		if _, ok := fields["operationId"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
+		if _, ok := fields["rolledBack"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
 			code = result.Error.Code
 			rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
@@ -304,7 +305,7 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 				diagnostic = result.Diagnostic
 			}
 		}
-	} else if isFunctionPath(path) {
+	} else if functionRouteForPath(path) != "" {
 		var result contracts.FunctionDeploymentResult
 		if _, ok := fields["rolledBack"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
@@ -316,7 +317,7 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 			diagnostic = result.Diagnostic
 		}
 	}
-	if !typedResponse && envelopeOK {
+	if !typedResponse && envelopeOK && path != "/internal/v1/projects/reconcile" && !isRotationPath(path) {
 		diagnostic = envelope.Diagnostic
 	}
 
@@ -336,8 +337,27 @@ func isRotationPath(path string) bool {
 	return path == "/internal/v1/projects/rotate-database-password" || path == "/internal/v1/projects/rollback-database-password" || path == "/internal/v1/projects/confirm-database-password-rotation"
 }
 
-func isFunctionPath(path string) bool {
-	return strings.Contains(path, "/functions/") && (strings.HasSuffix(path, "/deploy") || strings.HasSuffix(path, "/rollback") || !strings.HasSuffix(path, "/functions"))
+func functionRouteForPath(path string) string {
+	parts := strings.Split(path, "/")
+	if len(parts) < 7 || parts[0] != "" || parts[1] != "internal" || parts[2] != "v1" || parts[3] != "projects" || parts[4] == "" || parts[5] != "functions" || parts[6] == "" {
+		return ""
+	}
+	if len(parts) == 7 {
+		return "delete"
+	}
+	if len(parts) == 8 && (parts[7] == "deploy" || parts[7] == "rollback") {
+		return parts[7]
+	}
+	return ""
+}
+
+func isHostPortPath(path string) bool {
+	parts := strings.Split(path, "/")
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "internal" || parts[2] != "v1" || parts[3] != "host" || parts[4] != "ports" {
+		return false
+	}
+	port, err := strconv.Atoi(parts[5])
+	return err == nil && port >= 1 && port <= 65535
 }
 
 func canonicalProvisionerError(path, code string) (canonical string, acceptsDiagnostic bool) {
@@ -375,15 +395,15 @@ func canonicalProvisionerError(path, code string) (canonical string, acceptsDiag
 		if code == "TLS_STAGE_FAILED" {
 			return "Unable to stage managed TLS certificate", true
 		}
-	case strings.HasSuffix(path, "/deploy"):
+	case functionRouteForPath(path) == "deploy":
 		if code == "FUNCTION_DEPLOY_FAILED" {
 			return "Function deployment failed", true
 		}
-	case strings.HasSuffix(path, "/rollback"):
+	case functionRouteForPath(path) == "rollback":
 		if code == "FUNCTION_ROLLBACK_FAILED" {
 			return "Function rollback failed", true
 		}
-	case isFunctionPath(path):
+	case functionRouteForPath(path) == "delete":
 		if code == "FUNCTION_DELETE_FAILED" {
 			return "Function deletion failed", true
 		}
@@ -391,7 +411,7 @@ func canonicalProvisionerError(path, code string) (canonical string, acceptsDiag
 		if code == "HOST_RESOURCES_UNAVAILABLE" {
 			return "Host resource inspection failed", true
 		}
-	case strings.HasPrefix(path, "/internal/v1/host/ports/"):
+	case isHostPortPath(path):
 		if code == "HOST_PORT_UNAVAILABLE" {
 			return "Host port inspection failed", true
 		}
