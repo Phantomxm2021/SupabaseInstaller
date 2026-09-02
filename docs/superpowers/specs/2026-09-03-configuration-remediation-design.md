@@ -20,9 +20,10 @@ projects unless an administrator explicitly changes a relevant setting.
    invalid persisted/API requests so clients cannot bypass the UI.
 2. **Storage transitions:** do not permit a change to backend, bucket,
    endpoint, region, account ID, or local path while objects exist. The
-   Provisioner will query Storage before publishing a changed configuration;
-   it returns an actionable error rather than attempting implicit migration.
-   Empty backends remain switchable. A future migration job is out of scope.
+   Provisioner will count `storage.objects` through the project-local database
+   container before publishing a changed configuration; it returns an
+   actionable error rather than attempting implicit migration. Empty backends
+   remain switchable. A future migration job is out of scope.
 3. **Phone MFA:** enabling either Phone MFA flag requires a configured Phone
    Auth provider and retained/replaced provider secret. This keeps the shared
    SMS dependency explicit and works for both initial create and later patch.
@@ -73,9 +74,10 @@ UI/API patch
 ```
 
 The Storage preflight occurs before the new generation is published. A
-non-empty object result returns an error naming the incompatible transition;
-the existing runtime is left untouched. It does not count database metadata as
-a proxy for objects.
+non-empty `storage.objects` result returns an error naming the incompatible
+transition; the existing runtime is left untouched. The storage schema is the
+authoritative catalog for objects addressable through this self-hosted stack,
+so its rows are deliberately used as the conservative transition gate.
 
 Supavisor's durable tenant settings are updated by its own pinned startup
 script at every container start. The script finds the tenant by external ID,
