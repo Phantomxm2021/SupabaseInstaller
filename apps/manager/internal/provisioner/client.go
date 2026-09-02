@@ -281,7 +281,13 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 		// redacting every request secret. Preserve that actionable message so
 		// the durable Manager operation can tell an operator which service or
 		// health check failed. Other endpoint messages remain canonical here.
-		if code != "RECONCILE_FAILED" || strings.TrimSpace(message) == "" {
+		if code == "ROTATE_DATABASE_PASSWORD_FAILED" {
+			if strings.TrimSpace(rotation.Diagnostic) != "" {
+				message = rotation.Diagnostic
+			} else {
+				message = local
+			}
+		} else if code != "RECONCILE_FAILED" || strings.TrimSpace(message) == "" {
 			message = local
 		}
 		return &ClientError{Code: code, Message: message, Status: response.StatusCode, RollbackComplete: rollbackComplete, RuntimeStateKnown: runtimeStateKnown, RuntimeStateChanged: runtimeStateChanged}

@@ -82,6 +82,7 @@ type RotateDatabasePasswordResponse struct {
 	RolledBack     bool      `json:"rolledBack"`
 	RuntimeChanged bool      `json:"runtimeChanged,omitempty"`
 	Error          *APIError `json:"error,omitempty"`
+	Diagnostic     string    `json:"diagnostic,omitempty"`
 }
 
 // ConfirmDatabasePasswordRotation closes the durable rotation journal only

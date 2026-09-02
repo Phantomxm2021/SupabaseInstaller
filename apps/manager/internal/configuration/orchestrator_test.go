@@ -324,6 +324,24 @@ func TestDatabasePasswordRotationReportsUnavailableRuntimeSecret(t *testing.T) {
 	}
 }
 
+func TestDatabasePasswordRotationPreservesRuntimeFailureDiagnostic(t *testing.T) {
+	orchestrator, _, operations, currentProject, snapshot, _, queued := newRecoveryFixture(t, "ROTATE_DATABASE_PASSWORD")
+	const diagnostic = "runtime health is UNHEALTHY; services: auth (restarting, UNHEALTHY)"
+	orchestrator.provisioner = rotationFailureProvisioner{err: rotationDiagnosticError{message: diagnostic}}
+
+	_, err := orchestrator.RunDatabasePasswordRotation(context.Background(), currentProject, queued, snapshot, "new-password-for-test")
+	if err == nil || !strings.Contains(err.Error(), diagnostic) {
+		t.Fatalf("RunDatabasePasswordRotation() error = %v, want runtime diagnostic", err)
+	}
+	stored, err := operations.Get(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stored.ErrorMessage, diagnostic) {
+		t.Fatalf("stored error = %q, want runtime diagnostic", stored.ErrorMessage)
+	}
+}
+
 func TestSameServicesIgnoresRendererHelperServices(t *testing.T) {
 	expected := []string{"db", "api-gw", "auth", "rest", "meta", "studio", "realtime", "storage", "imgproxy", "functions", "supavisor"}
 	actual := append(append([]string(nil), expected...), "auth-templates", "deno-cache", "db-config")
@@ -417,6 +435,22 @@ func TestRunDoesNotRestoreOrCompareLegacyCandidateRevision(t *testing.T) {
 
 type staticResponseProvisioner struct {
 	response contracts.ReconcileProjectResponse
+}
+
+type rotationFailureProvisioner struct{ err error }
+
+type rotationDiagnosticError struct{ message string }
+
+func (e rotationDiagnosticError) Error() string             { return e.message }
+func (e rotationDiagnosticError) RollbackSucceeded() bool   { return true }
+func (e rotationDiagnosticError) RuntimeOutcomeKnown() bool { return true }
+func (e rotationDiagnosticError) RuntimeChanged() bool      { return true }
+
+func (s rotationFailureProvisioner) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
+}
+func (s rotationFailureProvisioner) RotateDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) (contracts.RotateDatabasePasswordResponse, error) {
+	return contracts.RotateDatabasePasswordResponse{}, s.err
 }
 
 type staticErrorProvisioner struct{ err error }

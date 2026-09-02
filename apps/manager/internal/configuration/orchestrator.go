@@ -514,7 +514,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 						rolledBack = false
 					}
 				}
-				return o.fail(ctx, queued, step, errors.New("runtime reconciliation failed"), rolledBack)
+				return o.fail(ctx, queued, step, fmt.Errorf("database password rotation failed: %w", reconcileErr), rolledBack)
 			}
 			if result.OperationID != queued.ID || result.ProjectID != currentProject.ID || result.Revision != snapshot.Revision {
 				return o.fail(ctx, queued, step, errors.New("runtime verification failed"), false)

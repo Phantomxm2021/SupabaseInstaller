@@ -159,6 +159,19 @@ func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
 	}
 }
 
+func TestClientPreservesProvisionerRotationDiagnostic(t *testing.T) {
+	const diagnostic = "runtime health is UNHEALTHY; services: auth (restarting, UNHEALTHY)"
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(`{"rolledBack":true,"runtimeChanged":true,"error":{"code":"ROTATE_DATABASE_PASSWORD_FAILED","message":"Database password rotation failed"},"diagnostic":"` + diagnostic + `"}`)), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+
+	_, err := client.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{})
+	if err == nil || !strings.Contains(err.Error(), diagnostic) {
+		t.Fatalf("RotateDatabasePassword() error = %v, want provisioner diagnostic", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

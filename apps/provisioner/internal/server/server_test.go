@@ -76,6 +76,17 @@ func TestReconcileEndpointReturnsTypedRedactedRollbackOutcome(t *testing.T) {
 	}
 }
 
+func TestRotateDatabasePasswordEndpointReturnsRedactedFailureDiagnostic(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	const password = "new-password-sentinel"
+	backend := &rotationFailureStub{err: &contracts.ReconcileFailure{Cause: errors.New("runtime health is UNHEALTHY; services: auth (restarting, UNHEALTHY); POSTGRES_PASSWORD=" + password), RollbackSucceeded: true, RuntimeChanged: true}}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/rotate-database-password", contracts.RotateDatabasePasswordRequest{OperationID: "op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee", OldPassword: "old-password", NewPassword: password})
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "services: auth") || strings.Contains(response.Body.String(), password) {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestStageCertificateForwardsPEMWithoutReturningIt(t *testing.T) {
 	root, _ := projectfs.New(t.TempDir())
 	stager := &certificateStagerStub{}
@@ -314,6 +325,19 @@ func (source *serverSequenceSource) Containers(context.Context, string) ([]healt
 }
 
 type reconcileStub struct{ err error }
+
+type rotationFailureStub struct{ err error }
+
+func (*rotationFailureStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
+func (*rotationFailureStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
+	return contracts.InspectProjectResponse{}, nil
+}
+func (*rotationFailureStub) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
+}
+func (s *rotationFailureStub) RotateDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) (contracts.RotateDatabasePasswordResponse, error) {
+	return contracts.RotateDatabasePasswordResponse{RolledBack: true, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}, s.err
+}
 
 type certificateStagerStub struct {
 	input contracts.StageManagedTLSRequest

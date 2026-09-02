@@ -333,6 +333,11 @@ func redactedReconcileDiagnostic(input contracts.ReconcileProjectRequest, cause 
 	return redact.New(values).String(cause.Error())
 }
 
+func redactedRotationDiagnostic(input contracts.RotateDatabasePasswordRequest, cause error) string {
+	diagnostic := redactedReconcileDiagnostic(contracts.ReconcileProjectRequest{Secrets: input.Secrets, RuntimeSecrets: input.RuntimeSecrets}, cause)
+	return redact.New([]string{input.OldPassword, input.NewPassword}).String(diagnostic)
+}
+
 func redactedFunctionDiagnostic(slug, name, operationID string, cause error) string {
 	if cause == nil {
 		return "Functions deployment failed"
@@ -374,6 +379,12 @@ func (s *server) rotateDatabasePassword(response http.ResponseWriter, request *h
 	if err != nil {
 		var failure *contracts.ReconcileFailure
 		if errors.As(err, &failure) {
+			cause := err
+			if failure.Cause != nil {
+				cause = failure.Cause
+			}
+			result.Diagnostic = redactedRotationDiagnostic(input, cause)
+			s.logger.Error("database password rotation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", result.Diagnostic)
 			writeJSON(response, http.StatusUnprocessableEntity, result)
 			return
 		}
