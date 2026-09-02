@@ -63,6 +63,108 @@ func TestReconcileRecreatesOnlyAffectedService(t *testing.T) {
 	}
 }
 
+func TestReconcileRejectsNonEmptyStorageLocationChangeBeforePublish(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{storageObjects: 1}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	changed := baseConfig()
+	changed.Storage.LocalPath = "/srv/storage-v2"
+	_, err = backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil || !strings.Contains(errors.Unwrap(err).Error(), "Storage contains objects") {
+		t.Fatalf("error = %v, want non-empty storage transition rejection", err)
+	}
+	if len(runner.recreated) != 0 {
+		t.Fatalf("recreated=%v, want no recreate before rejection", runner.recreated)
+	}
+}
+
+func TestReconcileAllowsEmptyStorageLocationChange(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	changed := baseConfig()
+	changed.Storage.Endpoint = "https://objects.example.com"
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2)); err != nil {
+		t.Fatalf("empty storage transition: %v", err)
+	}
+	if runner.storageCountCalls != 1 {
+		t.Fatalf("storage count calls=%d, want 1", runner.storageCountCalls)
+	}
+}
+
+func TestReconcileDoesNotQueryStorageWhenLocationUnchanged(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{storageCountError: errors.New("must not query")}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 1, 2)); err != nil {
+		t.Fatalf("unchanged storage reconcile: %v", err)
+	}
+	if runner.storageCountCalls != 0 {
+		t.Fatalf("storage count calls=%d, want 0", runner.storageCountCalls)
+	}
+}
+
+func TestReconcileDoesNotQueryStorageWhenPreviouslyDisabled(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{storageCountError: errors.New("must not query")}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	initial := baseConfig()
+	initial.Services.Storage = false
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(initial, 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	changed := baseConfig()
+	changed.Storage.Bucket = "new-bucket"
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2)); err != nil {
+		t.Fatalf("enable storage reconcile: %v", err)
+	}
+	if runner.storageCountCalls != 0 {
+		t.Fatalf("storage count calls=%d, want 0", runner.storageCountCalls)
+	}
+}
+
+func TestReconcileRejectsUnavailableStorageObjectCountBeforePublish(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{storageCountError: errors.New("database unavailable")}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	changed := baseConfig()
+	changed.Storage.Bucket = "new-bucket"
+	_, err = backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil || !strings.Contains(errors.Unwrap(err).Error(), "unable to determine object count") {
+		t.Fatalf("error=%v, want unavailable count rejection", err)
+	}
+	if len(runner.recreated) != 0 {
+		t.Fatalf("recreated=%v, want no recreate before rejection", runner.recreated)
+	}
+}
+
 func TestReconcileAppliesProxyOnlyAfterHealthyRuntime(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
@@ -854,22 +956,25 @@ func TestReconcileMetadataWriteAndRuntimeRollbackFailureReportsChanged(t *testin
 }
 
 type fakeReconcileRunner struct {
-	validated        int
-	validatedDir     string
-	validatedCompose string
-	validatedEnv     string
-	up               [][]string
-	recreated        []string
-	removed          []string
-	removedCompose   string
-	removeError      error
-	downError        error
-	validateError    error
-	recreateError    error
-	down             []string
-	calls            []string
-	onUpDatabase     func() error
-	bootstrapError   error
+	storageObjects    int64
+	storageCountCalls int
+	storageCountError error
+	validated         int
+	validatedDir      string
+	validatedCompose  string
+	validatedEnv      string
+	up                [][]string
+	recreated         []string
+	removed           []string
+	removedCompose    string
+	removeError       error
+	downError         error
+	validateError     error
+	recreateError     error
+	down              []string
+	calls             []string
+	onUpDatabase      func() error
+	bootstrapError    error
 }
 
 type recordingProxy struct {
@@ -923,6 +1028,10 @@ func (r *fakeReconcileRunner) UpDatabase(context.Context, compose.ProjectRef) er
 		return r.onUpDatabase()
 	}
 	return nil
+}
+func (r *fakeReconcileRunner) StorageObjectCount(context.Context, compose.ProjectRef) (int64, error) {
+	r.storageCountCalls++
+	return r.storageObjects, r.storageCountError
 }
 func (r *fakeReconcileRunner) VerifyDatabaseBootstrap(context.Context, compose.ProjectRef) error {
 	r.calls = append(r.calls, "verify-bootstrap")

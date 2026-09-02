@@ -161,6 +161,9 @@ func (runner *recordingRunner) UpDatabase(context.Context, compose.ProjectRef) e
 	runner.calls = append(runner.calls, "db")
 	return runner.upDatabaseErr
 }
+func (runner *recordingRunner) StorageObjectCount(context.Context, compose.ProjectRef) (int64, error) {
+	return 0, nil
+}
 func (runner *recordingRunner) VerifyDatabaseBootstrap(context.Context, compose.ProjectRef) error {
 	runner.calls = append(runner.calls, "verify-bootstrap")
 	return nil

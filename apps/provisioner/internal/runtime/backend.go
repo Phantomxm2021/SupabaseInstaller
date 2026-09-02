@@ -16,6 +16,7 @@ import (
 
 type LifecycleRunner interface {
 	UpDatabase(ctx context.Context, project compose.ProjectRef) error
+	StorageObjectCount(ctx context.Context, project compose.ProjectRef) (int64, error)
 	VerifyDatabaseBootstrap(ctx context.Context, project compose.ProjectRef) error
 	SynchronizeDatabaseRolePasswords(ctx context.Context, project compose.ProjectRef) error
 	ResetDatabaseConfig(ctx context.Context, project compose.ProjectRef) error
