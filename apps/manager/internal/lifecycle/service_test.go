@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"supabase-manager/apps/manager/internal/operation"
+	"supabase-manager/apps/manager/internal/provisioner"
 	"supabase-manager/apps/manager/internal/store"
 	"supabase-manager/internal/contracts"
 )
@@ -80,6 +81,28 @@ func TestForceDeleteLeavesMetadataWhenProvisionerFails(t *testing.T) {
 	}
 	if _, err := database.GetProject(context.Background(), project.ID); err != nil {
 		t.Fatalf("project metadata was not preserved: %v", err)
+	}
+}
+
+func TestRunPersistsClientErrorUnchanged(t *testing.T) {
+	service, database, fake := newLifecycleService(t)
+	project, _ := database.GetProject(context.Background(), "bee")
+	queued, err := service.Queue(context.Background(), project, ActionStop, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientErr := &provisioner.ClientError{Code: "LIFECYCLE_FAILED", Message: "compose action failed: api-gw exited", Status: 422}
+	fake.err = clientErr
+	_, err = service.Run(context.Background(), project, ActionStop, queued)
+	if !errors.Is(err, clientErr) {
+		t.Fatalf("Run() error = %v, want ClientError", err)
+	}
+	stored, err := service.operations.Get(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ErrorMessage != clientErr.Error() {
+		t.Fatalf("stored error = %q, want %q", stored.ErrorMessage, clientErr.Error())
 	}
 }
 

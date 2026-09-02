@@ -37,12 +37,12 @@ func TestClientDeployFunctionStreamsArchiveToTypedProvisionerRoute(t *testing.T)
 	}
 }
 
-func TestClientDeployFunctionPreservesProvisionerDiagnostic(t *testing.T) {
+func TestClientDeployFunctionPreservesAllowListedProvisionerDiagnostic(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{
 			Code:    "FUNCTION_DEPLOY_FAILED",
-			Message: "function archive requires root index.ts",
-		}})
+			Message: "untrusted error message",
+		}, Diagnostic: "function archive requires root index.ts"})
 		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
@@ -50,6 +50,36 @@ func TestClientDeployFunctionPreservesProvisionerDiagnostic(t *testing.T) {
 	var clientErr *ClientError
 	if !errors.As(err, &clientErr) || clientErr.Code != "FUNCTION_DEPLOY_FAILED" || clientErr.Message != "function archive requires root index.ts" {
 		t.Fatalf("DeployFunction() error = %#v, want typed provisioner diagnostic", err)
+	}
+}
+
+func TestClientFunctionActionsPreserveTypedProvisionerDiagnostic(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		call       func(*Client) error
+		code       string
+		diagnostic string
+	}{
+		{"rollback", func(c *Client) error {
+			_, err := c.RollbackFunction(context.Background(), "bee", "demo", "op-1")
+			return err
+		}, "FUNCTION_ROLLBACK_FAILED", "previous function release is unavailable"},
+		{"delete", func(c *Client) error {
+			_, err := c.DeleteFunction(context.Background(), "bee", "demo", "op-1")
+			return err
+		}, "FUNCTION_DELETE_FAILED", "function release cleanup is incomplete"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				body, _ := json.Marshal(contracts.FunctionDeploymentResult{Error: &contracts.APIError{Code: tc.code, Message: "untrusted error message"}, Diagnostic: tc.diagnostic})
+				return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+			})}
+			client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+			var clientErr *ClientError
+			if err := tc.call(client); !errors.As(err, &clientErr) || clientErr.Code != tc.code || clientErr.Message != tc.diagnostic {
+				t.Fatalf("function action error = %#v, want %s diagnostic %q", err, tc.code, tc.diagnostic)
+			}
+		})
 	}
 }
 
@@ -78,19 +108,71 @@ func TestClientCanonicalizesOperationErrorsWithServerTerminology(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusConflict, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
-	for candidate, want := range map[string]string{
-		"STALE_CONFIG_REVISION":   "Server configuration revision is stale",
-		"INVALID_CONFIG_REVISION": "Server configuration revision is invalid",
-		"RECONCILE_FAILED":        "Server runtime reconciliation failed",
-		"LIFECYCLE_FAILED":        "Server lifecycle operation failed",
-		"INSPECT_FAILED":          "Server inspection failed",
+	for _, tc := range []struct {
+		code string
+		want string
+		call func(*Client) error
+	}{
+		{"STALE_CONFIG_REVISION", "Server configuration revision is stale", func(c *Client) error {
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+			return err
+		}},
+		{"INVALID_CONFIG_REVISION", "Server configuration revision is invalid", func(c *Client) error {
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+			return err
+		}},
+		{"RECONCILE_FAILED", "Server runtime reconciliation failed", func(c *Client) error {
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+			return err
+		}},
+		{"LIFECYCLE_FAILED", "Server lifecycle operation failed", func(c *Client) error { return c.Lifecycle(context.Background(), contracts.LifecycleRequest{}) }},
+		{"INSPECT_FAILED", "Server inspection failed", func(c *Client) error {
+			_, err := c.Inspect(context.Background(), contracts.InspectProjectRequest{})
+			return err
+		}},
 	} {
-		code = candidate
-		_, err := client.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+		code = tc.code
+		err := tc.call(client)
 		var clientErr *ClientError
-		if !errors.As(err, &clientErr) || clientErr.Message != want {
-			t.Fatalf("Reconcile(%s) error = %#v, want message %q", candidate, err, want)
+		if !errors.As(err, &clientErr) || clientErr.Message != tc.want {
+			t.Fatalf("operation(%s) error = %#v, want message %q", tc.code, err, tc.want)
 		}
+	}
+}
+
+func TestClientPreservesDiagnosticsOnlyForAllowListedEndpointAndCode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		call func(*Client) error
+		code string
+		want string
+	}{
+		{"lifecycle", "/internal/v1/projects/lifecycle", func(c *Client) error { return c.Lifecycle(context.Background(), contracts.LifecycleRequest{}) }, "LIFECYCLE_FAILED", "compose action failed: api-gw exited"},
+		{"inspect", "/internal/v1/projects/inspect", func(c *Client) error {
+			_, err := c.Inspect(context.Background(), contracts.InspectProjectRequest{})
+			return err
+		}, "INSPECT_FAILED", "docker inspection timed out"},
+		{"tls", "/internal/v1/nginx/certificates/stage", func(c *Client) error {
+			_, err := c.StageManagedTLS(context.Background(), contracts.StageManagedTLSRequest{})
+			return err
+		}, "TLS_STAGE_FAILED", "certificate staging directory is unavailable"},
+		{"invalid request", "/internal/v1/projects/lifecycle", func(c *Client) error { return c.Lifecycle(context.Background(), contracts.LifecycleRequest{}) }, "INVALID_REQUEST", "Provisioner request is invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path != tc.path {
+					t.Fatalf("path = %s, want %s", request.URL.Path, tc.path)
+				}
+				body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: tc.code, Message: "untrusted error message"}, Diagnostic: tc.want})
+				return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+			})}
+			client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+			var clientErr *ClientError
+			if err := tc.call(client); !errors.As(err, &clientErr) || clientErr.Message != tc.want {
+				t.Fatalf("error = %#v, want message %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -124,9 +206,9 @@ func TestClientDoesNotInferRuntimeOutcomeFromGenericErrorEnvelope(t *testing.T) 
 	}
 }
 
-func TestClientPreservesRedactedReconcileDiagnostic(t *testing.T) {
+func TestClientPreservesVersionedReconcileDiagnostic(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body, _ := json.Marshal(contracts.ReconcileProjectResponse{RuntimeChanged: true, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "runtime health is unhealthy; services: auth (restarting, unhealthy)"}})
+		body, _ := json.Marshal(contracts.ReconcileProjectResponse{RuntimeChanged: true, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "untrusted error message"}, Diagnostic: "runtime health is unhealthy; services: auth (restarting, unhealthy)", DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction})
 		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
@@ -138,6 +220,19 @@ func TestClientPreservesRedactedReconcileDiagnostic(t *testing.T) {
 	var clientErr *ClientError
 	if !errors.As(err, &clientErr) || !clientErr.RuntimeOutcomeKnown() || !clientErr.RuntimeChanged() {
 		t.Fatalf("Reconcile() error = %#v, want known changed runtime outcome", err)
+	}
+}
+
+func TestClientRejectsUnversionedReconcileDiagnostic(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body, _ := json.Marshal(contracts.ReconcileProjectResponse{RuntimeChanged: true, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "untrusted error message"}, Diagnostic: "unsafe stale diagnostic"})
+		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+	_, err := client.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+	var clientErr *ClientError
+	if !errors.As(err, &clientErr) || clientErr.Message != "Server runtime reconciliation failed" {
+		t.Fatalf("Reconcile() error = %#v, want canonical message", err)
 	}
 }
 
@@ -162,7 +257,7 @@ func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
 func TestClientPreservesProvisionerRotationDiagnostic(t *testing.T) {
 	const diagnostic = "runtime health is UNHEALTHY; services: auth (restarting, UNHEALTHY)"
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(`{"rolledBack":true,"runtimeChanged":true,"error":{"code":"ROTATE_DATABASE_PASSWORD_FAILED","message":"Database password rotation failed"},"diagnostic":"` + diagnostic + `"}`)), Header: make(http.Header)}, nil
+		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(`{"rolledBack":true,"runtimeChanged":true,"error":{"code":"ROTATE_DATABASE_PASSWORD_FAILED","message":"Database password rotation failed"},"diagnostic":"` + diagnostic + `","diagnosticVersion":1}`)), Header: make(http.Header)}, nil
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
 

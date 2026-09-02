@@ -11,6 +11,7 @@ import (
 
 	"supabase-manager/apps/manager/internal/operation"
 	projectservice "supabase-manager/apps/manager/internal/project"
+	"supabase-manager/apps/manager/internal/provisioner"
 	managersecrets "supabase-manager/apps/manager/internal/secrets"
 	"supabase-manager/apps/manager/internal/store"
 	"supabase-manager/internal/contracts"
@@ -339,6 +340,24 @@ func TestDatabasePasswordRotationPreservesRuntimeFailureDiagnostic(t *testing.T)
 	}
 	if !strings.Contains(stored.ErrorMessage, diagnostic) {
 		t.Fatalf("stored error = %q, want runtime diagnostic", stored.ErrorMessage)
+	}
+}
+
+func TestDatabasePasswordRotationPersistsClientErrorUnchanged(t *testing.T) {
+	orchestrator, _, operations, currentProject, snapshot, _, queued := newRecoveryFixture(t, "ROTATE_DATABASE_PASSWORD")
+	clientErr := &provisioner.ClientError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "runtime health is unhealthy; services: auth (restarting)", Status: 422, RollbackComplete: true, RuntimeStateKnown: true, RuntimeStateChanged: true}
+	orchestrator.provisioner = rotationFailureProvisioner{err: clientErr}
+
+	_, err := orchestrator.RunDatabasePasswordRotation(context.Background(), currentProject, queued, snapshot, "new-password-for-test")
+	if !errors.Is(err, clientErr) {
+		t.Fatalf("RunDatabasePasswordRotation() error = %v, want ClientError", err)
+	}
+	stored, err := operations.Get(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ErrorMessage != clientErr.Error() {
+		t.Fatalf("stored error = %q, want unchanged ClientError %q", stored.ErrorMessage, clientErr.Error())
 	}
 }
 

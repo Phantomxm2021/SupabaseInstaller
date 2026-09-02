@@ -127,15 +127,7 @@ func (c *Client) DeployFunction(ctx context.Context, slug, name, operationID str
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		var outcome contracts.FunctionDeploymentResult
-		if json.Unmarshal(payload, &outcome) == nil && outcome.RolledBack {
-			return contracts.FunctionDeploymentResult{}, &ClientError{Code: "FUNCTION_DEPLOY_FAILED", Message: "Functions deployment failed and was rolled back", Status: response.StatusCode, RollbackComplete: true, RuntimeStateKnown: true}
-		}
-		var envelope contracts.ErrorEnvelope
-		if json.Unmarshal(payload, &envelope) == nil && envelope.Error.Code == "FUNCTION_DEPLOY_FAILED" && strings.TrimSpace(envelope.Error.Message) != "" {
-			return contracts.FunctionDeploymentResult{}, &ClientError{Code: envelope.Error.Code, Message: envelope.Error.Message, Status: response.StatusCode}
-		}
-		return contracts.FunctionDeploymentResult{}, fmt.Errorf("deploy function: provisioner returned %s", response.Status)
+		return contracts.FunctionDeploymentResult{}, clientErrorForPayload(request.URL.Path, response.StatusCode, payload)
 	}
 	var result contracts.FunctionDeploymentResult
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
@@ -185,7 +177,8 @@ func (c *Client) functionAction(ctx context.Context, method, slug, name, operati
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return contracts.FunctionDeploymentResult{}, fmt.Errorf("function action: provisioner returned %s", response.Status)
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		return contracts.FunctionDeploymentResult{}, clientErrorForPayload(request.URL.Path, response.StatusCode, payload)
 	}
 	var output contracts.FunctionDeploymentResult
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&output); err != nil {
@@ -236,61 +229,7 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		var envelope contracts.ErrorEnvelope
-		_ = json.Unmarshal(payload, &envelope)
-		rollbackComplete := false
-		runtimeStateKnown := false
-		runtimeStateChanged := false
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(payload, &fields)
-		// Outcome bits are endpoint-specific. A generic ErrorEnvelope has the
-		// same `error` member but no durable runtime outcome and must stay
-		// unknown so orchestration can recover instead of guessing.
-		explicitOutcome := func() bool {
-			_, rolledBack := fields["rolledBack"]
-			_, runtimeChanged := fields["runtimeChanged"]
-			return rolledBack || runtimeChanged
-		}
-		var rotation contracts.RotateDatabasePasswordResponse
-		if (strings.Contains(path, "rotate-database-password") || strings.Contains(path, "rollback-database-password")) && explicitOutcome() && json.Unmarshal(payload, &rotation) == nil {
-			rollbackComplete = rotation.RolledBack
-			if rotation.Error != nil {
-				runtimeStateKnown = true
-				runtimeStateChanged = rotation.RuntimeChanged
-			}
-		}
-		var reconcile contracts.ReconcileProjectResponse
-		if path == "/internal/v1/projects/reconcile" && explicitOutcome() && json.Unmarshal(payload, &reconcile) == nil && reconcile.Error != nil {
-			rollbackComplete = reconcile.RolledBack
-			runtimeStateKnown = true
-			runtimeStateChanged = reconcile.RuntimeChanged
-			if envelope.Error.Code == "" {
-				envelope.Error = *reconcile.Error
-			}
-		}
-		if envelope.Error.Code == "" && rotation.Error != nil {
-			envelope.Error = *rotation.Error
-		}
-		code, message := envelope.Error.Code, envelope.Error.Message
-		allowed := map[string]string{"STALE_CONFIG_REVISION": "Server configuration revision is stale", "INVALID_CONFIG_REVISION": "Server configuration revision is invalid", "RECONCILE_FAILED": "Server runtime reconciliation failed", "ROTATE_DATABASE_PASSWORD_FAILED": "Database password rotation failed", "INVALID_REQUEST": "Provisioner request is invalid", "LIFECYCLE_FAILED": "Server lifecycle operation failed", "INSPECT_FAILED": "Server inspection failed"}
-		local, ok := allowed[code]
-		if !ok {
-			code, local = "PROVISIONER_ERROR", "Provisioner request failed"
-		}
-		// The Provisioner serializes reconciliation diagnostics only after
-		// redacting every request secret. Preserve that actionable message so
-		// the durable Manager operation can tell an operator which service or
-		// health check failed. Other endpoint messages remain canonical here.
-		if code == "ROTATE_DATABASE_PASSWORD_FAILED" {
-			if strings.TrimSpace(rotation.Diagnostic) != "" {
-				message = rotation.Diagnostic
-			} else {
-				message = local
-			}
-		} else if code != "RECONCILE_FAILED" || strings.TrimSpace(message) == "" {
-			message = local
-		}
-		return &ClientError{Code: code, Message: message, Status: response.StatusCode, RollbackComplete: rollbackComplete, RuntimeStateKnown: runtimeStateKnown, RuntimeStateChanged: runtimeStateChanged}
+		return clientErrorForPayload(path, response.StatusCode, payload)
 	}
 	if output != nil && response.StatusCode != http.StatusNoContent {
 		decoder := json.NewDecoder(response.Body)
@@ -320,10 +259,142 @@ func (c *Client) get(ctx context.Context, path string, output any) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("provisioner returned %s", response.Status)
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		return clientErrorForPayload(path, response.StatusCode, payload)
 	}
 	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
 		return fmt.Errorf("decode provisioner response: %w", err)
 	}
 	return nil
+}
+
+// clientErrorForPayload accepts a diagnostic only after both the endpoint and
+// the Provisioner code identify a known operational failure. Error.Message is
+// canonical protocol text, not a diagnostic, and is therefore never persisted
+// as one. Reconcile and rotation diagnostics additionally require the explicit
+// redaction contract version when they arrive in their typed response.
+func clientErrorForPayload(path string, status int, payload []byte) *ClientError {
+	var envelope contracts.ErrorEnvelope
+	envelopeOK := json.Unmarshal(payload, &envelope) == nil
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(payload, &fields)
+
+	code := envelope.Error.Code
+	diagnostic := ""
+	typedResponse := false
+	rollbackComplete, runtimeStateKnown, runtimeStateChanged := false, false, false
+
+	if path == "/internal/v1/projects/reconcile" {
+		var result contracts.ReconcileProjectResponse
+		if _, ok := fields["operationId"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
+			typedResponse = true
+			code = result.Error.Code
+			rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
+			if contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
+				diagnostic = result.Diagnostic
+			}
+		}
+	} else if isRotationPath(path) {
+		var result contracts.RotateDatabasePasswordResponse
+		if _, ok := fields["operationId"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
+			typedResponse = true
+			code = result.Error.Code
+			rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
+			if contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
+				diagnostic = result.Diagnostic
+			}
+		}
+	} else if isFunctionPath(path) {
+		var result contracts.FunctionDeploymentResult
+		if _, ok := fields["rolledBack"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
+			typedResponse = true
+			code = result.Error.Code
+			rollbackComplete = result.RolledBack
+			if rollbackComplete {
+				runtimeStateKnown = true
+			}
+			diagnostic = result.Diagnostic
+		}
+	}
+	if !typedResponse && envelopeOK {
+		diagnostic = envelope.Diagnostic
+	}
+
+	canonical, acceptsDiagnostic := canonicalProvisionerError(path, code)
+	if canonical == "" {
+		code, canonical = "PROVISIONER_ERROR", "Provisioner request failed"
+		acceptsDiagnostic = false
+	}
+	message := canonical
+	if acceptsDiagnostic && strings.TrimSpace(diagnostic) != "" {
+		message = diagnostic
+	}
+	return &ClientError{Code: code, Message: message, Status: status, RollbackComplete: rollbackComplete, RuntimeStateKnown: runtimeStateKnown, RuntimeStateChanged: runtimeStateChanged}
+}
+
+func isRotationPath(path string) bool {
+	return path == "/internal/v1/projects/rotate-database-password" || path == "/internal/v1/projects/rollback-database-password" || path == "/internal/v1/projects/confirm-database-password-rotation"
+}
+
+func isFunctionPath(path string) bool {
+	return strings.Contains(path, "/functions/") && (strings.HasSuffix(path, "/deploy") || strings.HasSuffix(path, "/rollback") || !strings.HasSuffix(path, "/functions"))
+}
+
+func canonicalProvisionerError(path, code string) (canonical string, acceptsDiagnostic bool) {
+	if code == "INVALID_REQUEST" {
+		return "Provisioner request is invalid", false
+	}
+	switch {
+	case path == "/internal/v1/projects/reconcile":
+		switch code {
+		case "STALE_CONFIG_REVISION":
+			return "Server configuration revision is stale", false
+		case "INVALID_CONFIG_REVISION":
+			return "Server configuration revision is invalid", false
+		case "RECONCILE_FAILED":
+			return "Server runtime reconciliation failed", true
+		}
+	case isRotationPath(path):
+		switch code {
+		case "STALE_CONFIG_REVISION":
+			return "Server configuration revision is stale", false
+		case "INVALID_CONFIG_REVISION":
+			return "Server configuration revision is invalid", false
+		case "ROTATE_DATABASE_PASSWORD_FAILED":
+			return "Database password rotation failed", true
+		}
+	case path == "/internal/v1/projects/lifecycle":
+		if code == "LIFECYCLE_FAILED" {
+			return "Server lifecycle operation failed", true
+		}
+	case path == "/internal/v1/projects/inspect":
+		if code == "INSPECT_FAILED" {
+			return "Server inspection failed", true
+		}
+	case path == "/internal/v1/nginx/certificates/stage":
+		if code == "TLS_STAGE_FAILED" {
+			return "Unable to stage managed TLS certificate", true
+		}
+	case strings.HasSuffix(path, "/deploy"):
+		if code == "FUNCTION_DEPLOY_FAILED" {
+			return "Function deployment failed", true
+		}
+	case strings.HasSuffix(path, "/rollback"):
+		if code == "FUNCTION_ROLLBACK_FAILED" {
+			return "Function rollback failed", true
+		}
+	case isFunctionPath(path):
+		if code == "FUNCTION_DELETE_FAILED" {
+			return "Function deletion failed", true
+		}
+	case path == "/internal/v1/host/resources":
+		if code == "HOST_RESOURCES_UNAVAILABLE" {
+			return "Host resource inspection failed", true
+		}
+	case strings.HasPrefix(path, "/internal/v1/host/ports/"):
+		if code == "HOST_PORT_UNAVAILABLE" {
+			return "Host port inspection failed", true
+		}
+	}
+	return "", false
 }

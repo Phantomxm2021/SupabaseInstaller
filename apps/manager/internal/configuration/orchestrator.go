@@ -514,7 +514,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 						rolledBack = false
 					}
 				}
-				return o.fail(ctx, queued, step, fmt.Errorf("database password rotation failed: %w", reconcileErr), rolledBack)
+				return o.fail(ctx, queued, step, reconcileErr, rolledBack)
 			}
 			if result.OperationID != queued.ID || result.ProjectID != currentProject.ID || result.Revision != snapshot.Revision {
 				return o.fail(ctx, queued, step, errors.New("runtime verification failed"), false)
@@ -887,7 +887,7 @@ func (o *Orchestrator) runLegacy(ctx context.Context, currentProject contracts.P
 				rolledBack = false
 			}
 		}
-		return o.fail(ctx, queued, "RECONCILE_SERVICES", fmt.Errorf("runtime reconciliation failed: %w", reconcileErr), rolledBack)
+		return o.fail(ctx, queued, "RECONCILE_SERVICES", reconcileErr, rolledBack)
 	}
 	slog.Info("configuration reconciliation completed", "project_id", currentProject.ID, "slug", currentProject.Slug, "operation_id", queued.ID, "revision", result.Revision, "recreated_services", result.RecreatedServices)
 	if err := o.operations.CompleteStep(ctx, queued.ID, "RECONCILE_SERVICES", 70); err != nil {

@@ -12,6 +12,7 @@ import (
 
 	"supabase-manager/apps/manager/internal/operation"
 	"supabase-manager/apps/manager/internal/ports"
+	"supabase-manager/apps/manager/internal/provisioner"
 	managersecrets "supabase-manager/apps/manager/internal/secrets"
 	"supabase-manager/apps/manager/internal/store"
 	"supabase-manager/internal/contracts"
@@ -29,6 +30,19 @@ func TestInstallFailureRollsBackRuntimeAndPreservesData(t *testing.T) {
 	}
 	if !provisioner.runtimeRemoved || provisioner.dataRemoved {
 		t.Fatalf("rollback runtimeRemoved=%v dataRemoved=%v", provisioner.runtimeRemoved, provisioner.dataRemoved)
+	}
+}
+
+func TestInstallPersistsClientErrorUnchanged(t *testing.T) {
+	orchestrator, fake, project := newTestOrchestrator(t)
+	clientErr := &provisioner.ClientError{Code: "RECONCILE_FAILED", Message: "runtime health is unhealthy; services: auth", Status: 422, RuntimeStateKnown: true, RuntimeStateChanged: true}
+	fake.failReconcile = clientErr
+	result, err := orchestrator.Install(context.Background(), project)
+	if !errors.Is(err, clientErr) {
+		t.Fatalf("Install() error = %v, want ClientError", err)
+	}
+	if result.ErrorMessage != clientErr.Error() {
+		t.Fatalf("stored error = %q, want %q", result.ErrorMessage, clientErr.Error())
 	}
 }
 
@@ -259,6 +273,7 @@ func TestHydrateConfiguredSecretsSkipsDisabledAuthConsumers(t *testing.T) {
 
 type fakeProvisioner struct {
 	reconcile      contracts.ReconcileProjectRequest
+	failReconcile  error
 	failStart      error
 	runtimeRemoved bool
 	dataRemoved    bool
@@ -266,6 +281,9 @@ type fakeProvisioner struct {
 
 func (fake *fakeProvisioner) Reconcile(_ context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
 	fake.reconcile = request
+	if fake.failReconcile != nil {
+		return contracts.ReconcileProjectResponse{}, fake.failReconcile
+	}
 	return contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.NextRevision, EnabledServices: []string{"db", "api-gw", "auth", "rest", "meta", "studio"}}, nil
 }
 
