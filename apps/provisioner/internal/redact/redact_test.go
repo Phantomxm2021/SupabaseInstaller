@@ -24,3 +24,10 @@ func TestRedactorStillRedactsExistingSupabaseSecretAssignments(t *testing.T) {
 		t.Fatalf("redacted log contains a Supabase secret: %s", got)
 	}
 }
+
+func TestRedactorPreservesNonSecretDiagnosticShape(t *testing.T) {
+	input := "first line\n" + strings.Repeat("x", 5*1024)
+	if got := New(nil).String(input); got != input {
+		t.Fatalf("Redactor changed a non-secret diagnostic: got %d bytes, want %d", len(got), len(input))
+	}
+}
