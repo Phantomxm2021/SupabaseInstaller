@@ -124,7 +124,7 @@ func TestReconcileDoesNotQueryStorageWhenLocationUnchanged(t *testing.T) {
 	}
 }
 
-func TestReconcileDoesNotQueryStorageWhenPreviouslyDisabled(t *testing.T) {
+func TestReconcileRejectsNonEmptyStorageWhenPreviouslyDisabled(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
