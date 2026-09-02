@@ -3,7 +3,36 @@ package diagnostic
 import (
 	"strings"
 	"testing"
+
+	"supabase-manager/internal/contracts"
 )
+
+func TestConfigurationSecretValuesIncludesEverySecretInput(t *testing.T) {
+	values := ConfigurationSecretValues(contracts.ProjectConfiguration{
+		General: contracts.GeneralConfig{StudioPassword: contracts.SecretInput{Value: "studio-secret"}},
+		Auth: contracts.AuthConfig{
+			SMTP:  contracts.SMTPConfig{Password: contracts.SecretInput{Value: "smtp-secret"}},
+			Phone: contracts.PhoneAuthConfig{Secret: contracts.SecretInput{Value: "phone-secret"}},
+			OAuth: map[string]contracts.OAuthProviderConfig{"google": {Secret: contracts.SecretInput{Value: "oauth-secret"}}},
+		},
+		Storage:   contracts.StorageConfig{SecretAccessKey: contracts.SecretInput{Value: "storage-secret"}},
+		Functions: contracts.FunctionsConfig{Variables: []contracts.FunctionVariable{{Value: contracts.SecretInput{Value: "function-secret"}}}},
+	})
+	for _, secret := range []string{"studio-secret", "smtp-secret", "phone-secret", "oauth-secret", "storage-secret", "function-secret"} {
+		if !contains(values, secret) {
+			t.Fatalf("ConfigurationSecretValues() omitted %q: %q", secret, values)
+		}
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
 
 func TestSanitizeRedactsLongestKnownSecretsFirst(t *testing.T) {
 	got := Sanitize("failed with overlapping-secret-value", []string{"secret", "overlapping-secret-value"})

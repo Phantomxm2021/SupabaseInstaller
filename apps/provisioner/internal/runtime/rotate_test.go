@@ -189,8 +189,10 @@ func TestRotateDatabasePasswordReplayPreservesRedactedFailureDiagnostic(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := contracts.RotateDatabasePasswordRequest{OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: "rotate-replay-diagnostic", IdempotencyKey: "rotate-replay-diagnostic-key", ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", ExpectedRevision: 1, NextRevision: 2, OldPassword: "old-password", NewPassword: "new-password", Configuration: baseConfig(), Secrets: contracts.ProjectSecrets{DatabasePassword: "database-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-role-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-encryption-key", RealtimeDBEncryptionKey: "realtime-encryption-key", LogflarePublicAccessToken: "logflare-public-token", LogflarePrivateAccessToken: "logflare-private-token", S3ProtocolAccessKeyID: "s3-access-key-id", S3ProtocolAccessKeySecret: "s3-access-key-secret", PoolerTenantID: "pooler-tenant-id"}, RuntimeSecrets: map[string]string{"runtime.secret": "runtime-secret"}}
-	knownSecrets := []string{request.OldPassword, request.NewPassword, request.Secrets.DatabasePassword, request.Secrets.JWTSecret, request.Secrets.AnonKey, request.Secrets.ServiceRoleKey, request.Secrets.DashboardPassword, request.Secrets.SecretKeyBase, request.Secrets.VaultEncryptionKey, request.Secrets.RealtimeDBEncryptionKey, request.Secrets.LogflarePublicAccessToken, request.Secrets.LogflarePrivateAccessToken, request.Secrets.S3ProtocolAccessKeyID, request.Secrets.S3ProtocolAccessKeySecret, request.Secrets.PoolerTenantID, request.RuntimeSecrets["runtime.secret"]}
+	configuration := baseConfig()
+	configuration.General.StudioPassword = contracts.SecretInput{Value: "cached-config-secret"}
+	request := contracts.RotateDatabasePasswordRequest{OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: "rotate-replay-diagnostic", IdempotencyKey: "rotate-replay-diagnostic-key", ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", ExpectedRevision: 1, NextRevision: 2, OldPassword: "old-password", NewPassword: "new-password", Configuration: configuration, Secrets: contracts.ProjectSecrets{DatabasePassword: "database-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-role-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-encryption-key", RealtimeDBEncryptionKey: "realtime-encryption-key", LogflarePublicAccessToken: "logflare-public-token", LogflarePrivateAccessToken: "logflare-private-token", S3ProtocolAccessKeyID: "s3-access-key-id", S3ProtocolAccessKeySecret: "s3-access-key-secret", PoolerTenantID: "pooler-tenant-id"}, RuntimeSecrets: map[string]string{"runtime.secret": "runtime-secret"}}
+	knownSecrets := []string{request.OldPassword, request.NewPassword, request.Secrets.DatabasePassword, request.Secrets.JWTSecret, request.Secrets.AnonKey, request.Secrets.ServiceRoleKey, request.Secrets.DashboardPassword, request.Secrets.SecretKeyBase, request.Secrets.VaultEncryptionKey, request.Secrets.RealtimeDBEncryptionKey, request.Secrets.LogflarePublicAccessToken, request.Secrets.LogflarePrivateAccessToken, request.Secrets.S3ProtocolAccessKeyID, request.Secrets.S3ProtocolAccessKeySecret, request.Secrets.PoolerTenantID, request.RuntimeSecrets["runtime.secret"], request.Configuration.General.StudioPassword.Value}
 	runner := &rotationTestRunner{rotationErrors: []error{fmt.Errorf("compose operation failed: network unavailable; values=%s", strings.Join(knownSecrets, ","))}}
 	backend := NewBackend(root, runner, &sequenceInspector{})
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
@@ -208,7 +210,10 @@ func TestRotateDatabasePasswordReplayPreservesRedactedFailureDiagnostic(t *testi
 		}
 	}
 
-	replayed, err := backend.RotateDatabasePassword(context.Background(), request)
+	retry := request
+	retry.Configuration = baseConfig()
+	retry.RuntimeSecrets = nil
+	replayed, err := backend.RotateDatabasePassword(context.Background(), retry)
 	var replayFailure *contracts.ReconcileFailure
 	if err == nil || !errors.As(err, &replayFailure) || replayFailure.Cause == nil || !strings.Contains(replayFailure.Cause.Error(), "operation failed: network unavailable") {
 		t.Fatalf("replayed rotation result=%#v error=%v, want original safe diagnostic", replayed, err)

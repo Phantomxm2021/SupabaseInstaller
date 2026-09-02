@@ -421,5 +421,6 @@ func redactedRotationFailureDiagnostic(request contracts.RotateDatabasePasswordR
 	for _, value := range request.RuntimeSecrets {
 		values = append(values, value)
 	}
+	values = append(values, diagnostic.ConfigurationSecretValues(request.Configuration)...)
 	return diagnostic.Sanitize(cause.Error(), values)
 }

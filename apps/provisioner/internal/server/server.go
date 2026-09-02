@@ -348,23 +348,7 @@ func reconcileKnownValues(input contracts.ReconcileProjectRequest) []string {
 	for _, value := range input.RuntimeSecrets {
 		values = append(values, value)
 	}
-	return append(values, configurationSecretValues(input.Configuration)...)
-}
-
-func configurationSecretValues(configuration contracts.ProjectConfiguration) []string {
-	values := []string{
-		configuration.General.StudioPassword.Value,
-		configuration.Auth.Phone.Secret.Value,
-		configuration.Auth.SMTP.Password.Value,
-		configuration.Storage.SecretAccessKey.Value,
-	}
-	for _, provider := range configuration.Auth.OAuth {
-		values = append(values, provider.Secret.Value)
-	}
-	for _, variable := range configuration.Functions.Variables {
-		values = append(values, variable.Value.Value)
-	}
-	return values
+	return append(values, diagnostic.ConfigurationSecretValues(input.Configuration)...)
 }
 
 func rotationKnownValues(input contracts.RotateDatabasePasswordRequest) []string {
@@ -376,10 +360,18 @@ type archiveIngestionFailure interface {
 	ArchiveIngestionFailure()
 }
 
+type archivePathFilesystemFailure interface {
+	ArchivePathFilesystemFailure()
+}
+
 func deployFunctionFailureEnvelope(cause error) contracts.ErrorEnvelope {
 	var archiveFailure archiveIngestionFailure
 	if errors.As(cause, &archiveFailure) {
 		return operationalErrorEnvelope("FUNCTION_DEPLOY_FAILED", "Function deployment failed", errors.New("Function archive processing failed"), nil)
+	}
+	var filesystemFailure archivePathFilesystemFailure
+	if errors.As(cause, &filesystemFailure) {
+		return operationalErrorEnvelope("FUNCTION_DEPLOY_FAILED", "Function deployment failed", cause, nil)
 	}
 	return operationalErrorEnvelope("FUNCTION_DEPLOY_FAILED", "Function deployment failed", cause, nil)
 }

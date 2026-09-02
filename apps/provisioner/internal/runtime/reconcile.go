@@ -17,9 +17,9 @@ import (
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/projectfs"
 	"supabase-manager/apps/provisioner/internal/proxy"
-	"supabase-manager/apps/provisioner/internal/redact"
 	"supabase-manager/apps/provisioner/internal/render"
 	"supabase-manager/internal/contracts"
+	"supabase-manager/internal/diagnostic"
 )
 
 // Reconcile renders and atomically applies one complete project configuration.
@@ -483,7 +483,8 @@ func redactedReconcileDiagnostic(request contracts.ReconcileProjectRequest, caus
 	for _, value := range request.RuntimeSecrets {
 		values = append(values, value)
 	}
-	return redact.New(values).String(cause.Error())
+	values = append(values, diagnostic.ConfigurationSecretValues(request.Configuration)...)
+	return diagnostic.Sanitize(cause.Error(), values)
 }
 
 func affectedServices(before, after contracts.ProjectConfiguration) []string {

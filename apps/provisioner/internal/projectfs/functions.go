@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -40,6 +41,29 @@ func (*ArchiveIngestionError) ArchiveIngestionFailure() {}
 
 func archiveIngestionError(cause error) error {
 	return &ArchiveIngestionError{Cause: cause}
+}
+
+// ArchivePathFilesystemError records a host filesystem failure while writing
+// an archive-derived path without retaining that path in Error().
+type ArchivePathFilesystemError struct {
+	Operation string
+	Cause     error
+}
+
+func (err *ArchivePathFilesystemError) Error() string {
+	detail := "function staging filesystem " + err.Operation + " failed"
+	var pathError *os.PathError
+	if errors.As(err.Cause, &pathError) && pathError.Err != nil {
+		return detail + ": " + pathError.Err.Error()
+	}
+	return detail + ": filesystem error"
+}
+
+func (err *ArchivePathFilesystemError) Unwrap() error             { return err.Cause }
+func (*ArchivePathFilesystemError) ArchivePathFilesystemFailure() {}
+
+func archivePathFilesystemError(operation string, cause error) error {
+	return &ArchivePathFilesystemError{Operation: operation, Cause: cause}
 }
 
 // FunctionReleaseStage is an extracted, unactivated release. Its path remains
@@ -240,7 +264,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 		if isDirectory {
 			if err := os.MkdirAll(filepath.Join(stage, filepath.FromSlash(clean)), 0o700); err != nil {
-				return fail(archiveIngestionError(fmt.Errorf("create function archive directory: %w", err)))
+				return fail(archivePathFilesystemError("create archive directory", err))
 			}
 			continue
 		}
@@ -256,7 +280,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 		output := filepath.Join(stage, filepath.FromSlash(clean))
 		if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
-			return fail(archiveIngestionError(fmt.Errorf("create function archive parent directory: %w", err)))
+			return fail(archivePathFilesystemError("create archive parent directory", err))
 		}
 		source, err := item.Open()
 		if err != nil {
@@ -275,7 +299,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 		copied := int64(len(contents))
 		if err := r.writeFunctionArchiveEntry(output, contents); err != nil {
-			return fail(archiveIngestionError(fmt.Errorf("write function archive entry: %w", err)))
+			return fail(archivePathFilesystemError("write archive entry", err))
 		}
 		extracted += copied
 		if extracted > maxFunctionExtractedBytes {

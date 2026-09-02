@@ -716,6 +716,36 @@ func TestReconcileFailureIsTypedCachedAndReplayedWithoutDocker(t *testing.T) {
 	}
 }
 
+func TestReconcileReplayRedactsOriginalConfigurationSecretInput(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	const oldSecret = "cached-reconcile-config-secret"
+	configuration := baseConfig()
+	configuration.General.SiteURL = "https://cached-secret.example.com"
+	configuration.General.StudioPassword = contracts.SecretInput{Value: oldSecret}
+	request := reconcileRequest(configuration, 1, 2)
+	runner.validateError = errors.New("compose validation failed with " + oldSecret)
+	initial, err := backend.Reconcile(context.Background(), request)
+	if err == nil || initial.Error == nil || strings.Contains(initial.Error.Message, oldSecret) {
+		t.Fatalf("initial result/error leaked or succeeded: %#v %v", initial, err)
+	}
+	retry := request
+	retry.Configuration = baseConfig()
+	retry.RuntimeSecrets = nil
+	replayed, err := backend.Reconcile(context.Background(), retry)
+	var failure *contracts.ReconcileFailure
+	if err == nil || !errors.As(err, &failure) || replayed.Error == nil || strings.Contains(replayed.Error.Message, oldSecret) || (failure.Response.Error != nil && strings.Contains(failure.Response.Error.Message, oldSecret)) || strings.Contains(err.Error(), oldSecret) {
+		t.Fatalf("replay leaked or succeeded: result=%#v failure=%#v error=%v", replayed, failure, err)
+	}
+}
+
 func TestReconcileMetadataWriteFailureRestoresRuntimeBeforeReturning(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {

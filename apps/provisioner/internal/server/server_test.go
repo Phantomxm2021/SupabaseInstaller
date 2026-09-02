@@ -261,7 +261,7 @@ func TestFunctionDeployEndpointRedactsArchiveDerivedFilesystemPath(t *testing.T)
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || body.Diagnostic != "Function archive processing failed" || strings.Contains(response.Body.String(), entrySentinel) || strings.Contains(logs.String(), entrySentinel) {
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || !strings.Contains(body.Diagnostic, "function staging filesystem") || !strings.Contains(body.Diagnostic, "file name too long") || strings.Contains(response.Body.String(), entrySentinel) || strings.Contains(logs.String(), entrySentinel) {
 		t.Fatalf("response=%d body=%#v logs=%s", response.Code, body, logs.String())
 	}
 }
@@ -309,7 +309,7 @@ func TestFunctionDeployEndpointRedactsArchiveDerivedWritePath(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || body.Diagnostic != "Function archive processing failed" || strings.Contains(response.Body.String(), entrySentinel) || strings.Contains(logs.String(), entrySentinel) {
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || !strings.Contains(body.Diagnostic, "function staging filesystem") || !strings.Contains(body.Diagnostic, "injected write failure") || strings.Contains(response.Body.String(), entrySentinel) || strings.Contains(logs.String(), entrySentinel) {
 		t.Fatalf("response=%d body=%#v logs=%s", response.Code, body, logs.String())
 	}
 }
@@ -502,6 +502,45 @@ func TestReconcileEndpointInvokesProductionBackend(t *testing.T) {
 	}
 }
 
+func TestReconcileReplayDoesNotLogCachedConfigurationSecret(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &serverCaptureExecutor{}
+	backend := provisionerruntime.NewBackend(root, compose.NewRunner(executor), health.NewInspector(&serverSequenceSource{}))
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
+	request := contracts.ReconcileProjectRequest{
+		OperationID: "op-initial", IdempotencyKey: "key-initial", ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", ExpectedRevision: 0, NextRevision: 1, APIPort: 18001,
+		Configuration: contracts.ProjectConfiguration{Revision: 1, General: contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://bee.example.com", SupabaseVersion: "self-hosted/v0.8.0"}, Services: contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, Studio: true, PostgresMeta: true}, Auth: contracts.AuthConfig{Enabled: true, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}}, Database: contracts.DatabaseConfig{Version: "17", MaxConnections: 100}, Network: contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal, APIPort: 18001}},
+		Secrets:       contracts.ProjectSecrets{DatabasePassword: "database-secret", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-secret", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"},
+	}
+	if response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", request); response.Code != http.StatusOK {
+		t.Fatalf("initial response = %d %s", response.Code, response.Body.String())
+	}
+	const oldSecret = "cached-server-config-secret"
+	failed := request
+	failed.OperationID, failed.IdempotencyKey = "op-failed", "key-failed"
+	failed.ExpectedRevision, failed.NextRevision, failed.Configuration.Revision = 1, 2, 2
+	failed.Configuration.General.SiteURL = "https://failed.example.com"
+	failed.Configuration.General.StudioPassword = contracts.SecretInput{Value: oldSecret}
+	executor.configErr = errors.New("compose validation failed with " + oldSecret)
+	initialFailure := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", failed)
+	if initialFailure.Code != http.StatusUnprocessableEntity || strings.Contains(initialFailure.Body.String(), oldSecret) || strings.Contains(logs.String(), oldSecret) {
+		t.Fatalf("initial failure leaked secret: %d %s logs=%s", initialFailure.Code, initialFailure.Body.String(), logs.String())
+	}
+	logs.Reset()
+	retry := failed
+	retry.Configuration = request.Configuration
+	retry.RuntimeSecrets = nil
+	replayed := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", retry)
+	if replayed.Code != http.StatusUnprocessableEntity || strings.Contains(replayed.Body.String(), oldSecret) || strings.Contains(logs.String(), oldSecret) {
+		t.Fatalf("replay leaked cached secret: %d %s logs=%s", replayed.Code, replayed.Body.String(), logs.String())
+	}
+}
+
 func TestLifecycleEndpointLogsSafeFailureDetails(t *testing.T) {
 	root, _ := projectfs.New(t.TempDir())
 	var logs bytes.Buffer
@@ -633,10 +672,16 @@ func TestInspectionEndpointsReturnCanonicalRedactedDiagnostics(t *testing.T) {
 	}
 }
 
-type serverCaptureExecutor struct{ calls [][]string }
+type serverCaptureExecutor struct {
+	calls     [][]string
+	configErr error
+}
 
 func (e *serverCaptureExecutor) Run(_ context.Context, _ string, args, _ []string) ([]byte, error) {
 	e.calls = append(e.calls, append([]string(nil), args...))
+	if e.configErr != nil && strings.Contains(strings.Join(args, " "), "config --quiet") {
+		return nil, e.configErr
+	}
 	if strings.Contains(strings.Join(args, " "), "exec -T db psql") {
 		return []byte("schema:auth:supabase_admin\nschema:graphql_public:supabase_admin\nfunction:auth.email:supabase_auth_admin\nfunction:auth.role:supabase_auth_admin\nfunction:auth.uid:supabase_auth_admin\n"), nil
 	}
