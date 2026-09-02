@@ -97,6 +97,9 @@ func TestRotateDatabasePasswordHealthFailureRestoresOldRoleAndReportsRollback(t 
 	if err == nil || !errors.As(err, &failure) || !failure.RollbackSucceeded {
 		t.Fatalf("rotation failure = %v, want successful typed rollback", err)
 	}
+	if failure.Cause == nil || !strings.Contains(failure.Cause.Error(), "runtime health is UNHEALTHY") {
+		t.Fatalf("rotation failure cause = %#v, want original health diagnostic", failure)
+	}
 	if len(runner.rotations) != 2 || runner.rotations[1] != [2]string{"new-db-password", "db-password"} {
 		t.Fatalf("role recovery calls = %#v", runner.rotations)
 	}

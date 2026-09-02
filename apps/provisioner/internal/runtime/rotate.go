@@ -294,14 +294,19 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 			return &contracts.ReconcileFailure{Cause: fmt.Errorf("dependent service restart failed: %w", err), RollbackSucceeded: rollbackErr == nil && restoreErr == nil, RuntimeChanged: true}
 		}
 		if err := backend.waitHealthy(ctx, request.Slug, enabledServices(metadata.Configuration)); err != nil {
+			cause := fmt.Errorf("dependent service health check failed: %w", err)
 			if rollbackErr := rollback(); rollbackErr != nil {
-				_ = restoreRuntime()
-				return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: false, RuntimeChanged: true}
+				if restoreErr := restoreRuntime(); restoreErr != nil {
+					cause = fmt.Errorf("%w; rotation rollback failed: %v; runtime restore failed: %v", cause, rollbackErr, restoreErr)
+				} else {
+					cause = fmt.Errorf("%w; rotation rollback failed: %v", cause, rollbackErr)
+				}
+				return &contracts.ReconcileFailure{Cause: cause, RollbackSucceeded: false, RuntimeChanged: true}
 			}
 			if restoreErr := restoreRuntime(); restoreErr != nil {
-				return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: false, RuntimeChanged: true}
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("%w; runtime restore failed: %v", cause, restoreErr), RollbackSucceeded: false, RuntimeChanged: true}
 			}
-			return &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: true, RuntimeChanged: true}
+			return &contracts.ReconcileFailure{Cause: cause, RollbackSucceeded: true, RuntimeChanged: true}
 		}
 		metadata.Rotation.Phase = "services-verified"
 		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
