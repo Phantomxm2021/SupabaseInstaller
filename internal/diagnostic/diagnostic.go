@@ -17,6 +17,7 @@ const (
 
 var credentialPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(["']?\b(?:api[_-]?key|apikey|password|passwd|pwd|secret|token|access[_-]?key(?:[_-]?id)?|secret[_-]?key|private[_-]?key|client[_-]?secret|jwt[_-]?secret|service[_-]?role[_-]?key|supabase[_-]?secret[_-]?key|postgres[_-]?password|smtp[_-]?password|aws[_-]?secret[_-]?access[_-]?key|vault[_-]?enc[_-]?key|secret[_-]?key[_-]?base)\b["']?\s*(?:=|:)\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)`),
+	regexp.MustCompile(`(?i)(\bauthorization\s*:\s*[^\s,;]+\s+)[^\s,;]+`),
 	regexp.MustCompile(`(?i)(\bbearer\s+)[^\s,;]+`),
 }
 

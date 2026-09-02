@@ -16,15 +16,15 @@ func TestSanitizeRedactsLongestKnownSecretsFirst(t *testing.T) {
 }
 
 func TestSanitizeRedactsCredentialAssignmentsAndBearerTokens(t *testing.T) {
-	input := "POSTGRES_PASSWORD=hunter2 api_key: abc123 Authorization: Bearer header.payload.signature Bearer standalone-token"
+	input := "POSTGRES_PASSWORD=hunter2 api_key: abc123 Authorization: Bearer header.payload.signature Authorization: Basic dXNlcjpwYXNz Bearer standalone-token"
 	got := Sanitize(input, nil)
-	for _, leaked := range []string{"hunter2", "abc123", "header.payload.signature", "standalone-token"} {
+	for _, leaked := range []string{"hunter2", "abc123", "header.payload.signature", "dXNlcjpwYXNz", "standalone-token"} {
 		if strings.Contains(got, leaked) {
 			t.Fatalf("Sanitize leaked %q: %q", leaked, got)
 		}
 	}
-	if strings.Count(got, "[REDACTED]") != 4 {
-		t.Fatalf("Sanitize markers = %d, want 4: %q", strings.Count(got, "[REDACTED]"), got)
+	if strings.Count(got, "[REDACTED]") != 5 {
+		t.Fatalf("Sanitize markers = %d, want 5: %q", strings.Count(got, "[REDACTED]"), got)
 	}
 }
 
