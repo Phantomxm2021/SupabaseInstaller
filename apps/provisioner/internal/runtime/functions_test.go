@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"testing"
 
@@ -40,6 +41,18 @@ func TestFunctionServiceDeployRestoresReleaseWhenRestartFails(t *testing.T) {
 	}
 }
 
+func TestFunctionServiceDeployPreservesRestartAndRestoreCauses(t *testing.T) {
+	restartErr := errors.New("compose restart output: function failed to bind")
+	restoreErr := errors.New("release restore output: rename failed")
+	releases := &functionReleaseFake{stage: projectfs.FunctionReleaseStage{Name: "demo", OperationID: "op-1", SHA256: "abc"}, restoreErr: restoreErr}
+	runner := &functionRunnerFake{restartErrors: []error{restartErr}}
+	service := NewFunctionService(releases, runner)
+	_, err := service.Deploy(context.Background(), compose.ProjectRef{Slug: "bee"}, contracts.DeployFunctionRequest{Name: "demo", OperationID: "op-1"}, bytes.NewBufferString("zip"))
+	if err == nil || !errors.Is(err, restartErr) || !errors.Is(err, restoreErr) {
+		t.Fatalf("Deploy() error = %v, want restart and release restore causes", err)
+	}
+}
+
 func TestFunctionServiceRollbackRestartsOnlyFunctions(t *testing.T) {
 	releases := &functionReleaseFake{}
 	runner := &functionRunnerFake{}
@@ -57,6 +70,7 @@ type functionReleaseFake struct {
 	stage      projectfs.FunctionReleaseStage
 	restored   bool
 	rolledBack bool
+	restoreErr error
 }
 
 func (f *functionReleaseFake) StageFunctionRelease(string, string, string, io.Reader) (projectfs.FunctionReleaseStage, error) {
@@ -67,7 +81,7 @@ func (f *functionReleaseFake) ActivateFunctionRelease(string, string, projectfs.
 }
 func (f *functionReleaseFake) RestoreFunctionRelease(string, string, projectfs.FunctionActivation) error {
 	f.restored = true
-	return nil
+	return f.restoreErr
 }
 func (f *functionReleaseFake) RollbackFunctionRelease(string, string, string) (projectfs.FunctionActivation, error) {
 	f.rolledBack = true
@@ -78,12 +92,18 @@ func (f *functionReleaseFake) DeleteFunction(string, string) (projectfs.Function
 }
 
 type functionRunnerFake struct {
-	services  []string
-	failFirst bool
+	services      []string
+	failFirst     bool
+	restartErrors []error
 }
 
 func (f *functionRunnerFake) Restart(_ context.Context, _ compose.ProjectRef, services ...string) error {
 	f.services = append(f.services, services...)
+	if len(f.restartErrors) > 0 {
+		err := f.restartErrors[0]
+		f.restartErrors = f.restartErrors[1:]
+		return err
+	}
 	if f.failFirst && len(f.services) == 1 {
 		return context.DeadlineExceeded
 	}

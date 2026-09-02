@@ -88,10 +88,10 @@ func (backend *Backend) rollbackDatabasePasswordLocked(ctx context.Context, requ
 	if metadata.Rotation != nil && metadata.Rotation.OldGeneration != "" {
 		oldRef, refErr := backend.projectFS.RuntimeGeneration(request.Slug, metadata.Rotation.OldGeneration)
 		if refErr != nil {
-			return errors.New("rollback previous generation unavailable")
+			return fmt.Errorf("load rollback previous generation: %w", refErr)
 		}
 		if err := backend.projectFS.SelectRuntimeGeneration(request.Slug, metadata.Rotation.OldGeneration); err != nil {
-			return errors.New("rollback runtime publication failed")
+			return fmt.Errorf("publish rollback runtime generation: %w", err)
 		}
 		ref = compose.ProjectRef{Slug: request.Slug, Dir: oldRef.ProjectDir, ComposeFile: oldRef.ComposeFile, EnvFile: oldRef.EnvFile}
 	} else if request.Configuration.General.SupabaseVersion != "" {
@@ -99,7 +99,7 @@ func (backend *Backend) rollbackDatabasePasswordLocked(ctx context.Context, requ
 		oldSecrets.DatabasePassword = request.NewPassword
 		rendered, renderErr := render.Project(render.Input{ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.Configuration.Network.APIPort, Configuration: request.Configuration, Secrets: oldSecrets, RuntimeSecrets: request.RuntimeSecrets})
 		if renderErr != nil {
-			return errors.New("rollback render failed")
+			return fmt.Errorf("render rollback runtime: %w", renderErr)
 		}
 		candidate, restore, commit, stageErr := backend.projectFS.StageRuntimeFilesWithRef(request.Slug, projectfs.RuntimeFiles{Compose: []byte(rendered.Compose), Env: []byte(rendered.Env), FunctionsEnv: []byte(rendered.FunctionsEnv)})
 		if stageErr == nil {
@@ -109,16 +109,22 @@ func (backend *Backend) rollbackDatabasePasswordLocked(ctx context.Context, requ
 			stageErr = backend.runner.Validate(ctx, compose.ProjectRef{Slug: request.Slug, Dir: candidate.ProjectDir, ComposeFile: candidate.ComposeFile, EnvFile: candidate.EnvFile})
 		}
 		if stageErr != nil {
-			_ = restore()
-			return errors.New("rollback candidate validation failed")
+			if restoreErr := restore(); restoreErr != nil {
+				return fmt.Errorf("validate rollback candidate: %w; restore rollback candidate: %w", stageErr, restoreErr)
+			}
+			return fmt.Errorf("validate rollback candidate: %w", stageErr)
 		}
 		if stageErr = writeCandidateCompose(candidate.ComposeFile, []byte(rendered.Compose)); stageErr != nil {
-			_ = restore()
-			return errors.New("rollback candidate restore failed")
+			if restoreErr := restore(); restoreErr != nil {
+				return fmt.Errorf("write rollback candidate Compose: %w; restore rollback candidate: %w", stageErr, restoreErr)
+			}
+			return fmt.Errorf("write rollback candidate Compose: %w", stageErr)
 		}
 		if stageErr = commit(); stageErr != nil {
-			_ = restore()
-			return errors.New("rollback candidate commit failed")
+			if restoreErr := restore(); restoreErr != nil {
+				return fmt.Errorf("commit rollback candidate: %w; restore rollback candidate: %w", stageErr, restoreErr)
+			}
+			return fmt.Errorf("commit rollback candidate: %w", stageErr)
 		}
 		// Do not retain restore: external compensation's successful state is the
 		// candidate itself, not the generation that preceded it.
@@ -132,16 +138,22 @@ func (backend *Backend) rollbackDatabasePasswordLocked(ctx context.Context, requ
 	}
 	services := without(enabledServices(metadata.Configuration), "db")
 	if err := rotator.RotateDatabasePassword(ctx, ref, request.OldPassword, request.NewPassword); err != nil {
-		_ = restoreRuntime()
-		return errors.New("database password rollback failed")
+		if restoreErr := restoreRuntime(); restoreErr != nil {
+			return fmt.Errorf("rollback database password: %w; restore rollback runtime: %w", err, restoreErr)
+		}
+		return fmt.Errorf("rollback database password: %w", err)
 	}
 	if err := backend.runner.Recreate(ctx, ref, services...); err != nil {
-		_ = restoreRuntime()
-		return errors.New("dependent service rollback failed")
+		if restoreErr := restoreRuntime(); restoreErr != nil {
+			return fmt.Errorf("recreate dependent services during rollback: %w; restore rollback runtime: %w", err, restoreErr)
+		}
+		return fmt.Errorf("recreate dependent services during rollback: %w", err)
 	}
 	if err := backend.waitHealthy(ctx, request.Slug, enabledServices(metadata.Configuration)); err != nil {
-		_ = restoreRuntime()
-		return errors.New("database password rollback health check failed")
+		if restoreErr := restoreRuntime(); restoreErr != nil {
+			return fmt.Errorf("check rollback runtime health: %w; restore rollback runtime: %w", err, restoreErr)
+		}
+		return fmt.Errorf("check rollback runtime health: %w", err)
 	}
 	// Keep the old generation selected and make the metadata revision agree with
 	// PostgreSQL and the running consumers. This is an idempotent durable commit.
@@ -231,7 +243,7 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		if request.Configuration.General.SupabaseVersion != "" {
 			rendered, renderErr := render.Project(render.Input{ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.Configuration.Network.APIPort, Configuration: request.Configuration, Secrets: request.Secrets, RuntimeSecrets: request.RuntimeSecrets})
 			if renderErr != nil {
-				return &contracts.ReconcileFailure{Cause: errors.New("rotation render failed"), RollbackSucceeded: false}
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("render rotation runtime: %w", renderErr), RollbackSucceeded: false}
 			}
 			candidate, restore, commit, stageErr := backend.projectFS.StageRuntimeFilesWithRef(request.Slug, projectfs.RuntimeFiles{Compose: []byte(rendered.Compose), Env: []byte(rendered.Env), FunctionsEnv: []byte(rendered.FunctionsEnv)})
 			if stageErr == nil {
@@ -241,16 +253,22 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 				stageErr = backend.runner.Validate(ctx, compose.ProjectRef{Slug: request.Slug, Dir: candidate.ProjectDir, ComposeFile: candidate.ComposeFile, EnvFile: candidate.EnvFile})
 			}
 			if stageErr != nil {
-				_ = restore()
-				return &contracts.ReconcileFailure{Cause: errors.New("rotation candidate validation failed"), RollbackSucceeded: false}
+				if restoreErr := restore(); restoreErr != nil {
+					return &contracts.ReconcileFailure{Cause: fmt.Errorf("validate rotation candidate: %w; restore rotation candidate: %w", stageErr, restoreErr), RollbackSucceeded: false}
+				}
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("validate rotation candidate: %w", stageErr), RollbackSucceeded: false}
 			}
 			if stageErr = writeCandidateCompose(candidate.ComposeFile, []byte(rendered.Compose)); stageErr != nil {
-				_ = restore()
-				return &contracts.ReconcileFailure{Cause: errors.New("rotation candidate restore failed"), RollbackSucceeded: false}
+				if restoreErr := restore(); restoreErr != nil {
+					return &contracts.ReconcileFailure{Cause: fmt.Errorf("write rotation candidate Compose: %w; restore rotation candidate: %w", stageErr, restoreErr), RollbackSucceeded: false}
+				}
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("write rotation candidate Compose: %w", stageErr), RollbackSucceeded: false}
 			}
 			if stageErr = commit(); stageErr != nil {
-				_ = restore()
-				return &contracts.ReconcileFailure{Cause: errors.New("rotation candidate commit failed"), RollbackSucceeded: false}
+				if restoreErr := restore(); restoreErr != nil {
+					return &contracts.ReconcileFailure{Cause: fmt.Errorf("commit rotation candidate: %w; restore rotation candidate: %w", stageErr, restoreErr), RollbackSucceeded: false}
+				}
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("commit rotation candidate: %w", stageErr), RollbackSucceeded: false}
 			}
 			restoreRuntime = restore
 			current, _ = backend.projectFS.CurrentRuntimeFiles(request.Slug)
@@ -261,19 +279,33 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 			metadata.Rotation.Phase = "runtime-published"
 			if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
 				rollbackErr := restore()
-				return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil}
+				if rollbackErr != nil {
+					return &contracts.ReconcileFailure{Cause: fmt.Errorf("publish rotation runtime metadata: %w; restore rotation runtime: %w", err, rollbackErr), RollbackSucceeded: false}
+				}
+				return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: true}
 			}
 		}
 		services := without(enabledServices(metadata.Configuration), "db")
 		if err := rotator.RotateDatabasePassword(ctx, ref, request.OldPassword, request.NewPassword); err != nil {
-			_ = restoreRuntime()
-			return &contracts.ReconcileFailure{Cause: errors.New("database password update failed"), RollbackSucceeded: false, RuntimeChanged: true}
+			if restoreErr := restoreRuntime(); restoreErr != nil {
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("update database password: %w; restore rotation runtime: %w", err, restoreErr), RollbackSucceeded: false, RuntimeChanged: true}
+			}
+			return &contracts.ReconcileFailure{Cause: fmt.Errorf("update database password: %w", err), RollbackSucceeded: false, RuntimeChanged: true}
 		}
 		metadata.Rotation.Phase = "db-rotated"
 		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
 			rollbackErr := rotator.RotateDatabasePassword(ctx, oldRef, request.NewPassword, request.OldPassword)
 			restoreErr := restoreRuntime()
-			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil && restoreErr == nil, RuntimeChanged: true}
+			if rollbackErr != nil && restoreErr != nil {
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("publish db-rotated metadata: %w; rollback database password: %w; restore rotation runtime: %w", err, rollbackErr, restoreErr), RollbackSucceeded: false, RuntimeChanged: true}
+			}
+			if rollbackErr != nil {
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("publish db-rotated metadata: %w; rollback database password: %w", err, rollbackErr), RollbackSucceeded: false, RuntimeChanged: true}
+			}
+			if restoreErr != nil {
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("publish db-rotated metadata: %w; restore rotation runtime: %w", err, restoreErr), RollbackSucceeded: false, RuntimeChanged: true}
+			}
+			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: true, RuntimeChanged: true}
 		}
 		rollback := func() error {
 			if err := restoreRuntime(); err != nil {
@@ -291,27 +323,39 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		if err := backend.runner.Recreate(ctx, ref, services...); err != nil {
 			rollbackErr := rollback()
 			restoreErr := restoreRuntime()
-			return &contracts.ReconcileFailure{Cause: fmt.Errorf("dependent service restart failed: %w", err), RollbackSucceeded: rollbackErr == nil && restoreErr == nil, RuntimeChanged: true}
+			if rollbackErr != nil && restoreErr != nil {
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("dependent service restart: %w; rotation rollback: %w; restore rotation runtime: %w", err, rollbackErr, restoreErr), RollbackSucceeded: false, RuntimeChanged: true}
+			}
+			if rollbackErr != nil {
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("dependent service restart: %w; rotation rollback: %w", err, rollbackErr), RollbackSucceeded: false, RuntimeChanged: true}
+			}
+			if restoreErr != nil {
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("dependent service restart: %w; restore rotation runtime: %w", err, restoreErr), RollbackSucceeded: false, RuntimeChanged: true}
+			}
+			return &contracts.ReconcileFailure{Cause: fmt.Errorf("dependent service restart: %w", err), RollbackSucceeded: true, RuntimeChanged: true}
 		}
 		if err := backend.waitHealthy(ctx, request.Slug, enabledServices(metadata.Configuration)); err != nil {
 			cause := fmt.Errorf("dependent service health check failed: %w", err)
 			if rollbackErr := rollback(); rollbackErr != nil {
 				if restoreErr := restoreRuntime(); restoreErr != nil {
-					cause = fmt.Errorf("%w; rotation rollback failed: %v; runtime restore failed: %v", cause, rollbackErr, restoreErr)
+					cause = fmt.Errorf("%w; rotation rollback: %w; runtime restore: %w", cause, rollbackErr, restoreErr)
 				} else {
-					cause = fmt.Errorf("%w; rotation rollback failed: %v", cause, rollbackErr)
+					cause = fmt.Errorf("%w; rotation rollback: %w", cause, rollbackErr)
 				}
 				return &contracts.ReconcileFailure{Cause: cause, RollbackSucceeded: false, RuntimeChanged: true}
 			}
 			if restoreErr := restoreRuntime(); restoreErr != nil {
-				return &contracts.ReconcileFailure{Cause: fmt.Errorf("%w; runtime restore failed: %v", cause, restoreErr), RollbackSucceeded: false, RuntimeChanged: true}
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("%w; runtime restore: %w", cause, restoreErr), RollbackSucceeded: false, RuntimeChanged: true}
 			}
 			return &contracts.ReconcileFailure{Cause: cause, RollbackSucceeded: true, RuntimeChanged: true}
 		}
 		metadata.Rotation.Phase = "services-verified"
 		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
 			rollbackErr := rollback()
-			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: rollbackErr == nil, RuntimeChanged: true}
+			if rollbackErr != nil {
+				return &contracts.ReconcileFailure{Cause: fmt.Errorf("publish services-verified metadata: %w; rotation rollback: %w", err, rollbackErr), RollbackSucceeded: false, RuntimeChanged: true}
+			}
+			return &contracts.ReconcileFailure{Cause: err, RollbackSucceeded: true, RuntimeChanged: true}
 		}
 		metadata.Rotation.Phase = "provisioner-committed"
 		if err := backend.projectFS.WriteMetadataForPhase(request.Slug, *metadata); err != nil {
@@ -348,10 +392,10 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		var publication *projectfs.MetadataPublicationError
 		if errors.As(err, &publication) {
 			result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: publication.RollbackSucceeded, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
-			return result, &contracts.ReconcileFailure{Cause: errors.New("rotation metadata publication failed"), RollbackSucceeded: publication.RollbackSucceeded, RuntimeChanged: true}
+			return result, &contracts.ReconcileFailure{Cause: fmt.Errorf("rotation metadata publication: %w", err), RollbackSucceeded: publication.RollbackSucceeded, RuntimeChanged: true}
 		}
 		result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}
-		return result, &contracts.ReconcileFailure{Cause: errors.New("rotation metadata publication failed"), RollbackSucceeded: false}
+		return result, &contracts.ReconcileFailure{Cause: fmt.Errorf("rotation metadata publication: %w", err), RollbackSucceeded: false}
 	}
 	_ = metadata
 	return result, nil

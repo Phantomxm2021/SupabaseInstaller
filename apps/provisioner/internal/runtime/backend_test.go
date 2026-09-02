@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,6 +27,17 @@ func TestStartRunsDatabaseBeforeDependentServices(t *testing.T) {
 	}
 	if strings.Join(runner.calls, ",") != "db,verify-bootstrap,sync-db-roles,services:auth|auth-templates|rest|meta|studio|api-gw" {
 		t.Fatalf("lifecycle calls = %#v", runner.calls)
+	}
+}
+
+func TestLifecycleStartPreservesComposeRunnerOutput(t *testing.T) {
+	runner := &recordingRunner{upDatabaseErr: errors.New("compose up db: exit status 1; output=database port is already allocated")}
+	root, _ := projectfs.New(t.TempDir())
+	backend := NewBackend(root, runner, staticInspector{})
+
+	err := backend.Lifecycle(context.Background(), contracts.LifecycleRequest{Slug: "bee", Action: contracts.LifecycleStart})
+	if err == nil || !strings.Contains(err.Error(), "output=database port is already allocated") {
+		t.Fatalf("Lifecycle() error = %v, want Compose runner output", err)
 	}
 }
 
@@ -132,7 +144,10 @@ func TestDeleteDataAllowsMissingProvisionerMetadataAfterManagerConfirmation(t *t
 	}
 }
 
-type recordingRunner struct{ calls []string }
+type recordingRunner struct {
+	calls         []string
+	upDatabaseErr error
+}
 
 type recordingLifecycleProxy struct{ removed []string }
 
@@ -144,7 +159,7 @@ func (p *recordingLifecycleProxy) Remove(_ context.Context, slug string) error {
 
 func (runner *recordingRunner) UpDatabase(context.Context, compose.ProjectRef) error {
 	runner.calls = append(runner.calls, "db")
-	return nil
+	return runner.upDatabaseErr
 }
 func (runner *recordingRunner) VerifyDatabaseBootstrap(context.Context, compose.ProjectRef) error {
 	runner.calls = append(runner.calls, "verify-bootstrap")

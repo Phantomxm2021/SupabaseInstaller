@@ -118,13 +118,16 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				cleanupErr = action(func(actionCtx context.Context) error {
 					return backend.runner.DownRuntime(actionCtx, currentProject)
 				})
+				if cleanupErr != nil {
+					cleanupErr = fmt.Errorf("remove candidate runtime during rollback: %w", cleanupErr)
+				}
 				if resetErr := backend.projectFS.ResetInitialDatabase(request.Slug); resetErr != nil {
-					cleanupErr = errors.Join(cleanupErr, resetErr)
+					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("reset initial database during rollback: %w", resetErr))
 				}
 				if resetErr := action(func(actionCtx context.Context) error {
 					return backend.runner.ResetDatabaseConfig(actionCtx, currentProject)
 				}); resetErr != nil {
-					cleanupErr = errors.Join(cleanupErr, resetErr)
+					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("reset database configuration during rollback: %w", resetErr))
 				}
 			} else if published && len(added) > 0 {
 				// The current candidate is still selected while newly added
@@ -133,10 +136,13 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				cleanupErr = action(func(actionCtx context.Context) error {
 					return backend.runner.RemoveStopped(actionCtx, currentProject, added...)
 				})
+				if cleanupErr != nil {
+					cleanupErr = fmt.Errorf("remove candidate services during rollback: %w", cleanupErr)
+				}
 			}
 			rollbackErr := restore()
 			if rollbackErr != nil {
-				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr, rollbackErr), RollbackSucceeded: false, RuntimeChanged: published}
+				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr, fmt.Errorf("restore previous runtime during rollback: %w", rollbackErr)), RollbackSucceeded: false, RuntimeChanged: published}
 			}
 			if !published {
 				return &contracts.ReconcileFailure{Cause: errors.Join(cause, cleanupErr), RollbackSucceeded: cleanupErr == nil}
@@ -148,14 +154,14 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				if err := action(func(actionCtx context.Context) error {
 					return backend.runner.Recreate(actionCtx, previousProject, rollbackServices...)
 				}); err != nil {
-					recoveryErr = err
+					recoveryErr = fmt.Errorf("recreate previous services during rollback: %w", err)
 				}
 			}
 			if recoveryErr == nil && len(rollbackServices) > 0 {
 				if err := action(func(actionCtx context.Context) error {
 					return backend.waitHealthy(actionCtx, request.Slug, rollbackServices)
 				}); err != nil {
-					recoveryErr = err
+					recoveryErr = fmt.Errorf("check previous runtime health during rollback: %w", err)
 				}
 			}
 			if cleanupErr != nil || recoveryErr != nil {
@@ -166,12 +172,12 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 					if err := action(func(actionCtx context.Context) error {
 						return backend.proxy.Apply(actionCtx, previousProxyRoute)
 					}); err != nil {
-						recoveryErr = err
+						recoveryErr = fmt.Errorf("restore managed nginx site during rollback: %w", err)
 					}
 				} else if err := action(func(actionCtx context.Context) error {
 					return backend.proxy.Remove(actionCtx, request.Slug)
 				}); err != nil {
-					recoveryErr = err
+					recoveryErr = fmt.Errorf("remove managed nginx site during rollback: %w", err)
 				}
 			}
 			if recoveryErr != nil {

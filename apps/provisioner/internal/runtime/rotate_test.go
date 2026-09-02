@@ -15,12 +15,29 @@ import (
 
 type rotationTestRunner struct {
 	fakeReconcileRunner
-	rotations [][2]string
+	rotations      [][2]string
+	rotationErrors []error
+	recreateErrors []error
 }
 
 func (r *rotationTestRunner) RotateDatabasePassword(_ context.Context, _ compose.ProjectRef, oldPassword, newPassword string) error {
 	r.rotations = append(r.rotations, [2]string{oldPassword, newPassword})
+	if len(r.rotationErrors) > 0 {
+		err := r.rotationErrors[0]
+		r.rotationErrors = r.rotationErrors[1:]
+		return err
+	}
 	return nil
+}
+
+func (r *rotationTestRunner) Recreate(_ context.Context, _ compose.ProjectRef, services ...string) error {
+	r.recreated = append(r.recreated, services...)
+	if len(r.recreateErrors) > 0 {
+		err := r.recreateErrors[0]
+		r.recreateErrors = r.recreateErrors[1:]
+		return err
+	}
+	return r.recreateError
 }
 
 func TestRotateDatabasePasswordPublishesNewGenerationAndMetadata(t *testing.T) {
@@ -121,6 +138,48 @@ func TestRotateDatabasePasswordPreservesDependentServiceRestartFailure(t *testin
 	var failure *contracts.ReconcileFailure
 	if err == nil || !errors.As(err, &failure) || failure.Cause == nil || !strings.Contains(failure.Cause.Error(), "auth dependency failed to start") {
 		t.Fatalf("rotation failure = %#v, want dependent-service Compose diagnostic", failure)
+	}
+}
+
+func TestRotateDatabasePasswordHealthFailurePreservesRollbackRecreateFailure(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &rotationTestRunner{recreateErrors: []error{nil, errors.New("rollback recreate compose output: auth failed")}}
+	inspector := &sequenceInspector{reports: []health.Report{{Health: contracts.HealthHealthy}, {Health: contracts.HealthUnhealthy}}}
+	backend := NewBackend(root, runner, inspector)
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	request := contracts.RotateDatabasePasswordRequest{OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: "rotate-health-rollback", IdempotencyKey: "rotate-health-rollback-key", ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", ExpectedRevision: 1, NextRevision: 2, OldPassword: "db-password", NewPassword: "new-db-password", Configuration: baseConfig(), Secrets: contracts.ProjectSecrets{DatabasePassword: "new-db-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}}
+	_, err = backend.RotateDatabasePassword(context.Background(), request)
+	var failure *contracts.ReconcileFailure
+	if err == nil || !errors.As(err, &failure) || failure.RollbackSucceeded || failure.Cause == nil {
+		t.Fatalf("rotation failure = %#v, want failed typed rollback", failure)
+	}
+	for _, want := range []string{"runtime health is UNHEALTHY", "rollback recreate compose output: auth failed"} {
+		if !strings.Contains(failure.Cause.Error(), want) {
+			t.Fatalf("rotation failure cause = %q, missing %q", failure.Cause, want)
+		}
+	}
+}
+
+func TestRotateDatabasePasswordPreservesDatabaseUpdateFailure(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &rotationTestRunner{rotationErrors: []error{errors.New("psql password update output: permission denied")}}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	request := contracts.RotateDatabasePasswordRequest{OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: "rotate-db-update", IdempotencyKey: "rotate-db-update-key", ProjectID: "project-1", ProjectName: "Bee", Slug: "bee", ExpectedRevision: 1, NextRevision: 2, OldPassword: "db-password", NewPassword: "new-db-password", Configuration: baseConfig(), Secrets: contracts.ProjectSecrets{DatabasePassword: "new-db-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}}
+	_, err = backend.RotateDatabasePassword(context.Background(), request)
+	var failure *contracts.ReconcileFailure
+	if err == nil || !errors.As(err, &failure) || failure.Cause == nil || !strings.Contains(failure.Cause.Error(), "psql password update output: permission denied") {
+		t.Fatalf("rotation failure = %#v, want database update diagnostic", failure)
 	}
 }
 

@@ -85,10 +85,10 @@ func (s *FunctionService) Deploy(ctx context.Context, project compose.ProjectRef
 		return result, nil
 	} else {
 		if restoreErr := s.releases.RestoreFunctionRelease(project.Slug, request.Name, activation); restoreErr != nil {
-			return result, fmt.Errorf("restart functions: %w; rollback release: %v", err, restoreErr)
+			return result, fmt.Errorf("restart functions: %w; rollback release: %w", err, restoreErr)
 		}
 		if restartErr := s.runner.Restart(ctx, project, "functions"); restartErr != nil {
-			return result, fmt.Errorf("restart functions: %w; restart rollback: %v", err, restartErr)
+			return result, fmt.Errorf("restart functions: %w; restart rollback: %w", err, restartErr)
 		}
 		result.RolledBack = true
 		return result, fmt.Errorf("restart functions: %w", err)
