@@ -415,3 +415,18 @@ export interface Operation {
   errorCode?: string;
   errorMessage?: string;
 }
+
+export interface AuthKeysOperationRequest {
+  password: string;
+  confirmProjectName?: string;
+}
+
+export interface AuthKeysOperationResponse {
+  projectId: string;
+  operationId: string;
+}
+
+export interface SecretRevealResponse {
+  kind: string;
+  value: string;
+}

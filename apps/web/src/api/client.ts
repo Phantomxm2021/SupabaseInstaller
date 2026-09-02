@@ -1,5 +1,7 @@
 let csrfToken = ''
 
+import type { AuthKeysOperationRequest, AuthKeysOperationResponse, SecretRevealResponse } from './types'
+
 export class APIError extends Error {
   constructor(
     public readonly status: number,
@@ -28,4 +30,32 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
+}
+
+export function revealSecret(projectId: string, kind: 'anonKey' | 'serviceRoleKey' | 'jwtSecret' | 'databasePassword' | 'publishable-api-key' | 'secret-api-key', password: string) {
+  return apiFetch<SecretRevealResponse>(`/api/projects/${projectId}/secrets/${kind}/reveal`, {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  })
+}
+
+export function migrateAuthKeys(projectId: string, input: AuthKeysOperationRequest) {
+  return apiFetch<AuthKeysOperationResponse>(`/api/projects/${projectId}/auth-keys/migrate`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export function rotateApiKeys(projectId: string, input: AuthKeysOperationRequest) {
+  return apiFetch<AuthKeysOperationResponse>(`/api/projects/${projectId}/auth-keys/rotate-api`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export function rotateSigningKeys(projectId: string, input: AuthKeysOperationRequest) {
+  return apiFetch<AuthKeysOperationResponse>(`/api/projects/${projectId}/auth-keys/rotate-signing`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
 }

@@ -7,9 +7,11 @@
 
 ## Phase 1 status (2026-09-03)
 
-CFG-001, CFG-002, CFG-003, CFG-004, CFG-006, CFG-007, CFG-008, CFG-009, and
-CFG-010 are fixed in the Phase 1 remediation. CFG-005 remains deferred to a
-future phase; the finding below is retained as historical context.
+CFG-001, CFG-002, CFG-003, CFG-004, CFG-005, CFG-006, CFG-007, CFG-008, CFG-009,
+and CFG-010 are fixed in the Phase 1/2 remediation. CFG-005 is closed after
+cross-stack generation, persistence, rendering, and UI safety tests. Signing
+replacement remains an explicit maintenance-window operation because it
+invalidates existing ES256 sessions.
 
 本报告只记录已确认的实现问题或产品配置缺口；没有把“未暴露每一个上游环境变量”
 一概视为 bug。Manager 不提供 raw `.env` 编辑是合理的安全边界，但对外承诺的字段
@@ -20,7 +22,7 @@ future phase; the finding below is retained as historical context.
 | 优先级 | 数量 | 结论 |
 |---|---:|---|
 | P1 | 6 | R2 默认不可用/不完整、Storage 切换会断开历史对象、Phone MFA 可在无短信提供商时启用、Pooler 更新不生效、Caddy 多项目端口冲突。 |
-| P2 | 4 | API 密钥模式落后官方安装流程、上传限制不能配置、R2 输入校验不足、Functions 目录字段无效。 |
+| P2 | 3 | 上传限制不能配置、R2 输入校验不足、Functions 目录字段无效。 |
 | 能力缺口 | 5 组 | Auth、Storage、Realtime、Functions、REST/DB/Pooler 仅覆盖受控子集；需明确产品边界或补齐。 |
 
 ## P1：应优先修复
@@ -105,9 +107,9 @@ OTP 的 provider 或凭据；用户在 challenge 阶段无法收到验证码。�
 
 ## P2：应纳入下一轮配置改造
 
-### CFG-005：新 API key / ES256 配置从未生成或注入
+### CFG-005：新 API key / ES256 配置从未生成或注入（已修复）
 
-**证据**
+**历史证据**
 
 项目密钥模型只生成旧的 HS256 `ANON_KEY` 与 `SERVICE_ROLE_KEY`。运行环境没有生成
 `SUPABASE_PUBLISHABLE_KEY`、`SUPABASE_SECRET_KEY`、`JWT_KEYS`、`JWT_JWKS`；Auth、
@@ -119,10 +121,15 @@ Realtime、Storage 与 Functions 模板中启用 JWKS 的行仍保持上游默�
 和 ES256 会话 JWT，也没有对应的轮换能力。旧密钥模式可运行，因此这是兼容性和
 安全演进缺口，而不是立即的启动故障。
 
-**修复建议**
+**修复与验证**
 
-将官方 `add-new-auth-keys` 的等价逻辑纳入受控密钥生成与加密存储；在渲染阶段显式
-启用 `GOTRUE_JWT_KEYS`、各服务的 `JWT_JWKS`，并提供计划性的 API key / JWK 轮换。
+已纳入受控密钥生成、加密存储、私有 Provisioner reconciliation 与全量渲染；旧的
+`ANON_KEY`/`SERVICE_ROLE_KEY` 在迁移后保持有效。渲染器显式启用
+`GOTRUE_JWT_KEYS`、各服务的 `JWT_JWKS`，并提供密码确认的迁移、opaque API key
+轮换和 exact project-name 确认的 signing rotation。UI 只允许通过现有
+`Cache-Control: no-store` reauthentication endpoint reveal publishable/secret opaque
+keys；private JWK 与 asymmetric role JWT 永不进入 UI。验证包括 `go test ./...`、
+SecretsSection Web tests 与 Web build；signing rotation 必须在维护窗口执行。
 
 ### CFG-006：Storage 上传上限固定为 50 MiB
 
@@ -255,7 +262,7 @@ Supavisor 管理 API 更新租户；加入“初始 20/100，更新为 40/200”
 
 ## 验证与来源
 
-- 运行：`go test ./...`（通过）。
+- 运行：`go test ./...`、`npm --prefix apps/web test -- --run SecretsSection`、Web build（通过）。
 - 检查：`git diff --check`（通过）。
 - 官方 Docker 指南：<https://supabase.com/docs/guides/self-hosting/docker>
 - 官方 S3 / R2 指南：<https://supabase.com/docs/guides/self-hosting/self-hosted-s3>
@@ -270,6 +277,5 @@ Supavisor 管理 API 更新租户；加入“初始 20/100，更新为 40/200”
 2. CFG-010：禁止逐项目 Caddy，或实现宿主级统一反向代理。
 3. CFG-003、CFG-004、CFG-009：为对象切换、Phone MFA 依赖、Pooler 更新补齐安全门禁与
    真实运行态测试。
-4. CFG-005：把新 API key / JWKS 设为新项目默认配置，并规划已有项目迁移。
-5. CFG-006 至 CFG-008：补 Storage 的可配置限额、R2 输入防御，并移除或实现 Functions
-   directory 字段。
+4. CFG-006 至 CFG-008：补 Storage 的可配置限额、R2 输入防御，并移除或实现 Functions
+  directory 字段。
