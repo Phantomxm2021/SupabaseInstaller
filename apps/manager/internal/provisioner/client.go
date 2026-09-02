@@ -41,6 +41,11 @@ type ClientError struct {
 	RuntimeStateChanged bool
 }
 
+type expectedFailureIdentity struct {
+	operationID string
+	projectID   string
+}
+
 func (e *ClientError) Error() string             { return fmt.Sprintf("provisioner %s: %s", e.Code, e.Message) }
 func (e *ClientError) RollbackSucceeded() bool   { return e.RollbackComplete }
 func (e *ClientError) RuntimeOutcomeKnown() bool { return e.RuntimeStateKnown }
@@ -230,7 +235,7 @@ func (c *Client) post(ctx context.Context, path string, input, output any) error
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		return clientErrorForPayload(path, response.StatusCode, payload)
+		return clientErrorForPayload(path, response.StatusCode, payload, expectedFailureIdentityFor(input))
 	}
 	if output != nil && response.StatusCode != http.StatusNoContent {
 		decoder := json.NewDecoder(response.Body)
@@ -274,7 +279,11 @@ func (c *Client) get(ctx context.Context, path string, output any) error {
 // canonical protocol text, not a diagnostic, and is therefore never persisted
 // as one. Reconcile and rotation diagnostics additionally require the explicit
 // redaction contract version when they arrive in their typed response.
-func clientErrorForPayload(path string, status int, payload []byte) *ClientError {
+func clientErrorForPayload(path string, status int, payload []byte, expected ...expectedFailureIdentity) *ClientError {
+	expectedIdentity := expectedFailureIdentity{}
+	if len(expected) > 0 {
+		expectedIdentity = expected[0]
+	}
 	var envelope contracts.ErrorEnvelope
 	envelopeOK := json.Unmarshal(payload, &envelope) == nil
 	var fields map[string]json.RawMessage
@@ -290,7 +299,7 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 		if json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
 			code = result.Error.Code
-			if hasCompleteTypedFailureIdentity(fields, result.OperationID, result.ProjectID, result.Error, result.DiagnosticVersion) {
+			if hasCompleteTypedFailureIdentity(fields, expectedIdentity, result.OperationID, result.ProjectID, result.Error, result.DiagnosticVersion) {
 				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
 				diagnostic = result.Diagnostic
 			}
@@ -300,7 +309,7 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 		if json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
 			code = result.Error.Code
-			if hasCompleteTypedFailureIdentity(fields, result.OperationID, result.ProjectID, result.Error, result.DiagnosticVersion) {
+			if hasCompleteTypedFailureIdentity(fields, expectedIdentity, result.OperationID, result.ProjectID, result.Error, result.DiagnosticVersion) {
 				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
 				diagnostic = result.Diagnostic
 			}
@@ -333,8 +342,21 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 	return &ClientError{Code: code, Message: message, Status: status, RollbackComplete: rollbackComplete, RuntimeStateKnown: runtimeStateKnown, RuntimeStateChanged: runtimeStateChanged}
 }
 
-func hasCompleteTypedFailureIdentity(fields map[string]json.RawMessage, operationID, projectID string, apiError *contracts.APIError, diagnosticVersion int) bool {
-	return operationID != "" && projectID != "" && apiError != nil && apiError.Code != "" && contracts.SupportsDiagnosticVersion(diagnosticVersion) && isJSONBoolean(fields["rolledBack"]) && hasValidOptionalRuntimeChanged(fields)
+func expectedFailureIdentityFor(input any) expectedFailureIdentity {
+	switch value := input.(type) {
+	case contracts.ReconcileProjectRequest:
+		return expectedFailureIdentity{operationID: value.OperationID, projectID: value.ProjectID}
+	case contracts.RotateDatabasePasswordRequest:
+		return expectedFailureIdentity{operationID: value.OperationID, projectID: value.ProjectID}
+	case contracts.ConfirmDatabasePasswordRotationRequest:
+		return expectedFailureIdentity{operationID: value.OperationID, projectID: value.ProjectID}
+	default:
+		return expectedFailureIdentity{}
+	}
+}
+
+func hasCompleteTypedFailureIdentity(fields map[string]json.RawMessage, expected expectedFailureIdentity, operationID, projectID string, apiError *contracts.APIError, diagnosticVersion int) bool {
+	return expected.operationID != "" && expected.projectID != "" && operationID == expected.operationID && projectID == expected.projectID && apiError != nil && apiError.Code != "" && contracts.SupportsDiagnosticVersion(diagnosticVersion) && isJSONBoolean(fields["rolledBack"]) && hasValidOptionalRuntimeChanged(fields)
 }
 
 func hasValidOptionalRuntimeChanged(fields map[string]json.RawMessage) bool {

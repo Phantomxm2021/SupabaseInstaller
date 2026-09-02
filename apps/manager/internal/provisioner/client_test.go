@@ -221,7 +221,7 @@ func TestClientPreservesVersionedReconcileDiagnostic(t *testing.T) {
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
 
-	_, err := client.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+	_, err := client.Reconcile(context.Background(), contracts.ReconcileProjectRequest{OperationID: "op-1", ProjectID: "project-1"})
 	if err == nil || !strings.Contains(err.Error(), "services: auth") {
 		t.Fatalf("Reconcile() error = %v, want provisioner diagnostic", err)
 	}
@@ -348,11 +348,11 @@ func TestClientTrustsCompleteVersionedFailureWithOmittedFalseRuntimeChange(t *te
 		diagnostic string
 	}{
 		{"reconcile", func(c *Client) error {
-			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{OperationID: "op-1", ProjectID: "project-1"})
 			return err
 		}, "RECONCILE_FAILED", "reconcile diagnostic with unchanged runtime"},
 		{"rotation", func(c *Client) error {
-			_, err := c.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{})
+			_, err := c.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{OperationID: "op-1", ProjectID: "project-1"})
 			return err
 		}, "ROTATE_DATABASE_PASSWORD_FAILED", "rotation diagnostic with unchanged runtime"},
 	} {
@@ -366,6 +366,48 @@ func TestClientTrustsCompleteVersionedFailureWithOmittedFalseRuntimeChange(t *te
 			err := tc.call(client)
 			if !errors.As(err, &clientErr) || clientErr.Message != tc.diagnostic || !clientErr.RuntimeOutcomeKnown() || clientErr.RuntimeChanged() {
 				t.Fatalf("error = %#v, want trusted unchanged runtime diagnostic %q", err, tc.diagnostic)
+			}
+		})
+	}
+}
+
+func TestClientRejectsTypedFailureWithMismatchedRequestIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		call      func(*Client) error
+		code      string
+		operation string
+		project   string
+		canonical string
+	}{
+		{"reconcile operation", func(c *Client) error {
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{OperationID: "submitted-op", ProjectID: "submitted-project"})
+			return err
+		}, "RECONCILE_FAILED", "other-op", "submitted-project", "Server runtime reconciliation failed"},
+		{"reconcile project", func(c *Client) error {
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{OperationID: "submitted-op", ProjectID: "submitted-project"})
+			return err
+		}, "RECONCILE_FAILED", "submitted-op", "other-project", "Server runtime reconciliation failed"},
+		{"rotation operation", func(c *Client) error {
+			_, err := c.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{OperationID: "submitted-op", ProjectID: "submitted-project"})
+			return err
+		}, "ROTATE_DATABASE_PASSWORD_FAILED", "other-op", "submitted-project", "Database password rotation failed"},
+		{"rotation project", func(c *Client) error {
+			_, err := c.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{OperationID: "submitted-op", ProjectID: "submitted-project"})
+			return err
+		}, "ROTATE_DATABASE_PASSWORD_FAILED", "submitted-op", "other-project", "Database password rotation failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const sentinel = "unsafe-mismatched-identity-diagnostic"
+			body := `{"operationId":"` + tc.operation + `","projectId":"` + tc.project + `","rolledBack":true,"runtimeChanged":true,"error":{"code":"` + tc.code + `","message":"untrusted"},"diagnostic":"` + sentinel + `","diagnosticVersion":1}`
+			httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})}
+			client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+			var clientErr *ClientError
+			err := tc.call(client)
+			if !errors.As(err, &clientErr) || clientErr.Message != tc.canonical || strings.Contains(clientErr.Message, sentinel) || clientErr.RuntimeOutcomeKnown() || clientErr.RuntimeChanged() {
+				t.Fatalf("error = %#v, want canonical unknown-outcome response", err)
 			}
 		})
 	}
@@ -406,7 +448,7 @@ func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
 
-	_, err := client.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{})
+	_, err := client.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{OperationID: "op-1", ProjectID: "project-1"})
 	if err == nil || !strings.Contains(err.Error(), "Database password rotation failed") || strings.Contains(err.Error(), sentinel) {
 		t.Fatalf("RotateDatabasePassword() error = %v, want redacted typed failure", err)
 	}
@@ -423,7 +465,7 @@ func TestClientPreservesProvisionerRotationDiagnostic(t *testing.T) {
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
 
-	_, err := client.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{})
+	_, err := client.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{OperationID: "op-1", ProjectID: "project-1"})
 	if err == nil || !strings.Contains(err.Error(), diagnostic) {
 		t.Fatalf("RotateDatabasePassword() error = %v, want provisioner diagnostic", err)
 	}
