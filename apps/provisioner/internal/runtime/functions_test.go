@@ -53,14 +53,14 @@ func TestFunctionServiceDeployPreservesRestartAndRestoreCauses(t *testing.T) {
 	}
 }
 
-func TestFunctionServiceDeployClassifiesArchiveIngestionFailures(t *testing.T) {
-	stageErr := errors.New("archive entry sentinel could not be extracted")
+func TestFunctionServiceDeployPreservesStagingFilesystemFailures(t *testing.T) {
+	stageErr := errors.New("staging filesystem sentinel: sync failed")
 	releases := &functionReleaseFake{stageErr: stageErr}
 	service := NewFunctionService(releases, &functionRunnerFake{})
 	_, err := service.Deploy(context.Background(), compose.ProjectRef{Slug: "bee"}, contracts.DeployFunctionRequest{Name: "demo", OperationID: "op-1"}, bytes.NewBufferString("zip"))
-	var ingestion *ArchiveIngestionError
-	if err == nil || !errors.As(err, &ingestion) || !errors.Is(err, stageErr) {
-		t.Fatalf("Deploy() error = %v, want classified archive ingestion failure wrapping %v", err, stageErr)
+	var ingestion interface{ ArchiveIngestionFailure() }
+	if err == nil || errors.As(err, &ingestion) || !errors.Is(err, stageErr) {
+		t.Fatalf("Deploy() error = %v, want unclassified staging failure wrapping %v", err, stageErr)
 	}
 }
 

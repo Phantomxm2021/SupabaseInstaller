@@ -29,6 +29,19 @@ const (
 
 var operationIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
+// ArchiveIngestionError marks a failure caused by caller-controlled ZIP bytes
+// or entries. Callers can safely distinguish it from host filesystem failures
+// without inspecting error text.
+type ArchiveIngestionError struct{ Cause error }
+
+func (err *ArchiveIngestionError) Error() string        { return err.Cause.Error() }
+func (err *ArchiveIngestionError) Unwrap() error        { return err.Cause }
+func (*ArchiveIngestionError) ArchiveIngestionFailure() {}
+
+func archiveIngestionError(cause error) error {
+	return &ArchiveIngestionError{Cause: cause}
+}
+
 // FunctionReleaseStage is an extracted, unactivated release. Its path remains
 // private to Provisioner callers and is never returned by an HTTP handler.
 type FunctionReleaseStage struct {
@@ -161,17 +174,17 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 	}
 	contents, err := io.ReadAll(io.LimitReader(archive, maxFunctionArchiveBytes+1))
 	if err != nil {
-		return FunctionReleaseStage{}, fmt.Errorf("read function archive: %w", err)
+		return FunctionReleaseStage{}, archiveIngestionError(fmt.Errorf("read function archive: %w", err))
 	}
 	if len(contents) > maxFunctionArchiveBytes {
-		return FunctionReleaseStage{}, fmt.Errorf("function archive exceeds 20 MiB")
+		return FunctionReleaseStage{}, archiveIngestionError(fmt.Errorf("function archive exceeds 20 MiB"))
 	}
 	reader, err := zip.NewReader(bytes.NewReader(contents), int64(len(contents)))
 	if err != nil {
-		return FunctionReleaseStage{}, fmt.Errorf("open function ZIP: %w", err)
+		return FunctionReleaseStage{}, archiveIngestionError(fmt.Errorf("open function ZIP: %w", err))
 	}
 	if len(reader.File) > maxFunctionFiles {
-		return FunctionReleaseStage{}, fmt.Errorf("function archive contains too many files")
+		return FunctionReleaseStage{}, archiveIngestionError(fmt.Errorf("function archive contains too many files"))
 	}
 	project, err := r.ProjectPath(slug)
 	if err != nil {
@@ -198,7 +211,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 	for _, item := range reader.File {
 		clean, isDirectory, err := safeFunctionArchivePath(item)
 		if err != nil {
-			return fail(err)
+			return fail(archiveIngestionError(err))
 		}
 		if isFunctionArchiveMetadata(clean) {
 			continue
@@ -212,17 +225,17 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 				if isDirectory {
 					continue
 				}
-				return fail(fmt.Errorf("function archive contains an invalid enclosing directory"))
+				return fail(archiveIngestionError(fmt.Errorf("function archive contains an invalid enclosing directory")))
 			}
 			if !strings.HasPrefix(clean, stripPrefix) {
-				return fail(fmt.Errorf("function archive contains an invalid enclosing directory"))
+				return fail(archiveIngestionError(fmt.Errorf("function archive contains an invalid enclosing directory")))
 			}
 			clean = strings.TrimPrefix(clean, stripPrefix)
 			if clean == "" {
 				if isDirectory {
 					continue
 				}
-				return fail(fmt.Errorf("function archive contains an invalid enclosing directory"))
+				return fail(archiveIngestionError(fmt.Errorf("function archive contains an invalid enclosing directory")))
 			}
 		}
 		if isDirectory {
@@ -232,11 +245,11 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 			continue
 		}
 		if _, found := paths[clean]; found {
-			return fail(fmt.Errorf("function archive contains duplicate path"))
+			return fail(archiveIngestionError(fmt.Errorf("function archive contains duplicate path")))
 		}
 		paths[clean] = struct{}{}
 		if item.UncompressedSize64 > maxFunctionFileBytes {
-			return fail(fmt.Errorf("function archive file exceeds 20 MiB"))
+			return fail(archiveIngestionError(fmt.Errorf("function archive file exceeds 20 MiB")))
 		}
 		if !isDirectory && clean == "index.ts" {
 			hasIndex = true
@@ -247,27 +260,34 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 		source, err := item.Open()
 		if err != nil {
-			return fail(fmt.Errorf("open function archive entry: %w", err))
+			return fail(archiveIngestionError(fmt.Errorf("open function archive entry: %w", err)))
 		}
-		var copied int64
+		contents, readErr := io.ReadAll(io.LimitReader(source, maxFunctionFileBytes+1))
+		sourceCloseErr := source.Close()
+		if readErr != nil {
+			return fail(archiveIngestionError(fmt.Errorf("read function archive entry: %w", readErr)))
+		}
+		if sourceCloseErr != nil {
+			return fail(archiveIngestionError(fmt.Errorf("close function archive entry: %w", sourceCloseErr)))
+		}
+		if len(contents) > maxFunctionFileBytes {
+			return fail(archiveIngestionError(fmt.Errorf("function archive file exceeds 20 MiB")))
+		}
+		copied := int64(len(contents))
 		destination, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
-			copied, err = io.Copy(destination, io.LimitReader(source, maxFunctionFileBytes+1))
-			if err == nil && copied > maxFunctionFileBytes {
-				err = fmt.Errorf("function archive file exceeds 20 MiB")
-			}
+			_, err = destination.Write(contents)
 			closeErr := destination.Close()
 			if err == nil {
 				err = closeErr
 			}
 		}
-		_ = source.Close()
 		if err != nil {
-			return fail(fmt.Errorf("extract function archive entry: %w", err))
+			return fail(fmt.Errorf("write function archive entry: %w", err))
 		}
 		extracted += copied
 		if extracted > maxFunctionExtractedBytes {
-			return fail(fmt.Errorf("function archive exceeds 100 MiB when extracted"))
+			return fail(archiveIngestionError(fmt.Errorf("function archive exceeds 100 MiB when extracted")))
 		}
 	}
 	if !hasIndex {
@@ -275,7 +295,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		if entries := functionArchiveEntrySummary(reader.File); entries != "" {
 			message += "; archive entries: " + entries
 		}
-		return fail(fmt.Errorf("%s", message))
+		return fail(archiveIngestionError(fmt.Errorf("%s", message)))
 	}
 	if err := syncDirectory(stage); err != nil {
 		return fail(err)

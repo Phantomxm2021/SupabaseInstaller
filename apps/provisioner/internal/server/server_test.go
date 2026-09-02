@@ -189,7 +189,7 @@ func TestFunctionDeployEndpointDoesNotReturnArchiveControlledFailureDetail(t *te
 	const archiveSentinel = "archive-content-sentinel"
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
-	backend := &functionDeployStub{err: archiveIngestionError{detail: "function archive entry " + archiveSentinel + " could not be extracted"}}
+	backend := &functionDeployStub{err: &projectfs.ArchiveIngestionError{Cause: errors.New("function archive entry " + archiveSentinel + " could not be extracted")}}
 	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
 	request := httptest.NewRequest(http.MethodPost, "/internal/v1/projects/bee/functions/demo/deploy", strings.NewReader("zip-body"))
 	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
@@ -223,6 +223,27 @@ func TestFunctionDeployEndpointReturnsSanitizedRuntimeFailureDiagnostic(t *testi
 		t.Fatal(err)
 	}
 	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || !strings.Contains(body.Diagnostic, "compose action failed: functions exited") || strings.Contains(body.Diagnostic, "secret-value") || !strings.Contains(logs.String(), body.Diagnostic) {
+		t.Fatalf("response=%d body=%#v logs=%s", response.Code, body, logs.String())
+	}
+}
+
+func TestFunctionDeployEndpointReturnsSanitizedStagingFilesystemDiagnostic(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	backend := &functionDeployStub{err: errors.New("staging filesystem sentinel: sync failed; token=secret-value")}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/projects/bee/functions/demo/deploy", strings.NewReader("zip-body"))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	request.Header.Set("Content-Type", "application/zip")
+	request.Header.Set("X-Operation-ID", "operation-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var body contracts.ErrorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(body.Diagnostic, "staging filesystem sentinel: sync failed") || strings.Contains(body.Diagnostic, "secret-value") || !strings.Contains(logs.String(), body.Diagnostic) {
 		t.Fatalf("response=%d body=%#v logs=%s", response.Code, body, logs.String())
 	}
 }
@@ -630,11 +651,6 @@ func (stub *hostResourcesStub) HostResources(context.Context) (contracts.HostRes
 func (stub *hostResourcesStub) HostPortAvailable(_ context.Context, port int) (bool, error) {
 	return stub.portAvailable[port], stub.portErr
 }
-
-type archiveIngestionError struct{ detail string }
-
-func (err archiveIngestionError) Error() string        { return err.detail }
-func (archiveIngestionError) ArchiveIngestionFailure() {}
 
 func (s *reconcileStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
 func (s *reconcileStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {

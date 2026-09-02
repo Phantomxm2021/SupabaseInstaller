@@ -3,11 +3,24 @@ package projectfs
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestStageFunctionReleaseClassifiesInvalidZIPAsArchiveIngestion(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = root.StageFunctionRelease("bee", "demo", "operation-1", bytes.NewBufferString("invalid-zip-sentinel"))
+	var ingestion *ArchiveIngestionError
+	if err == nil || !errors.As(err, &ingestion) {
+		t.Fatalf("StageFunctionRelease() error = %v, want classified invalid ZIP failure", err)
+	}
+}
 
 func TestStageFunctionReleaseRejectsUnrelatedEnclosingDirectory(t *testing.T) {
 	root, err := New(t.TempDir())
