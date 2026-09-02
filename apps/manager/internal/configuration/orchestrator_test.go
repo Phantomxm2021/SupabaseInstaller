@@ -472,6 +472,42 @@ func TestRunDoesNotRestoreOrCompareLegacyCandidateRevision(t *testing.T) {
 	}
 }
 
+type unknownAuthKeysProvisioner struct{}
+
+func (unknownAuthKeysProvisioner) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
+}
+func (unknownAuthKeysProvisioner) ReconcileAuthKeys(context.Context, contracts.AuthKeysReconcileRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, &provisioner.ClientError{Code: "AUTH_KEYS_RECONCILE_FAILED", Message: "outcome unavailable", RuntimeStateChanged: true}
+}
+
+func TestRunAuthKeysUnknownOutcomeRetainsAdmittedCandidate(t *testing.T) {
+	orchestrator, database, operations, currentProject, snapshot, lease, op := newRecoveryFixture(t, "MIGRATE_AUTH_KEYS")
+	orchestrator.provisioner = unknownAuthKeysProvisioner{}
+	candidate := contracts.AuthKeysCandidate{SupabasePublishableKey: "candidate-publishable"}
+	_, err := orchestrator.RunAuthKeys(context.Background(), currentProject, op, snapshot, candidate)
+	if err == nil {
+		t.Fatal("RunAuthKeys() succeeded for unknown runtime outcome")
+	}
+	owned, err := database.OwnsConfigurationLease(context.Background(), currentProject.ID, op.ID, lease.Fence, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !owned {
+		t.Fatal("unknown outcome lost the admitted lease")
+	}
+	stored, err := operations.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != operation.Failed {
+		t.Fatalf("operation status=%s, want FAILED", stored.Status)
+	}
+	if _, err := database.GetSecret(context.Background(), currentProject.ID, "publishable-api-key"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("candidate secret persisted on unknown outcome: %v", err)
+	}
+}
+
 type staticResponseProvisioner struct {
 	response contracts.ReconcileProjectResponse
 }

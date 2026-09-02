@@ -209,6 +209,16 @@ func (c *Client) RotateDatabasePassword(ctx context.Context, input contracts.Rot
 	return output, nil
 }
 
+// ReconcileAuthKeys uses a private envelope because ProjectSecrets deliberately
+// omits candidate auth-key fields from all ordinary JSON contracts.
+func (c *Client) ReconcileAuthKeys(ctx context.Context, input contracts.AuthKeysReconcileRequest) (contracts.ReconcileProjectResponse, error) {
+	var output contracts.ReconcileProjectResponse
+	if err := c.post(ctx, "/internal/v1/projects/reconcile-auth-keys", input, &output); err != nil {
+		return contracts.ReconcileProjectResponse{}, err
+	}
+	return output, nil
+}
+
 func (c *Client) RollbackDatabasePassword(ctx context.Context, input contracts.RotateDatabasePasswordRequest) error {
 	return c.post(ctx, "/internal/v1/projects/rollback-database-password", input, nil)
 }
@@ -294,13 +304,13 @@ func clientErrorForPayload(path string, status int, payload []byte, expected ...
 	typedResponse := false
 	rollbackComplete, runtimeStateKnown, runtimeStateChanged := false, false, false
 
-	if path == "/internal/v1/projects/reconcile" {
+	if path == "/internal/v1/projects/reconcile" || path == "/internal/v1/projects/reconcile-auth-keys" {
 		var result contracts.ReconcileProjectResponse
 		if json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
 			code = result.Error.Code
 			if hasCompleteTypedFailureIdentity(fields, expectedIdentity, result.OperationID, result.ProjectID, result.Error, result.DiagnosticVersion) {
-				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
+				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, !result.RuntimeOutcomeUnknown, result.RuntimeChanged
 				diagnostic = result.Diagnostic
 			}
 		}
@@ -326,7 +336,7 @@ func clientErrorForPayload(path string, status int, payload []byte, expected ...
 			diagnostic = result.Diagnostic
 		}
 	}
-	if !typedResponse && envelopeOK && path != "/internal/v1/projects/reconcile" && !isRotationPath(path) {
+	if !typedResponse && envelopeOK && path != "/internal/v1/projects/reconcile" && path != "/internal/v1/projects/reconcile-auth-keys" && !isRotationPath(path) {
 		diagnostic = envelope.Diagnostic
 	}
 
@@ -346,6 +356,8 @@ func expectedFailureIdentityFor(input any) expectedFailureIdentity {
 	switch value := input.(type) {
 	case contracts.ReconcileProjectRequest:
 		return expectedFailureIdentity{operationID: value.OperationID, projectID: value.ProjectID}
+	case contracts.AuthKeysReconcileRequest:
+		return expectedFailureIdentity{operationID: value.Request.OperationID, projectID: value.Request.ProjectID}
 	case contracts.RotateDatabasePasswordRequest:
 		return expectedFailureIdentity{operationID: value.OperationID, projectID: value.ProjectID}
 	case contracts.ConfirmDatabasePasswordRotationRequest:

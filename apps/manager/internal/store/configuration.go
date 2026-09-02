@@ -843,6 +843,56 @@ func (s *Store) MarkConfigurationGoodOwned(ctx context.Context, projectID string
 	})
 }
 
+// PublishSecretsAndMarkConfigurationGoodOwned commits auth-key ciphertext and
+// the fenced configuration publication in one transaction.
+func (s *Store) PublishSecretsAndMarkConfigurationGoodOwned(ctx context.Context, projectID string, revision int64, owner string, fence int64, phase string, values map[string]secrets.Envelope, now time.Time) error {
+	if revision <= 0 {
+		return ErrStaleConfiguration
+	}
+	if err := validateConfigurationOwner(owner, fence); err != nil {
+		return err
+	}
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var current int64
+		if err := tx.QueryRowContext(ctx, `SELECT config_revision FROM projects WHERE id=?`, projectID).Scan(&current); err != nil {
+			return err
+		}
+		if current != revision {
+			return fmt.Errorf("%w: expected current revision %d, got %d", ErrStaleConfiguration, current, revision)
+		}
+		var leaseOwner string
+		var leaseFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&leaseOwner, &leaseFence); err != nil {
+			return err
+		}
+		if leaseOwner != owner || leaseFence != fence {
+			return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
+		}
+		var boundRevision, boundFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT revision,fence FROM operation_configurations WHERE operation_id=? AND project_id=?`, owner, projectID).Scan(&boundRevision, &boundFence); err != nil {
+			return err
+		}
+		if boundRevision != revision || boundFence != fence {
+			return fmt.Errorf("%w: operation fence changed", ErrStaleConfiguration)
+		}
+		for kind, env := range values {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id,kind,envelope_version,nonce,ciphertext,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id,kind) DO UPDATE SET envelope_version=excluded.envelope_version,nonce=excluded.nonce,ciphertext=excluded.ciphertext,updated_at=excluded.updated_at`, projectID, kind, env.Version, env.Nonce, env.Ciphertext, formatTime(now)); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE projects SET last_good_revision=?,updated_at=? WHERE id=?`, revision, formatTime(now), projectID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase=? WHERE id=?`, phase, owner); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 func updateCanonicalProjectionTx(ctx context.Context, tx *sql.Tx, projectID string, cfg contracts.ProjectConfiguration, now time.Time) error {
 	payload, err := json.Marshal(redactConfiguration(cfg))
 	if err != nil {

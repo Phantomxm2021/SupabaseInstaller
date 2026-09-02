@@ -485,6 +485,30 @@ func TestClientTreatsUnavailableRotationVerificationAsUnknownRuntimeOutcome(t *t
 	}
 }
 
+func TestClientClassifiesAuthKeyReconcileFailure(t *testing.T) {
+	const raw = `{"operationId":"op-1","projectId":"project-1","rolledBack":false,"runtimeChanged":false,"error":{"code":"AUTH_KEYS_RECONCILE_FAILED","message":"Auth key runtime reconciliation failed"},"diagnostic":"render rejected","diagnosticVersion":1}`
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 422, Body: io.NopCloser(strings.NewReader(raw)), Header: make(http.Header)}, nil
+	})})
+	_, err := client.ReconcileAuthKeys(context.Background(), contracts.AuthKeysReconcileRequest{Request: contracts.ReconcileProjectRequest{OperationID: "op-1", ProjectID: "project-1"}})
+	var clientErr *ClientError
+	if err == nil || !errors.As(err, &clientErr) || !clientErr.RuntimeOutcomeKnown() || clientErr.RuntimeChanged() {
+		t.Fatalf("unexpected auth-key failure classification: %#v", err)
+	}
+}
+
+func TestClientClassifiesUnknownAuthKeyReconcileOutcome(t *testing.T) {
+	raw := `{"operationId":"op-1","projectId":"project-1","rolledBack":false,"runtimeChanged":true,"runtimeOutcomeUnknown":true,"error":{"code":"AUTH_KEYS_RECONCILE_FAILED","message":"failed"},"diagnostic":"outcome unavailable","diagnosticVersion":1}`
+	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 422, Body: io.NopCloser(strings.NewReader(raw)), Header: make(http.Header)}, nil
+	})})
+	_, err := client.ReconcileAuthKeys(context.Background(), contracts.AuthKeysReconcileRequest{Request: contracts.ReconcileProjectRequest{OperationID: "op-1", ProjectID: "project-1"}})
+	var clientErr *ClientError
+	if err == nil || !errors.As(err, &clientErr) || clientErr.RuntimeOutcomeKnown() || !clientErr.RuntimeChanged() {
+		t.Fatalf("unexpected unknown auth-key outcome: %#v", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

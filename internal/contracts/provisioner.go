@@ -69,6 +69,26 @@ type ReconcileProjectResponse struct {
 	DiagnosticVersion     int       `json:"diagnosticVersion,omitempty"`
 }
 
+// AuthKeysCandidate is private RPC material. It is intentionally separate
+// from ProjectSecrets because the latter is also used by public contracts and
+// its six auth-key fields are json:"-".
+type AuthKeysCandidate struct {
+	SupabasePublishableKey   string `json:"publishableKey"`
+	SupabaseSecretKey        string `json:"secretKey"`
+	AnonKeyAsymmetric        string `json:"anonKeyAsymmetric"`
+	ServiceRoleKeyAsymmetric string `json:"serviceRoleKeyAsymmetric"`
+	JWTKeys                  string `json:"jwtKeys"`
+	JWTJWKS                  string `json:"jwtJwks"`
+}
+
+// AuthKeysReconcileRequest is the authenticated Manager/Provisioner-only
+// envelope for candidate auth-key material. Legacy reconciliation input stays
+// in Request; only the candidate fields are added by this envelope.
+type AuthKeysReconcileRequest struct {
+	Request   ReconcileProjectRequest `json:"request"`
+	Candidate AuthKeysCandidate       `json:"candidate"`
+}
+
 // RotateDatabasePasswordRequest is a narrowly scoped sensitive RPC. The
 // Provisioner receives values only over the authenticated private channel and
 // never includes them in responses, logs, or operation events.
