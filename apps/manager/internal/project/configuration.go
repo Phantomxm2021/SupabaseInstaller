@@ -57,7 +57,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		},
 		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal, UploadFileSizeLimit: defaultStorageUploadFileSizeLimit},
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
-		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true, Directory: "./functions"},
+		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true},
 		Database:  contracts.DatabaseConfig{Version: "17", MaxConnections: 100},
 		Pooler:    contracts.PoolerConfig{PoolSize: 20, MaxClientConnections: 100},
 		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},

@@ -31,7 +31,9 @@ func TestReconcileRecreatesOnlyAffectedService(t *testing.T) {
 		{name: "google oauth", change: func(c *contracts.ProjectConfiguration) {
 			c.Auth.OAuth = map[string]contracts.OAuthProviderConfig{"google": {Enabled: false}}
 		}, want: []string{"auth"}},
-		{name: "functions environment", change: func(c *contracts.ProjectConfiguration) { c.Functions.Directory = "./functions-v2" }, want: []string{"functions"}},
+		{name: "functions environment", change: func(c *contracts.ProjectConfiguration) {
+			c.Functions.DefaultJWTVerification = !c.Functions.DefaultJWTVerification
+		}, want: []string{"functions"}},
 		{name: "storage backend", change: func(c *contracts.ProjectConfiguration) { c.Storage.Backend = contracts.StorageBackendS3 }, want: []string{"storage"}},
 		{name: "site URL", change: func(c *contracts.ProjectConfiguration) { c.General.SiteURL = "https://new.example.com" }, want: []string{"auth", "studio", "api-gw"}},
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -564,6 +565,46 @@ func TestMigration002UpgradesExistingV1Database(t *testing.T) {
 	}
 	if snapshot.Configuration.General.SupabaseVersion != "self-hosted/v0.8.0" || snapshot.Configuration.General.Domain == "" || snapshot.Configuration.General.SiteURL == "" || snapshot.Configuration.Realtime.MaxConnections != 100 || snapshot.Configuration.Realtime.DatabasePoolSize != 5 || snapshot.Configuration.Realtime.LogLevel != contracts.LogLevelInfo || snapshot.Configuration.Database.MaxConnections != 100 || snapshot.Configuration.Pooler.PoolSize != 20 || snapshot.Configuration.Pooler.MaxClientConnections != 100 || snapshot.Configuration.Network.Gateway != contracts.GatewayEnvoy || snapshot.Configuration.Network.HTTPSMode != contracts.HTTPSModeExternal || snapshot.Configuration.Storage.Backend != contracts.StorageBackendLocal {
 		t.Fatalf("legacy safe defaults missing: %#v", snapshot.Configuration)
+	}
+	var raw string
+	if err := upgraded.DB().QueryRow(`SELECT config_json FROM project_configuration WHERE project_id = ?`, project.ID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, `"directory"`) {
+		t.Fatalf("legacy functions directory key was retained: %s", raw)
+	}
+}
+
+func TestMigrationRemovesHistoricalFunctionsDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manager.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := projectFixture()
+	if err := s.CreateProject(context.Background(), project, configurationFixture()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE project_configuration SET config_json=json_set(config_json, '$.functions.directory', './functions') WHERE project_id=?`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`DELETE FROM schema_migrations WHERE version=16`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var raw string
+	if err := s.DB().QueryRow(`SELECT config_json FROM project_configuration WHERE project_id=?`, project.ID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, `"directory"`) {
+		t.Fatalf("historical functions directory key was retained: %s", raw)
 	}
 }
 

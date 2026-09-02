@@ -34,6 +34,16 @@ func TestDefaultConfiguration(t *testing.T) {
 	}
 }
 
+func TestFunctionsConfigurationDoesNotExposeDirectory(t *testing.T) {
+	payload, err := json.Marshal(DefaultConfiguration(contracts.PresetLightweight).Functions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), "directory") {
+		t.Fatalf("functions config still exposes directory: %s", payload)
+	}
+}
+
 func TestStorageUploadFileSizeLimitBounds(t *testing.T) {
 	for _, limit := range []int64{1*1024*1024 - 1, 5*1024*1024*1024 + 1} {
 		cfg := DefaultConfiguration(contracts.PresetLightweight)

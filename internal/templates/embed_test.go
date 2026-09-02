@@ -18,6 +18,16 @@ func TestEmbeddedStudioDefaultUsesServerTerminology(t *testing.T) {
 	}
 }
 
+func TestSupavisorBootstrapUpsertsExistingTenantLimits(t *testing.T) {
+	script, err := Files().ReadFile("self-hosted-v0.8.0/volumes/pooler/pooler.exs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), "Supavisor.Tenants.update_tenant") {
+		t.Fatal("pooler bootstrap is missing existing-tenant update path")
+	}
+}
+
 func TestEmbeddedDocumentationAndScriptsUseServerTerminology(t *testing.T) {
 	cases := map[string][]string{
 		"self-hosted-v0.8.0/README.md": {

@@ -196,7 +196,7 @@ func createCustomSMTPFunctionsProject(t *testing.T, client *http.Client, baseURL
 		Auth:      contracts.AuthConfig{Enabled: true, Email: contracts.EmailAuthConfig{Enabled: true, AllowSignup: true}, SMTP: contracts.SMTPConfig{Port: 587}, Mailer: acceptanceMailerConfig(), RateLimits: contracts.RateLimitConfig{EmailSent: 30, SMSSent: 30, TokenRefresh: 150, TokenVerification: 30, AnonymousUsers: 30, SignupsAndSignins: 30}, MFA: contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6}},
 		Storage:   contracts.StorageConfig{Backend: contracts.StorageBackendLocal},
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
-		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true, Directory: "./functions"},
+		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true},
 		Database:  contracts.DatabaseConfig{Version: "17", MaxConnections: 100},
 		Pooler:    contracts.PoolerConfig{PoolSize: 20, MaxClientConnections: 100},
 		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},

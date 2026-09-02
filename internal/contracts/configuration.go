@@ -207,7 +207,6 @@ type FunctionVariable struct {
 
 type FunctionsConfig struct {
 	DefaultJWTVerification bool               `json:"defaultJwtVerification"`
-	Directory              string             `json:"directory"`
 	Variables              []FunctionVariable `json:"variables,omitempty"`
 }
 
