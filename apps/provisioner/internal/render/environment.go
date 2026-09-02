@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"supabase-manager/internal/authkeys"
 	"supabase-manager/internal/contracts"
 	"supabase-manager/internal/templates"
 )
@@ -47,9 +48,22 @@ func renderEnvironment(input Input) (string, string, error) {
 	if err := requireRuntimeSecrets(input); err != nil {
 		return "", "", err
 	}
+	bundle := authkeys.Bundle{SupabasePublishableKey: input.Secrets.SupabasePublishableKey, SupabaseSecretKey: input.Secrets.SupabaseSecretKey, AnonKeyAsymmetric: input.Secrets.AnonKeyAsymmetric, ServiceRoleKeyAsymmetric: input.Secrets.ServiceRoleKeyAsymmetric, JWTKeys: input.Secrets.JWTKeys, JWTJWKS: input.Secrets.JWTJWKS}
+	keyCount := 0
+	for _, value := range []string{bundle.SupabasePublishableKey, bundle.SupabaseSecretKey, bundle.AnonKeyAsymmetric, bundle.ServiceRoleKeyAsymmetric, bundle.JWTKeys, bundle.JWTJWKS} {
+		if value != "" {
+			keyCount++
+		}
+	}
+	if keyCount != 0 && (keyCount != 6 || bundle.Validate(input.Secrets.JWTSecret) != nil) {
+		return "", "", fmt.Errorf("invalid asymmetric auth key bundle")
+	}
 	domain := cfg.General.Domain
 	values := map[string]string{
 		"ANON_KEY": input.Secrets.AnonKey, "API_EXTERNAL_URL": "https://" + domain + "/auth/v1",
+		"SUPABASE_PUBLISHABLE_KEY": input.Secrets.SupabasePublishableKey, "SUPABASE_SECRET_KEY": input.Secrets.SupabaseSecretKey,
+		"ANON_KEY_ASYMMETRIC": input.Secrets.AnonKeyAsymmetric, "SERVICE_ROLE_KEY_ASYMMETRIC": input.Secrets.ServiceRoleKeyAsymmetric,
+		"JWT_KEYS": input.Secrets.JWTKeys, "JWT_JWKS": input.Secrets.JWTJWKS,
 		"DASHBOARD_USERNAME":     firstNonempty(strings.TrimSpace(cfg.General.StudioUsername), "supabase"),
 		"STUDIO_DEFAULT_PROJECT": firstNonempty(input.ProjectName, "Default Server"),
 		"DASHBOARD_PASSWORD":     input.Secrets.DashboardPassword, "JWT_SECRET": input.Secrets.JWTSecret,

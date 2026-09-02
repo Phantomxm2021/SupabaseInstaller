@@ -11,6 +11,7 @@ import (
 	"io"
 	"time"
 
+	"supabase-manager/internal/authkeys"
 	"supabase-manager/internal/contracts"
 )
 
@@ -87,6 +88,25 @@ func (generator CryptoGenerator) Generate() (contracts.ProjectSecrets, error) {
 		RealtimeDBEncryptionKey: realtimeKey, LogflarePublicAccessToken: logflarePublic, LogflarePrivateAccessToken: logflarePrivate,
 		S3ProtocolAccessKeyID: s3Access, S3ProtocolAccessKeySecret: s3Secret, PoolerTenantID: poolerTenant,
 	}, nil
+}
+
+// validateAuthKeyBundle is deliberately not called by Generate: legacy
+// installations must not opt into asymmetric keys implicitly.
+func validateAuthKeyBundle(secrets contracts.ProjectSecrets) error {
+	bundle := authkeys.Bundle{SupabasePublishableKey: secrets.SupabasePublishableKey, SupabaseSecretKey: secrets.SupabaseSecretKey, AnonKeyAsymmetric: secrets.AnonKeyAsymmetric, ServiceRoleKeyAsymmetric: secrets.ServiceRoleKeyAsymmetric, JWTKeys: secrets.JWTKeys, JWTJWKS: secrets.JWTJWKS}
+	count := 0
+	for _, value := range []string{bundle.SupabasePublishableKey, bundle.SupabaseSecretKey, bundle.AnonKeyAsymmetric, bundle.ServiceRoleKeyAsymmetric, bundle.JWTKeys, bundle.JWTJWKS} {
+		if value != "" {
+			count++
+		}
+	}
+	if count == 0 {
+		return nil
+	}
+	if count != 6 {
+		return fmt.Errorf("incomplete asymmetric auth key bundle")
+	}
+	return bundle.Validate(secrets.JWTSecret)
 }
 
 func generatedHex(random io.Reader, size int) (string, error) {

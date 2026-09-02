@@ -20,6 +20,7 @@ import (
 	"supabase-manager/apps/manager/internal/project"
 	managersecrets "supabase-manager/apps/manager/internal/secrets"
 	"supabase-manager/apps/manager/internal/store"
+	"supabase-manager/internal/authkeys"
 	"supabase-manager/internal/contracts"
 )
 
@@ -1146,7 +1147,7 @@ func (o *Orchestrator) hydrate(ctx context.Context, projectID string, cfg contra
 	if o.cipher == nil {
 		return contracts.ProjectSecrets{}, nil, errors.New("secret cipher is unavailable")
 	}
-	baseKinds := []string{"database-password", "jwt-secret", "anon-key", "service-role-key", "dashboard-password", "secret-key-base", "vault-encryption-key"}
+	baseKinds := []string{"database-password", "jwt-secret", "anon-key", "service-role-key", "dashboard-password", "secret-key-base", "vault-encryption-key", "publishable-api-key", "secret-api-key", "anon-key-asymmetric", "service-role-key-asymmetric", "jwt-keys", "jwt-jwks"}
 	if cfg.General.StudioPasswordSet {
 		baseKinds = append(baseKinds, "studio.password")
 	}
@@ -1221,6 +1222,18 @@ func (o *Orchestrator) hydrate(ctx context.Context, projectID string, cfg contra
 			out.SecretKeyBase = value
 		case "vault-encryption-key":
 			out.VaultEncryptionKey = value
+		case "publishable-api-key":
+			out.SupabasePublishableKey = value
+		case "secret-api-key":
+			out.SupabaseSecretKey = value
+		case "anon-key-asymmetric":
+			out.AnonKeyAsymmetric = value
+		case "service-role-key-asymmetric":
+			out.ServiceRoleKeyAsymmetric = value
+		case "jwt-keys":
+			out.JWTKeys = value
+		case "jwt-jwks":
+			out.JWTJWKS = value
 		case "realtime-db-encryption-key":
 			out.RealtimeDBEncryptionKey = value
 			runtime["realtime.dbEncryptionKey"] = value
@@ -1241,6 +1254,16 @@ func (o *Orchestrator) hydrate(ctx context.Context, projectID string, cfg contra
 		default:
 			runtime[kind] = value
 		}
+	}
+	bundle := authkeys.Bundle{SupabasePublishableKey: out.SupabasePublishableKey, SupabaseSecretKey: out.SupabaseSecretKey, AnonKeyAsymmetric: out.AnonKeyAsymmetric, ServiceRoleKeyAsymmetric: out.ServiceRoleKeyAsymmetric, JWTKeys: out.JWTKeys, JWTJWKS: out.JWTJWKS}
+	count := 0
+	for _, value := range []string{bundle.SupabasePublishableKey, bundle.SupabaseSecretKey, bundle.AnonKeyAsymmetric, bundle.ServiceRoleKeyAsymmetric, bundle.JWTKeys, bundle.JWTJWKS} {
+		if value != "" {
+			count++
+		}
+	}
+	if count != 0 && (count != 6 || bundle.Validate(out.JWTSecret) != nil) {
+		return contracts.ProjectSecrets{}, nil, errors.New("invalid asymmetric auth key bundle")
 	}
 	return out, runtime, nil
 }
