@@ -10,6 +10,7 @@ func TestDiagnosticFieldsOmitWhenUnset(t *testing.T) {
 	responses := map[string]any{
 		"error envelope":             ErrorEnvelope{Error: APIError{Code: "FAILED", Message: "failed"}},
 		"reconcile response":         ReconcileProjectResponse{},
+		"rotation response":          RotateDatabasePasswordResponse{},
 		"function deployment result": FunctionDeploymentResult{},
 		"managed TLS response":       StageManagedTLSResponse{},
 	}
@@ -27,7 +28,8 @@ func TestDiagnosticFieldsOmitWhenUnset(t *testing.T) {
 func TestDiagnosticFieldsMarshalOnFailedOutcomes(t *testing.T) {
 	responses := map[string]any{
 		"error envelope":             ErrorEnvelope{Error: APIError{Code: "FAILED", Message: "failed"}, Diagnostic: "safe detail"},
-		"reconcile response":         ReconcileProjectResponse{Error: &APIError{Code: "FAILED", Message: "failed"}, Diagnostic: "safe detail"},
+		"reconcile response":         ReconcileProjectResponse{Error: &APIError{Code: "FAILED", Message: "failed"}, Diagnostic: "safe detail", DiagnosticVersion: DiagnosticVersionCompleteRedaction},
+		"rotation response":          RotateDatabasePasswordResponse{Error: &APIError{Code: "FAILED", Message: "failed"}, Diagnostic: "safe detail", DiagnosticVersion: DiagnosticVersionCompleteRedaction},
 		"function deployment result": FunctionDeploymentResult{Error: &APIError{Code: "FAILED", Message: "failed"}, Diagnostic: "safe detail"},
 		"managed TLS response":       StageManagedTLSResponse{Diagnostic: "safe detail"},
 	}
@@ -39,5 +41,14 @@ func TestDiagnosticFieldsMarshalOnFailedOutcomes(t *testing.T) {
 		if !strings.Contains(string(body), `"diagnostic":"safe detail"`) {
 			t.Fatalf("%s did not include diagnostic: %s", name, body)
 		}
+		if (name == "reconcile response" || name == "rotation response") && !strings.Contains(string(body), `"diagnosticVersion":1`) {
+			t.Fatalf("%s did not include diagnostic version: %s", name, body)
+		}
+	}
+}
+
+func TestDiagnosticVersionSupportIsExact(t *testing.T) {
+	if !SupportsDiagnosticVersion(DiagnosticVersionCompleteRedaction) || SupportsDiagnosticVersion(0) || SupportsDiagnosticVersion(DiagnosticVersionCompleteRedaction+1) {
+		t.Fatalf("unexpected diagnostic version support")
 	}
 }

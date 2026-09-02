@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -222,6 +223,9 @@ func TestRotateDatabasePasswordReplayPreservesRedactedFailureDiagnostic(t *testi
 		if strings.Contains(replayed.Diagnostic, secret) || strings.Contains(replayFailure.Cause.Error(), secret) {
 			t.Fatalf("replayed failure leaked %q: result=%#v cause=%q", secret, replayed, replayFailure.Cause)
 		}
+	}
+	if encoded, err := json.Marshal(replayed); err != nil || !strings.Contains(string(encoded), `"diagnosticVersion"`) {
+		t.Fatalf("current replay diagnostic is not versioned: %s %v", encoded, err)
 	}
 }
 

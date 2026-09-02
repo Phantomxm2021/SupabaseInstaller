@@ -308,14 +308,12 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 			if result.ProjectID == "" {
 				result.ProjectID = input.ProjectID
 			}
-			failureEnvelope := operationalErrorEnvelope("RECONCILE_FAILED", "Server runtime reconciliation failed", failure.Cause, reconcileKnownValues(input))
-			result.Error = &failureEnvelope.Error
-			if result.Diagnostic == "" {
-				if failure.Cause == nil && failure.Response.Error != nil {
-					result.Diagnostic = diagnostic.Sanitize(failure.Response.Error.Message, reconcileKnownValues(input))
-				} else {
-					result.Diagnostic = failureEnvelope.Diagnostic
-				}
+			canonical := contracts.APIError{Code: "RECONCILE_FAILED", Message: "Server runtime reconciliation failed"}
+			result.Error = &canonical
+			if failure.Cause == nil && !contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
+				result.Diagnostic = canonical.Message
+			} else if result.Diagnostic == "" {
+				result.Diagnostic = operationalErrorEnvelope(canonical.Code, canonical.Message, failure.Cause, reconcileKnownValues(input)).Diagnostic
 			} else {
 				result.Diagnostic = diagnostic.Sanitize(result.Diagnostic, reconcileKnownValues(input))
 			}
@@ -413,14 +411,16 @@ func (s *server) rotateDatabasePassword(response http.ResponseWriter, request *h
 	if err != nil {
 		var failure *contracts.ReconcileFailure
 		if errors.As(err, &failure) {
-			cause := err
-			if failure.Cause != nil {
-				cause = failure.Cause
-			}
-			failureEnvelope := operationalErrorEnvelope("ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation failed", cause, rotationKnownValues(input))
-			result.Error = &failureEnvelope.Error
-			if result.Diagnostic == "" {
-				result.Diagnostic = failureEnvelope.Diagnostic
+			canonical := contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}
+			result.Error = &canonical
+			if failure.Cause == nil && !contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
+				result.Diagnostic = canonical.Message
+			} else if result.Diagnostic == "" {
+				cause := err
+				if failure.Cause != nil {
+					cause = failure.Cause
+				}
+				result.Diagnostic = operationalErrorEnvelope(canonical.Code, canonical.Message, cause, rotationKnownValues(input)).Diagnostic
 			} else {
 				result.Diagnostic = diagnostic.Sanitize(result.Diagnostic, rotationKnownValues(input))
 			}

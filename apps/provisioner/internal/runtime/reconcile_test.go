@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -704,8 +705,8 @@ func TestReconcileFailureIsTypedCachedAndReplayedWithoutDocker(t *testing.T) {
 	if err == nil || !result.RolledBack || result.Error == nil {
 		t.Fatalf("first failure result=%#v err=%v", result, err)
 	}
-	if !strings.Contains(result.Error.Message, "runtime health is") {
-		t.Fatalf("failure diagnostic = %q, want the concrete health reason", result.Error.Message)
+	if result.Error.Message != "Server runtime reconciliation failed" || !strings.Contains(result.Diagnostic, "runtime health is") || result.DiagnosticVersion != contracts.DiagnosticVersionCompleteRedaction {
+		t.Fatalf("failure result = %#v, want canonical error plus versioned concrete diagnostic", result)
 	}
 	after := runner.validated + len(runner.recreated) + len(runner.removed)
 	if _, replayErr := backend.Reconcile(context.Background(), request); replayErr == nil {
@@ -743,6 +744,9 @@ func TestReconcileReplayRedactsOriginalConfigurationSecretInput(t *testing.T) {
 	var failure *contracts.ReconcileFailure
 	if err == nil || !errors.As(err, &failure) || replayed.Error == nil || strings.Contains(replayed.Error.Message, oldSecret) || (failure.Response.Error != nil && strings.Contains(failure.Response.Error.Message, oldSecret)) || strings.Contains(err.Error(), oldSecret) {
 		t.Fatalf("replay leaked or succeeded: result=%#v failure=%#v error=%v", replayed, failure, err)
+	}
+	if encoded, err := json.Marshal(replayed); err != nil || !strings.Contains(string(encoded), `"diagnosticVersion"`) {
+		t.Fatalf("current replay diagnostic is not versioned: %s %v", encoded, err)
 	}
 }
 

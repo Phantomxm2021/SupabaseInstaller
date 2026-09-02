@@ -65,7 +65,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				outcome = &contracts.ReconcileFailure{Cause: err}
 			}
 			outcome.RuntimeChanged = published
-			outcome.Response = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: metadata.Revision, RolledBack: outcome.RollbackSucceeded, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: redactedReconcileDiagnostic(request, outcome.Cause)}}
+			outcome.Response = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: metadata.Revision, RolledBack: outcome.RollbackSucceeded, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Server runtime reconciliation failed"}, Diagnostic: redactedReconcileDiagnostic(request, outcome.Cause), DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction}
 			outcome.Response.RuntimeChanged = published
 			result = outcome.Response
 			encoded, _ := json.Marshal(result)
@@ -295,7 +295,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 	if err != nil {
 		if !errors.Is(err, contracts.ErrInvalidReconcileRevision) && !errors.Is(err, contracts.ErrStaleConfigRevision) && result.Error == nil {
 			runtimeChanged := runtimeRollback != nil
-			result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: runtimeRollbackSucceeded, RuntimeChanged: runtimeChanged, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: redactedReconcileDiagnostic(request, err)}}
+			result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: runtimeRollbackSucceeded, RuntimeChanged: runtimeChanged, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "Server runtime reconciliation failed"}, Diagnostic: redactedReconcileDiagnostic(request, err), DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction}
 			err = &contracts.ReconcileFailure{Cause: err, Response: result, RollbackSucceeded: runtimeRollbackSucceeded, RuntimeChanged: runtimeChanged}
 		}
 		return result, err

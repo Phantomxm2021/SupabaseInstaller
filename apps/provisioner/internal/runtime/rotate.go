@@ -180,7 +180,7 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		defer func() {
 			var failure *contracts.ReconcileFailure
 			if errors.As(callbackErr, &failure) {
-				result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}, Diagnostic: redactedRotationFailureDiagnostic(request, failure.Cause)}
+				result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}, Diagnostic: redactedRotationFailureDiagnostic(request, failure.Cause), DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction}
 				if raw, marshalErr := json.Marshal(result); marshalErr == nil {
 					metadata.Idempotency[request.IdempotencyKey] = raw
 				}
@@ -379,10 +379,10 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		return compensation()
 	})
 	if err == nil && result.Error != nil {
-		if result.Diagnostic != "" {
+		if contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) && result.Diagnostic != "" {
 			return result, &contracts.ReconcileFailure{Cause: fmt.Errorf("database password rotation failed: %s", result.Diagnostic), RollbackSucceeded: result.RolledBack, RuntimeChanged: result.RuntimeChanged}
 		}
-		return result, &contracts.ReconcileFailure{Cause: errors.New("database password rotation failed"), RollbackSucceeded: result.RolledBack, RuntimeChanged: result.RuntimeChanged}
+		return result, &contracts.ReconcileFailure{RollbackSucceeded: result.RolledBack, RuntimeChanged: result.RuntimeChanged}
 	}
 	if errors.Is(err, contracts.ErrStaleConfigRevision) || errors.Is(err, contracts.ErrInvalidReconcileRevision) {
 		return contracts.RotateDatabasePasswordResponse{}, err
@@ -390,7 +390,7 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 	if err != nil {
 		var failure *contracts.ReconcileFailure
 		if errors.As(err, &failure) {
-			result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}, Diagnostic: redactedRotationFailureDiagnostic(request, failure.Cause)}
+			result = contracts.RotateDatabasePasswordResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: request.ExpectedRevision, RolledBack: failure.RollbackSucceeded, RuntimeChanged: failure.RuntimeChanged, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}, Diagnostic: redactedRotationFailureDiagnostic(request, failure.Cause), DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction}
 			return result, failure
 		}
 		var publication *projectfs.MetadataPublicationError

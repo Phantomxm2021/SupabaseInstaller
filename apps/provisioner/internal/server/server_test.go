@@ -130,6 +130,44 @@ func TestRotateDatabasePasswordEndpointPreservesSanitizedReplayDiagnostic(t *tes
 	}
 }
 
+func TestRotateDatabasePasswordEndpointDiscardsLegacyCachedDiagnostic(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const oldSecret = "legacy-rotation-diagnostic-secret"
+	const key = "legacy-rotation-key"
+	legacy, err := json.Marshal(contracts.RotateDatabasePasswordResponse{
+		OperationID: "legacy-rotation", ProjectID: "project-legacy", Revision: 1, RolledBack: true,
+		Error:      &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "rotation failed: " + oldSecret},
+		Diagnostic: "cached rotation failure: " + oldSecret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.UpdateMetadata("bee", func(metadata *projectfs.Metadata) error {
+		metadata.ProjectID = "project-legacy"
+		metadata.Idempotency[key] = legacy
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	backend := provisionerruntime.NewBackend(root, compose.NewRunner(&serverCaptureExecutor{}), health.NewInspector(&serverSequenceSource{}))
+	var logs bytes.Buffer
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/rotate-database-password", contracts.RotateDatabasePasswordRequest{
+		OperationKind: "ROTATE_DATABASE_PASSWORD", OperationID: "legacy-rotation", IdempotencyKey: key, ProjectID: "project-legacy", Slug: "bee", ExpectedRevision: 1, NextRevision: 2, OldPassword: "old-password", NewPassword: "new-password",
+		Configuration: contracts.ProjectConfiguration{General: contracts.GeneralConfig{StudioPassword: contracts.SecretInput{Value: "new-config-secret"}}},
+	})
+	var body contracts.RotateDatabasePasswordResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error == nil || body.Error.Code != "ROTATE_DATABASE_PASSWORD_FAILED" || body.Error.Message != "Database password rotation failed" || body.Diagnostic != "Database password rotation failed" || strings.Contains(response.Body.String(), oldSecret) || strings.Contains(logs.String(), oldSecret) {
+		t.Fatalf("legacy replay = %d %#v logs=%s", response.Code, body, logs.String())
+	}
+}
+
 func TestRotationRollbackAndConfirmationFailuresKeepCanonicalErrorsSeparate(t *testing.T) {
 	root, _ := projectfs.New(t.TempDir())
 	backend := &rotationOperationsStub{rollbackErr: errors.New("rollback script failed: POSTGRES_PASSWORD=new-password"), confirmErr: errors.New("journal update failed: token=secret-value")}
@@ -589,6 +627,44 @@ func TestReconcileEndpointReturnsRedactedFailureDiagnostic(t *testing.T) {
 	}
 	if body.Error == nil || body.Error.Code != "RECONCILE_FAILED" || body.Error.Message != "Server runtime reconciliation failed" || !strings.Contains(body.Diagnostic, "compose action failed") || strings.Contains(response.Body.String(), "secret-value") {
 		t.Fatalf("response must include a redacted diagnostic: %s", response.Body.String())
+	}
+}
+
+func TestReconcileEndpointDiscardsLegacyCachedDiagnostic(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const oldSecret = "legacy-reconcile-diagnostic-secret"
+	const key = "legacy-reconcile"
+	legacy, err := json.Marshal(contracts.ReconcileProjectResponse{
+		OperationID: "legacy-reconcile", ProjectID: "project-legacy", Revision: 1, RolledBack: true,
+		Error:      &contracts.APIError{Code: "RECONCILE_FAILED", Message: "runtime failed: " + oldSecret},
+		Diagnostic: "cached reconcile failure: " + oldSecret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.UpdateMetadata("bee", func(metadata *projectfs.Metadata) error {
+		metadata.ProjectID = "project-legacy"
+		metadata.Idempotency[key] = legacy
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	backend := provisionerruntime.NewBackend(root, compose.NewRunner(&serverCaptureExecutor{}), health.NewInspector(&serverSequenceSource{}))
+	var logs bytes.Buffer
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", contracts.ReconcileProjectRequest{
+		OperationID: "legacy-reconcile", IdempotencyKey: key, ProjectID: "project-legacy", Slug: "bee",
+		Configuration: contracts.ProjectConfiguration{General: contracts.GeneralConfig{StudioPassword: contracts.SecretInput{Value: "new-config-secret"}}},
+	})
+	var body contracts.ReconcileProjectResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error == nil || body.Error.Code != "RECONCILE_FAILED" || body.Error.Message != "Server runtime reconciliation failed" || body.Diagnostic != "Server runtime reconciliation failed" || strings.Contains(response.Body.String(), oldSecret) || strings.Contains(logs.String(), oldSecret) {
+		t.Fatalf("legacy replay = %d %#v logs=%s", response.Code, body, logs.String())
 	}
 }
 

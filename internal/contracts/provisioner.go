@@ -8,6 +8,15 @@ import (
 var ErrStaleConfigRevision = errors.New("stale config revision")
 var ErrInvalidReconcileRevision = errors.New("invalid reconcile revision")
 
+// DiagnosticVersionCompleteRedaction identifies persisted operational
+// diagnostics written after every ProjectConfiguration SecretInput was
+// included in redaction. Older cached diagnostics must never be replayed.
+const DiagnosticVersionCompleteRedaction = 1
+
+func SupportsDiagnosticVersion(version int) bool {
+	return version == DiagnosticVersionCompleteRedaction
+}
+
 // ReconcileFailure preserves the runtime outcome without exposing rendered
 // files or secret material through an API error.
 type ReconcileFailure struct {
@@ -52,6 +61,7 @@ type ReconcileProjectResponse struct {
 	RuntimeChanged    bool      `json:"runtimeChanged,omitempty"`
 	Error             *APIError `json:"error,omitempty"`
 	Diagnostic        string    `json:"diagnostic,omitempty"`
+	DiagnosticVersion int       `json:"diagnosticVersion,omitempty"`
 }
 
 // RotateDatabasePasswordRequest is a narrowly scoped sensitive RPC. The
@@ -77,13 +87,14 @@ type RotateDatabasePasswordRequest struct {
 }
 
 type RotateDatabasePasswordResponse struct {
-	OperationID    string    `json:"operationId"`
-	ProjectID      string    `json:"projectId"`
-	Revision       int64     `json:"revision"`
-	RolledBack     bool      `json:"rolledBack"`
-	RuntimeChanged bool      `json:"runtimeChanged,omitempty"`
-	Error          *APIError `json:"error,omitempty"`
-	Diagnostic     string    `json:"diagnostic,omitempty"`
+	OperationID       string    `json:"operationId"`
+	ProjectID         string    `json:"projectId"`
+	Revision          int64     `json:"revision"`
+	RolledBack        bool      `json:"rolledBack"`
+	RuntimeChanged    bool      `json:"runtimeChanged,omitempty"`
+	Error             *APIError `json:"error,omitempty"`
+	Diagnostic        string    `json:"diagnostic,omitempty"`
+	DiagnosticVersion int       `json:"diagnosticVersion,omitempty"`
 }
 
 // ConfirmDatabasePasswordRotation closes the durable rotation journal only
