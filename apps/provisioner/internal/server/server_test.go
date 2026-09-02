@@ -20,8 +20,10 @@ import (
 )
 
 type functionDeployStub struct {
-	archive string
-	err     error
+	archive     string
+	err         error
+	rollbackErr error
+	deleteErr   error
 }
 
 func (s *functionDeployStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
@@ -40,10 +42,10 @@ func (s *functionDeployStub) ListFunctions(context.Context, contracts.FunctionOp
 	return []contracts.FunctionSummary{{Name: "demo"}}, nil
 }
 func (s *functionDeployStub) RollbackFunction(context.Context, contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
-	return contracts.FunctionDeploymentResult{}, nil
+	return contracts.FunctionDeploymentResult{}, s.rollbackErr
 }
 func (s *functionDeployStub) DeleteFunction(context.Context, contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
-	return contracts.FunctionDeploymentResult{}, nil
+	return contracts.FunctionDeploymentResult{}, s.deleteErr
 }
 
 func newTestServer(t *testing.T) http.Handler {
@@ -82,8 +84,52 @@ func TestRotateDatabasePasswordEndpointReturnsRedactedFailureDiagnostic(t *testi
 	backend := &rotationFailureStub{err: &contracts.ReconcileFailure{Cause: errors.New("runtime health is UNHEALTHY; services: auth (restarting, UNHEALTHY); POSTGRES_PASSWORD=" + password), RollbackSucceeded: true, RuntimeChanged: true}}
 	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
 	response := authenticatedJSON(t, handler, "/internal/v1/projects/rotate-database-password", contracts.RotateDatabasePasswordRequest{OperationID: "op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee", OldPassword: "old-password", NewPassword: password})
-	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "services: auth") || strings.Contains(response.Body.String(), password) {
+	var body contracts.RotateDatabasePasswordResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error == nil || body.Error.Code != "ROTATE_DATABASE_PASSWORD_FAILED" || body.Error.Message != "Database password rotation failed" || !strings.Contains(body.Diagnostic, "services: auth") || strings.Contains(response.Body.String(), password) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRotateDatabasePasswordEndpointPreservesSanitizedReplayDiagnostic(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	const password = "new-password-sentinel"
+	backend := &rotationFailureStub{
+		err:    &contracts.ReconcileFailure{Cause: errors.New("retry failed")},
+		result: contracts.RotateDatabasePasswordResponse{RolledBack: true, RuntimeChanged: true, Diagnostic: "first attempt failed: POSTGRES_PASSWORD=" + password},
+	}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/rotate-database-password", contracts.RotateDatabasePasswordRequest{OperationID: "op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee", OldPassword: "old-password", NewPassword: password})
+	var body contracts.RotateDatabasePasswordResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == nil || body.Error.Code != "ROTATE_DATABASE_PASSWORD_FAILED" || !strings.Contains(body.Diagnostic, "first attempt failed") || strings.Contains(body.Diagnostic, password) {
+		t.Fatalf("response = %d %#v", response.Code, body)
+	}
+}
+
+func TestRotationRollbackAndConfirmationFailuresKeepCanonicalErrorsSeparate(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	backend := &rotationOperationsStub{rollbackErr: errors.New("rollback script failed: POSTGRES_PASSWORD=new-password"), confirmErr: errors.New("journal update failed: token=secret-value")}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	rollback := authenticatedJSON(t, handler, "/internal/v1/projects/rollback-database-password", contracts.RotateDatabasePasswordRequest{OperationKind: "ROLLBACK_DATABASE_PASSWORD", OperationID: "rollback-op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee", OldPassword: "old-password", NewPassword: "new-password"})
+	var rollbackBody contracts.RotateDatabasePasswordResponse
+	if err := json.Unmarshal(rollback.Body.Bytes(), &rollbackBody); err != nil {
+		t.Fatal(err)
+	}
+	if rollback.Code != http.StatusUnprocessableEntity || rollbackBody.Error == nil || rollbackBody.Error.Code != "ROTATE_DATABASE_PASSWORD_FAILED" || rollbackBody.Error.Message != "Database password rollback failed" || !strings.Contains(rollbackBody.Diagnostic, "rollback script failed") || strings.Contains(rollback.Body.String(), "new-password") {
+		t.Fatalf("rollback = %d %#v", rollback.Code, rollbackBody)
+	}
+	confirmation := authenticatedJSON(t, handler, "/internal/v1/projects/confirm-database-password-rotation", contracts.ConfirmDatabasePasswordRotationRequest{OperationID: "confirm-op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee", ExpectedRevision: 1, NextRevision: 2})
+	var confirmationBody contracts.ErrorEnvelope
+	if err := json.Unmarshal(confirmation.Body.Bytes(), &confirmationBody); err != nil {
+		t.Fatal(err)
+	}
+	if confirmation.Code != http.StatusUnprocessableEntity || confirmationBody.Error.Code != "ROTATE_DATABASE_PASSWORD_FAILED" || confirmationBody.Error.Message != "Database password rotation confirmation failed" || !strings.Contains(confirmationBody.Diagnostic, "journal update failed") || strings.Contains(confirmation.Body.String(), "secret-value") {
+		t.Fatalf("confirmation = %d %#v", confirmation.Code, confirmationBody)
 	}
 }
 
@@ -102,6 +148,23 @@ func TestStageCertificateForwardsPEMWithoutReturningIt(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), "/etc/nginx/ssl/cloudflare-origin-example.pem") {
 		t.Fatalf("response missing safe TLS paths: %s", response.Body.String())
+	}
+}
+
+func TestStageCertificateFailureReturnsRedactedDiagnostic(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	const privateKey = "private-key-sentinel"
+	stager := &certificateStagerStub{err: errors.New("nginx rejected certificate: private_key=" + privateKey + "; temporary file is unavailable")}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, CertificateStager: stager})
+	response := authenticatedJSON(t, handler, "/internal/v1/nginx/certificates/stage", contracts.StageManagedTLSRequest{
+		CertificateName: "cloudflare-origin", BaseDomain: "example.com", CertificatePEM: []byte("certificate-sentinel"), PrivateKeyPEM: []byte(privateKey),
+	})
+	var body contracts.ErrorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "TLS_STAGE_FAILED" || body.Error.Message != "Unable to stage managed TLS certificate" || !strings.Contains(body.Diagnostic, "temporary file is unavailable") || strings.Contains(response.Body.String(), privateKey) {
+		t.Fatalf("response = %d %#v", response.Code, body)
 	}
 }
 
@@ -130,8 +193,42 @@ func TestFunctionDeployEndpointReturnsSafeFailureDiagnostic(t *testing.T) {
 	request.Header.Set("X-Operation-ID", "operation-1")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"code":"FUNCTION_DEPLOY_FAILED"`) || !strings.Contains(response.Body.String(), "function archive requires root index.ts") || strings.Contains(response.Body.String(), "secret-value") {
+	var body contracts.ErrorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || !strings.Contains(body.Diagnostic, "function archive requires root index.ts") || strings.Contains(response.Body.String(), "secret-value") {
 		t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
+	}
+}
+
+func TestFunctionRollbackAndDeleteFailuresReturnTypedCanonicalDiagnostics(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	backend := &functionDeployStub{rollbackErr: errors.New("rollback release failed: token=secret-value"), deleteErr: errors.New("delete release failed: token=secret-value")}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	for _, endpoint := range []struct {
+		method, path, code, message, detail string
+	}{
+		{http.MethodPost, "/internal/v1/projects/bee/functions/demo/rollback", "FUNCTION_ROLLBACK_FAILED", "Function rollback failed", "rollback release failed"},
+		{http.MethodDelete, "/internal/v1/projects/bee/functions/demo", "FUNCTION_DELETE_FAILED", "Function deletion failed", "delete release failed"},
+	} {
+		t.Run(endpoint.code, func(t *testing.T) {
+			request := httptest.NewRequest(endpoint.method, endpoint.path, nil)
+			request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+			request.Header.Set("X-Operation-ID", "operation-1")
+			if endpoint.method == http.MethodDelete {
+				request.Header.Set("X-Confirm-Function", "demo")
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			var body contracts.FunctionDeploymentResult
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusUnprocessableEntity || body.Error == nil || body.Error.Code != endpoint.code || body.Error.Message != endpoint.message || !strings.Contains(body.Diagnostic, endpoint.detail) || strings.Contains(response.Body.String(), "secret-value") {
+				t.Fatalf("response = %d %#v", response.Code, body)
+			}
+		})
 	}
 }
 
@@ -166,8 +263,25 @@ func TestReconcileEndpointUsesServerTerminologyForGenericFailures(t *testing.T) 
 	root, _ := projectfs.New(t.TempDir())
 	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: &reconcileStub{err: errors.New("runtime failure")}})
 	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", contracts.ReconcileProjectRequest{OperationID: "op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee"})
-	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"message":"Server runtime reconciliation failed"`) {
+	var body contracts.ErrorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "RECONCILE_FAILED" || body.Error.Message != "Server runtime reconciliation failed" || body.Diagnostic != "runtime failure" {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestInspectEndpointReturnsCanonicalErrorWithDiagnostic(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: &inspectFailureStub{err: errors.New("docker inspect failed: password=secret-value")}})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/inspect", contracts.InspectProjectRequest{ProjectID: "project-1", Slug: "bee"})
+	var body contracts.ErrorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "INSPECT_FAILED" || body.Error.Message != "Project inspection failed" || !strings.Contains(body.Diagnostic, "docker inspect failed") || strings.Contains(response.Body.String(), "secret-value") {
+		t.Fatalf("response = %d %#v", response.Code, body)
 	}
 }
 
@@ -241,7 +355,11 @@ func TestLifecycleEndpointLogsSafeFailureDetails(t *testing.T) {
 	backend := &lifecycleFailureStub{err: errors.New("compose action failed: env file POSTGRES_PASSWORD=secret-value missing")}
 	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
 	response := authenticatedJSON(t, handler, "/internal/v1/projects/lifecycle", contracts.LifecycleRequest{ProjectID: "project-1", Slug: "bee", Action: contracts.LifecycleDeleteData})
-	if response.Code != http.StatusUnprocessableEntity {
+	var body contracts.ErrorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "LIFECYCLE_FAILED" || body.Error.Message != "Project lifecycle action failed" || !strings.Contains(body.Diagnostic, "compose action failed") || strings.Contains(response.Body.String(), "secret-value") {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 	if !strings.Contains(logs.String(), "project lifecycle failed") || !strings.Contains(logs.String(), "project-1") || strings.Contains(logs.String(), "secret-value") {
@@ -272,7 +390,11 @@ func TestReconcileEndpointReturnsRedactedFailureDiagnostic(t *testing.T) {
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), "compose action failed") || strings.Contains(response.Body.String(), "secret-value") {
+	var body contracts.ReconcileProjectResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == nil || body.Error.Code != "RECONCILE_FAILED" || body.Error.Message != "Server runtime reconciliation failed" || !strings.Contains(body.Diagnostic, "compose action failed") || strings.Contains(response.Body.String(), "secret-value") {
 		t.Fatalf("response must include a redacted diagnostic: %s", response.Body.String())
 	}
 }
@@ -326,7 +448,31 @@ func (source *serverSequenceSource) Containers(context.Context, string) ([]healt
 
 type reconcileStub struct{ err error }
 
-type rotationFailureStub struct{ err error }
+type rotationFailureStub struct {
+	err    error
+	result contracts.RotateDatabasePasswordResponse
+}
+
+type rotationOperationsStub struct {
+	rollbackErr error
+	confirmErr  error
+}
+
+func (*rotationOperationsStub) Lifecycle(context.Context, contracts.LifecycleRequest) error {
+	return nil
+}
+func (*rotationOperationsStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
+	return contracts.InspectProjectResponse{}, nil
+}
+func (*rotationOperationsStub) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
+}
+func (s *rotationOperationsStub) RollbackDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) error {
+	return s.rollbackErr
+}
+func (s *rotationOperationsStub) ConfirmDatabasePasswordRotation(context.Context, contracts.ConfirmDatabasePasswordRotationRequest) error {
+	return s.confirmErr
+}
 
 func (*rotationFailureStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
 func (*rotationFailureStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
@@ -336,16 +482,31 @@ func (*rotationFailureStub) Reconcile(context.Context, contracts.ReconcileProjec
 	return contracts.ReconcileProjectResponse{}, nil
 }
 func (s *rotationFailureStub) RotateDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) (contracts.RotateDatabasePasswordResponse, error) {
-	return contracts.RotateDatabasePasswordResponse{RolledBack: true, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rotation failed"}}, s.err
+	result := s.result
+	if !result.RolledBack && !result.RuntimeChanged {
+		result = contracts.RotateDatabasePasswordResponse{RolledBack: true, RuntimeChanged: true}
+	}
+	return result, s.err
 }
 
 type certificateStagerStub struct {
 	input contracts.StageManagedTLSRequest
+	err   error
 }
 
 func (s *certificateStagerStub) StageCertificate(_ context.Context, input contracts.StageManagedTLSRequest) (contracts.StageManagedTLSResponse, error) {
 	s.input = input
-	return contracts.StageManagedTLSResponse{ManagedTLSConfig: contracts.ManagedTLSConfig{CertificateName: input.CertificateName, CertificateFile: "/etc/nginx/ssl/cloudflare-origin-example.pem", PrivateKeyFile: "/etc/nginx/ssl/cloudflare-origin-example.key"}, Created: true}, nil
+	return contracts.StageManagedTLSResponse{ManagedTLSConfig: contracts.ManagedTLSConfig{CertificateName: input.CertificateName, CertificateFile: "/etc/nginx/ssl/cloudflare-origin-example.pem", PrivateKeyFile: "/etc/nginx/ssl/cloudflare-origin-example.key"}, Created: true}, s.err
+}
+
+type inspectFailureStub struct{ err error }
+
+func (s *inspectFailureStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
+func (s *inspectFailureStub) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
+	return contracts.InspectProjectResponse{}, s.err
+}
+func (s *inspectFailureStub) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
 }
 
 type lifecycleFailureStub struct{ err error }

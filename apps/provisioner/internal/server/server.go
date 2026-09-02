@@ -9,12 +9,11 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
-	"strings"
 
 	provisionerauth "supabase-manager/apps/provisioner/internal/auth"
 	"supabase-manager/apps/provisioner/internal/projectfs"
-	"supabase-manager/apps/provisioner/internal/redact"
 	"supabase-manager/internal/contracts"
+	"supabase-manager/internal/diagnostic"
 )
 
 type Backend interface {
@@ -112,15 +111,15 @@ func (s *server) deployFunction(response http.ResponseWriter, request *http.Requ
 	request.Body = http.MaxBytesReader(response, request.Body, 20<<20)
 	result, err := backend.DeployFunction(request.Context(), contracts.DeployFunctionRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID, Archive: request.Body})
 	if err != nil {
-		diagnostic := redactedFunctionDiagnostic(request.PathValue("slug"), name, operationID, err)
-		s.logger.Error("function deployment failed", "slug", request.PathValue("slug"), "function", name, "operation_id", operationID, "error", diagnostic)
+		failure := operationalErrorEnvelope("FUNCTION_DEPLOY_FAILED", "Function deployment failed", err, nil)
+		s.logger.Error("function deployment failed", "slug", request.PathValue("slug"), "function", name, "operation_id", operationID, "error", failure.Diagnostic)
 		if result.RolledBack {
-			// Preserve the typed compensation outcome without returning the
-			// underlying Compose/filesystem diagnostic across the private API.
+			result.Error = &failure.Error
+			result.Diagnostic = failure.Diagnostic
 			writeJSON(response, http.StatusUnprocessableEntity, result)
 			return
 		}
-		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_DEPLOY_FAILED", diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, failure)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -153,7 +152,11 @@ func (s *server) rollbackFunction(response http.ResponseWriter, request *http.Re
 	}
 	result, err := backend.RollbackFunction(request.Context(), contracts.FunctionOperationRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID})
 	if err != nil {
-		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_ROLLBACK_FAILED", "Function rollback failed")
+		failure := operationalErrorEnvelope("FUNCTION_ROLLBACK_FAILED", "Function rollback failed", err, nil)
+		s.logger.Error("function rollback failed", "slug", request.PathValue("slug"), "function", name, "operation_id", operationID, "error", failure.Diagnostic)
+		result.Error = &failure.Error
+		result.Diagnostic = failure.Diagnostic
+		writeJSON(response, http.StatusUnprocessableEntity, result)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -172,7 +175,11 @@ func (s *server) deleteFunction(response http.ResponseWriter, request *http.Requ
 	}
 	result, err := backend.DeleteFunction(request.Context(), contracts.FunctionOperationRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID})
 	if err != nil {
-		writeError(response, http.StatusUnprocessableEntity, "FUNCTION_DELETE_FAILED", "Function deletion failed")
+		failure := operationalErrorEnvelope("FUNCTION_DELETE_FAILED", "Function deletion failed", err, nil)
+		s.logger.Error("function deletion failed", "slug", request.PathValue("slug"), "function", name, "operation_id", operationID, "error", failure.Diagnostic)
+		result.Error = &failure.Error
+		result.Diagnostic = failure.Diagnostic
+		writeJSON(response, http.StatusUnprocessableEntity, result)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -190,7 +197,9 @@ func (s *server) stageCertificate(response http.ResponseWriter, request *http.Re
 	}
 	output, err := s.certificates.StageCertificate(request.Context(), input)
 	if err != nil {
-		writeError(response, http.StatusUnprocessableEntity, "TLS_STAGE_FAILED", "Unable to stage managed TLS certificate")
+		failure := operationalErrorEnvelope("TLS_STAGE_FAILED", "Unable to stage managed TLS certificate", err, []string{string(input.CertificatePEM), string(input.PrivateKeyPEM)})
+		s.logger.Error("managed TLS certificate staging failed", "certificate_name", input.CertificateName, "base_domain", input.BaseDomain, "error", failure.Diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, failure)
 		return
 	}
 	writeJSON(response, http.StatusOK, output)
@@ -240,8 +249,9 @@ func (s *server) lifecycle(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if err := s.backend.Lifecycle(request.Context(), input); err != nil {
-		s.logger.Error("project lifecycle failed", "project_id", input.ProjectID, "slug", input.Slug, "action", input.Action, "error", redact.New(nil).String(err.Error()))
-		writeError(response, http.StatusUnprocessableEntity, "LIFECYCLE_FAILED", err.Error())
+		failure := operationalErrorEnvelope("LIFECYCLE_FAILED", "Project lifecycle action failed", err, nil)
+		s.logger.Error("project lifecycle failed", "project_id", input.ProjectID, "slug", input.Slug, "action", input.Action, "error", failure.Diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, failure)
 		return
 	}
 	response.WriteHeader(http.StatusAccepted)
@@ -259,7 +269,9 @@ func (s *server) inspect(response http.ResponseWriter, request *http.Request) {
 	}
 	result, err := s.backend.Inspect(request.Context(), input)
 	if err != nil {
-		writeError(response, http.StatusUnprocessableEntity, "INSPECT_FAILED", err.Error())
+		failure := operationalErrorEnvelope("INSPECT_FAILED", "Project inspection failed", err, nil)
+		s.logger.Error("project inspection failed", "project_id", input.ProjectID, "slug", input.Slug, "error", failure.Diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, failure)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -281,7 +293,6 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 	s.logger.Info("project runtime reconciliation started", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID)
 	result, err := s.backend.Reconcile(request.Context(), input)
 	if err != nil {
-		s.logReconcileFailure(input, err)
 		var failure *contracts.ReconcileFailure
 		if errors.As(err, &failure) {
 			result := failure.Response
@@ -291,34 +302,35 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 			if result.ProjectID == "" {
 				result.ProjectID = input.ProjectID
 			}
-			if result.Error == nil {
-				result.Error = &contracts.APIError{Code: "RECONCILE_FAILED", Message: redactedReconcileDiagnostic(input, failure.Cause)}
+			failureEnvelope := operationalErrorEnvelope("RECONCILE_FAILED", "Server runtime reconciliation failed", failure.Cause, reconcileKnownValues(input))
+			result.Error = &failureEnvelope.Error
+			if result.Diagnostic == "" {
+				if failure.Cause == nil && failure.Response.Error != nil {
+					result.Diagnostic = diagnostic.Sanitize(failure.Response.Error.Message, reconcileKnownValues(input))
+				} else {
+					result.Diagnostic = failureEnvelope.Diagnostic
+				}
+			} else {
+				result.Diagnostic = diagnostic.Sanitize(result.Diagnostic, reconcileKnownValues(input))
 			}
+			s.logReconcileFailure(input, result.Diagnostic)
 			writeJSON(response, http.StatusUnprocessableEntity, result)
 			return
 		}
-		// Runtime errors are deliberately generic: rendered environment files
-		// and secret values must never cross this private API boundary.
-		writeError(response, http.StatusUnprocessableEntity, "RECONCILE_FAILED", "Server runtime reconciliation failed")
+		failureEnvelope := operationalErrorEnvelope("RECONCILE_FAILED", "Server runtime reconciliation failed", err, reconcileKnownValues(input))
+		s.logReconcileFailure(input, failureEnvelope.Diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, failureEnvelope)
 		return
 	}
 	s.logger.Info("project runtime reconciliation completed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "revision", result.Revision, "recreated_services", result.RecreatedServices)
 	writeJSON(response, http.StatusOK, result)
 }
 
-func (s *server) logReconcileFailure(input contracts.ReconcileProjectRequest, err error) {
-	logErr := err
-	var failure *contracts.ReconcileFailure
-	if errors.As(err, &failure) && failure.Cause != nil {
-		logErr = failure.Cause
-	}
-	s.logger.Error("project runtime reconciliation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", redactedReconcileDiagnostic(input, logErr))
+func (s *server) logReconcileFailure(input contracts.ReconcileProjectRequest, detail string) {
+	s.logger.Error("project runtime reconciliation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", detail)
 }
 
-func redactedReconcileDiagnostic(input contracts.ReconcileProjectRequest, cause error) string {
-	if cause == nil {
-		return "Server runtime reconciliation failed"
-	}
+func reconcileKnownValues(input contracts.ReconcileProjectRequest) []string {
 	secrets := input.Secrets
 	values := []string{
 		secrets.DatabasePassword, secrets.JWTSecret, secrets.AnonKey, secrets.ServiceRoleKey,
@@ -330,26 +342,22 @@ func redactedReconcileDiagnostic(input contracts.ReconcileProjectRequest, cause 
 	for _, value := range input.RuntimeSecrets {
 		values = append(values, value)
 	}
-	return redact.New(values).String(cause.Error())
+	return values
 }
 
-func redactedRotationDiagnostic(input contracts.RotateDatabasePasswordRequest, cause error) string {
-	diagnostic := redactedReconcileDiagnostic(contracts.ReconcileProjectRequest{Secrets: input.Secrets, RuntimeSecrets: input.RuntimeSecrets}, cause)
-	return redact.New([]string{input.OldPassword, input.NewPassword}).String(diagnostic)
+func rotationKnownValues(input contracts.RotateDatabasePasswordRequest) []string {
+	values := reconcileKnownValues(contracts.ReconcileProjectRequest{Secrets: input.Secrets, RuntimeSecrets: input.RuntimeSecrets})
+	return append(values, input.OldPassword, input.NewPassword)
 }
 
-func redactedFunctionDiagnostic(slug, name, operationID string, cause error) string {
-	if cause == nil {
-		return "Functions deployment failed"
+func operationalErrorEnvelope(code, message string, cause error, knownValues []string) contracts.ErrorEnvelope {
+	detail := message
+	if cause != nil {
+		if sanitized := diagnostic.Sanitize(cause.Error(), knownValues); sanitized != "" {
+			detail = sanitized
+		}
 	}
-	diagnostic := strings.TrimSpace(redact.New([]string{slug, name, operationID}).String(cause.Error()))
-	if diagnostic == "" {
-		return "Functions deployment failed"
-	}
-	if len(diagnostic) > 4096 {
-		return diagnostic[:4096] + "…"
-	}
-	return diagnostic
+	return contracts.ErrorEnvelope{Error: contracts.APIError{Code: code, Message: message}, Diagnostic: detail}
 }
 
 type passwordRotationBackend interface {
@@ -383,12 +391,20 @@ func (s *server) rotateDatabasePassword(response http.ResponseWriter, request *h
 			if failure.Cause != nil {
 				cause = failure.Cause
 			}
-			result.Diagnostic = redactedRotationDiagnostic(input, cause)
+			failureEnvelope := operationalErrorEnvelope("ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation failed", cause, rotationKnownValues(input))
+			result.Error = &failureEnvelope.Error
+			if result.Diagnostic == "" {
+				result.Diagnostic = failureEnvelope.Diagnostic
+			} else {
+				result.Diagnostic = diagnostic.Sanitize(result.Diagnostic, rotationKnownValues(input))
+			}
 			s.logger.Error("database password rotation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", result.Diagnostic)
 			writeJSON(response, http.StatusUnprocessableEntity, result)
 			return
 		}
-		writeError(response, http.StatusUnprocessableEntity, "ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation failed")
+		failureEnvelope := operationalErrorEnvelope("ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation failed", err, rotationKnownValues(input))
+		s.logger.Error("database password rotation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", failureEnvelope.Diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, failureEnvelope)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -414,7 +430,9 @@ func (s *server) rollbackDatabasePassword(response http.ResponseWriter, request 
 			writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Server configuration revision is stale")
 			return
 		}
-		writeJSON(response, http.StatusUnprocessableEntity, contracts.RotateDatabasePasswordResponse{OperationID: input.OperationID, ProjectID: input.ProjectID, Revision: input.ExpectedRevision, RolledBack: false, RuntimeChanged: true, Error: &contracts.APIError{Code: "ROTATE_DATABASE_PASSWORD_FAILED", Message: "Database password rollback failed"}})
+		failure := operationalErrorEnvelope("ROTATE_DATABASE_PASSWORD_FAILED", "Database password rollback failed", err, rotationKnownValues(input))
+		s.logger.Error("database password rollback failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", failure.Diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, contracts.RotateDatabasePasswordResponse{OperationID: input.OperationID, ProjectID: input.ProjectID, Revision: input.ExpectedRevision, RolledBack: false, RuntimeChanged: true, Error: &failure.Error, Diagnostic: failure.Diagnostic})
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -440,7 +458,9 @@ func (s *server) confirmDatabasePasswordRotation(response http.ResponseWriter, r
 			writeError(response, http.StatusConflict, "STALE_CONFIG_REVISION", "Server configuration revision is stale")
 			return
 		}
-		writeError(response, http.StatusUnprocessableEntity, "ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation confirmation failed")
+		failure := operationalErrorEnvelope("ROTATE_DATABASE_PASSWORD_FAILED", "Database password rotation confirmation failed", err, nil)
+		s.logger.Error("database password rotation confirmation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", failure.Diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, failure)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
