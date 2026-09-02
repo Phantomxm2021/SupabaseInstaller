@@ -307,6 +307,23 @@ func TestHydrateUsesDedicatedStudioPasswordOverRuntimeDashboardPassword(t *testi
 	}
 }
 
+func TestDatabasePasswordRotationReportsUnavailableRuntimeSecret(t *testing.T) {
+	orchestrator, _, operations, currentProject, snapshot, _, queued := newRecoveryFixture(t, "ROTATE_DATABASE_PASSWORD")
+	snapshot.Configuration.General.StudioPasswordSet = true
+
+	_, err := orchestrator.RunDatabasePasswordRotation(context.Background(), currentProject, queued, snapshot, "new-password-for-test")
+	if err == nil || !strings.Contains(err.Error(), "database password rotation preparation failed") {
+		t.Fatalf("RunDatabasePasswordRotation() error = %v, want rotation preparation diagnostic", err)
+	}
+	stored, err := operations.Get(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stored.ErrorMessage, "database password rotation preparation failed") || !strings.Contains(stored.ErrorMessage, "configured Studio password is unavailable") {
+		t.Fatalf("stored error = %q, want unavailable runtime secret diagnostic", stored.ErrorMessage)
+	}
+}
+
 func TestSameServicesIgnoresRendererHelperServices(t *testing.T) {
 	expected := []string{"db", "api-gw", "auth", "rest", "meta", "studio", "realtime", "storage", "imgproxy", "functions", "supavisor"}
 	actual := append(append([]string(nil), expected...), "auth-templates", "deno-cache", "db-config")

@@ -479,7 +479,7 @@ func (o *Orchestrator) RunDatabasePasswordRotation(ctx context.Context, currentP
 			}
 			secrets, runtimeSecrets, err := o.hydrate(workCtx, currentProject.ID, snapshot.Configuration)
 			if err != nil {
-				return o.fail(ctx, queued, step, errors.New("runtime reconciliation failed"), false)
+				return o.fail(ctx, queued, step, fmt.Errorf("database password rotation preparation failed: %w", err), false)
 			}
 			rotator, ok := o.provisioner.(PasswordRotationProvisioner)
 			if !ok {
