@@ -216,7 +216,7 @@ func TestClientDoesNotInferRuntimeOutcomeFromGenericErrorEnvelope(t *testing.T) 
 
 func TestClientPreservesVersionedReconcileDiagnostic(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body, _ := json.Marshal(contracts.ReconcileProjectResponse{RuntimeChanged: true, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "untrusted error message"}, Diagnostic: "runtime health is unhealthy; services: auth (restarting, unhealthy)", DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction})
+		body, _ := json.Marshal(contracts.ReconcileProjectResponse{OperationID: "op-1", ProjectID: "project-1", RolledBack: true, RuntimeChanged: true, Error: &contracts.APIError{Code: "RECONCILE_FAILED", Message: "untrusted error message"}, Diagnostic: "runtime health is unhealthy; services: auth (restarting, unhealthy)", DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction})
 		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
@@ -276,6 +276,40 @@ func TestClientRejectsGenericReconcileAndRotationEnvelopeDiagnostics(t *testing.
 	}
 }
 
+func TestClientRejectsVersionedTypedDiagnosticsWithoutCompleteIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		path      string
+		call      func(*Client) error
+		payload   string
+		canonical string
+	}{
+		{"reconcile", "/internal/v1/projects/reconcile", func(c *Client) error {
+			_, err := c.Reconcile(context.Background(), contracts.ReconcileProjectRequest{})
+			return err
+		}, `{"rolledBack":true,"runtimeChanged":true,"error":{"code":"RECONCILE_FAILED","message":"untrusted"},"diagnostic":"unsafe-incomplete-reconcile-diagnostic","diagnosticVersion":1}`, "Server runtime reconciliation failed"},
+		{"rotation", "/internal/v1/projects/rotate-database-password", func(c *Client) error {
+			_, err := c.RotateDatabasePassword(context.Background(), contracts.RotateDatabasePasswordRequest{})
+			return err
+		}, `{"rolledBack":true,"runtimeChanged":true,"error":{"code":"ROTATE_DATABASE_PASSWORD_FAILED","message":"untrusted"},"diagnostic":"unsafe-incomplete-rotation-diagnostic","diagnosticVersion":1}`, "Database password rotation failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path != tc.path {
+					t.Fatalf("path = %s, want %s", request.URL.Path, tc.path)
+				}
+				return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(tc.payload)), Header: make(http.Header)}, nil
+			})}
+			client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
+			var clientErr *ClientError
+			err := tc.call(client)
+			if !errors.As(err, &clientErr) || clientErr.Message != tc.canonical || strings.Contains(clientErr.Message, "unsafe-incomplete-") {
+				t.Fatalf("error = %#v, want canonical message %q without incomplete diagnostic", err, tc.canonical)
+			}
+		})
+	}
+}
+
 func TestClientDiagnosticRoutesRequireExactFunctionAndHostPaths(t *testing.T) {
 	functionPayload, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "FUNCTION_DEPLOY_FAILED"}, Diagnostic: "function diagnostic"})
 	hostPayload, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{Code: "HOST_PORT_UNAVAILABLE"}, Diagnostic: "host diagnostic"})
@@ -324,7 +358,7 @@ func TestClientRedactsRotationFailureAndPreservesRollbackState(t *testing.T) {
 func TestClientPreservesProvisionerRotationDiagnostic(t *testing.T) {
 	const diagnostic = "runtime health is UNHEALTHY; services: auth (restarting, UNHEALTHY)"
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(`{"rolledBack":true,"runtimeChanged":true,"error":{"code":"ROTATE_DATABASE_PASSWORD_FAILED","message":"Database password rotation failed"},"diagnostic":"` + diagnostic + `","diagnosticVersion":1}`)), Header: make(http.Header)}, nil
+		return &http.Response{StatusCode: http.StatusUnprocessableEntity, Body: io.NopCloser(strings.NewReader(`{"operationId":"op-1","projectId":"project-1","rolledBack":true,"runtimeChanged":true,"error":{"code":"ROTATE_DATABASE_PASSWORD_FAILED","message":"Database password rotation failed"},"diagnostic":"` + diagnostic + `","diagnosticVersion":1}`)), Header: make(http.Header)}, nil
 	})}
 	client := NewClient("http://provisioner:9090", strings.Repeat("a", 32), httpClient)
 

@@ -287,21 +287,25 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 
 	if path == "/internal/v1/projects/reconcile" {
 		var result contracts.ReconcileProjectResponse
-		if _, ok := fields["rolledBack"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
+		if json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
 			code = result.Error.Code
-			rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
-			if contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
+			if hasExplicitOutcomeField(fields) {
+				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
+			}
+			if hasCompleteTypedFailureIdentity(fields, result.OperationID, result.ProjectID, result.Error) && contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
 				diagnostic = result.Diagnostic
 			}
 		}
 	} else if isRotationPath(path) {
 		var result contracts.RotateDatabasePasswordResponse
-		if _, ok := fields["rolledBack"]; ok && json.Unmarshal(payload, &result) == nil && result.Error != nil {
+		if json.Unmarshal(payload, &result) == nil && result.Error != nil {
 			typedResponse = true
 			code = result.Error.Code
-			rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
-			if contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
+			if hasExplicitOutcomeField(fields) {
+				rollbackComplete, runtimeStateKnown, runtimeStateChanged = result.RolledBack, true, result.RuntimeChanged
+			}
+			if hasCompleteTypedFailureIdentity(fields, result.OperationID, result.ProjectID, result.Error) && contracts.SupportsDiagnosticVersion(result.DiagnosticVersion) {
 				diagnostic = result.Diagnostic
 			}
 		}
@@ -331,6 +335,23 @@ func clientErrorForPayload(path string, status int, payload []byte) *ClientError
 		message = diagnostic
 	}
 	return &ClientError{Code: code, Message: message, Status: status, RollbackComplete: rollbackComplete, RuntimeStateKnown: runtimeStateKnown, RuntimeStateChanged: runtimeStateChanged}
+}
+
+func hasCompleteTypedFailureIdentity(fields map[string]json.RawMessage, operationID, projectID string, apiError *contracts.APIError) bool {
+	return operationID != "" && projectID != "" && apiError != nil && apiError.Code != "" && hasExplicitOutcomeFields(fields)
+}
+
+func hasExplicitOutcomeFields(fields map[string]json.RawMessage) bool {
+	return isJSONBoolean(fields["rolledBack"]) && isJSONBoolean(fields["runtimeChanged"])
+}
+
+func hasExplicitOutcomeField(fields map[string]json.RawMessage) bool {
+	return isJSONBoolean(fields["rolledBack"]) || isJSONBoolean(fields["runtimeChanged"])
+}
+
+func isJSONBoolean(raw json.RawMessage) bool {
+	value := strings.TrimSpace(string(raw))
+	return value == "true" || value == "false"
 }
 
 func isRotationPath(path string) bool {
