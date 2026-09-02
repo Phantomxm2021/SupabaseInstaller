@@ -183,10 +183,13 @@ func TestFunctionDeployEndpointForwardsArchiveWithoutReturningIt(t *testing.T) {
 	}
 }
 
-func TestFunctionDeployEndpointReturnsSafeFailureDiagnostic(t *testing.T) {
+func TestFunctionDeployEndpointDoesNotReturnArchiveControlledFailureDetail(t *testing.T) {
 	root, _ := projectfs.New(t.TempDir())
-	backend := &functionDeployStub{err: errors.New("function archive requires root index.ts; POSTGRES_PASSWORD=secret-value")}
-	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend})
+	const archiveSentinel = "archive-content-sentinel"
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	backend := &functionDeployStub{err: errors.New("function archive entry " + archiveSentinel + " could not be extracted")}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
 	request := httptest.NewRequest(http.MethodPost, "/internal/v1/projects/bee/functions/demo/deploy", strings.NewReader("zip-body"))
 	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
 	request.Header.Set("Content-Type", "application/zip")
@@ -197,7 +200,7 @@ func TestFunctionDeployEndpointReturnsSafeFailureDiagnostic(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || !strings.Contains(body.Diagnostic, "function archive requires root index.ts") || strings.Contains(response.Body.String(), "secret-value") {
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || body.Diagnostic != "Function archive processing failed" || strings.Contains(response.Body.String(), archiveSentinel) || strings.Contains(logs.String(), archiveSentinel) {
 		t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
 	}
 }
@@ -396,6 +399,36 @@ func TestReconcileEndpointReturnsRedactedFailureDiagnostic(t *testing.T) {
 	}
 	if body.Error == nil || body.Error.Code != "RECONCILE_FAILED" || body.Error.Message != "Server runtime reconciliation failed" || !strings.Contains(body.Diagnostic, "compose action failed") || strings.Contains(response.Body.String(), "secret-value") {
 		t.Fatalf("response must include a redacted diagnostic: %s", response.Body.String())
+	}
+}
+
+func TestReconcileEndpointRedactsNestedConfigurationSecretInputs(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	values := []string{"studio-sentinel", "smtp-sentinel", "phone-sentinel", "oauth-sentinel", "storage-sentinel", "function-sentinel"}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	backend := &reconcileStub{err: &contracts.ReconcileFailure{Cause: errors.New("runtime rejected nested config values: " + strings.Join(values, ", "))}}
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: backend, Logger: logger})
+	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", contracts.ReconcileProjectRequest{
+		OperationID: "op-1", IdempotencyKey: "key-1", ProjectID: "project-1", Slug: "bee",
+		Configuration: contracts.ProjectConfiguration{
+			General: contracts.GeneralConfig{StudioPassword: contracts.SecretInput{Value: values[0]}},
+			Auth: contracts.AuthConfig{
+				SMTP:  contracts.SMTPConfig{Password: contracts.SecretInput{Value: values[1]}},
+				Phone: contracts.PhoneAuthConfig{Secret: contracts.SecretInput{Value: values[2]}},
+				OAuth: map[string]contracts.OAuthProviderConfig{"google": {Secret: contracts.SecretInput{Value: values[3]}}},
+			},
+			Storage:   contracts.StorageConfig{SecretAccessKey: contracts.SecretInput{Value: values[4]}},
+			Functions: contracts.FunctionsConfig{Variables: []contracts.FunctionVariable{{Name: "APP_SECRET", Value: contracts.SecretInput{Value: values[5]}}}},
+		},
+	})
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	for _, value := range values {
+		if strings.Contains(response.Body.String(), value) || strings.Contains(logs.String(), value) {
+			t.Fatalf("nested configuration secret leaked %q: response=%s logs=%s", value, response.Body.String(), logs.String())
+		}
 	}
 }
 

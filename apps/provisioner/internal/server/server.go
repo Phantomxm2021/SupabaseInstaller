@@ -111,7 +111,10 @@ func (s *server) deployFunction(response http.ResponseWriter, request *http.Requ
 	request.Body = http.MaxBytesReader(response, request.Body, 20<<20)
 	result, err := backend.DeployFunction(request.Context(), contracts.DeployFunctionRequest{Slug: request.PathValue("slug"), Name: name, OperationID: operationID, Archive: request.Body})
 	if err != nil {
-		failure := operationalErrorEnvelope("FUNCTION_DEPLOY_FAILED", "Function deployment failed", err, nil)
+		// Deployment errors can originate from archive ingestion, where the
+		// error text may include untrusted filenames or source. Keep the
+		// diagnostic actionable without reflecting archive-controlled data.
+		failure := operationalErrorEnvelope("FUNCTION_DEPLOY_FAILED", "Function deployment failed", errors.New("Function archive processing failed"), nil)
 		s.logger.Error("function deployment failed", "slug", request.PathValue("slug"), "function", name, "operation_id", operationID, "error", failure.Diagnostic)
 		if result.RolledBack {
 			result.Error = &failure.Error
@@ -342,11 +345,27 @@ func reconcileKnownValues(input contracts.ReconcileProjectRequest) []string {
 	for _, value := range input.RuntimeSecrets {
 		values = append(values, value)
 	}
+	return append(values, configurationSecretValues(input.Configuration)...)
+}
+
+func configurationSecretValues(configuration contracts.ProjectConfiguration) []string {
+	values := []string{
+		configuration.General.StudioPassword.Value,
+		configuration.Auth.Phone.Secret.Value,
+		configuration.Auth.SMTP.Password.Value,
+		configuration.Storage.SecretAccessKey.Value,
+	}
+	for _, provider := range configuration.Auth.OAuth {
+		values = append(values, provider.Secret.Value)
+	}
+	for _, variable := range configuration.Functions.Variables {
+		values = append(values, variable.Value.Value)
+	}
 	return values
 }
 
 func rotationKnownValues(input contracts.RotateDatabasePasswordRequest) []string {
-	values := reconcileKnownValues(contracts.ReconcileProjectRequest{Secrets: input.Secrets, RuntimeSecrets: input.RuntimeSecrets})
+	values := reconcileKnownValues(contracts.ReconcileProjectRequest{Configuration: input.Configuration, Secrets: input.Secrets, RuntimeSecrets: input.RuntimeSecrets})
 	return append(values, input.OldPassword, input.NewPassword)
 }
 
