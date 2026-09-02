@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -25,6 +27,22 @@ type functionDeployStub struct {
 	listErr     error
 	rollbackErr error
 	deleteErr   error
+}
+
+type projectfsFunctionBackend struct{ root *projectfs.Root }
+
+func (*projectfsFunctionBackend) Lifecycle(context.Context, contracts.LifecycleRequest) error {
+	return nil
+}
+func (*projectfsFunctionBackend) Inspect(context.Context, contracts.InspectProjectRequest) (contracts.InspectProjectResponse, error) {
+	return contracts.InspectProjectResponse{}, nil
+}
+func (*projectfsFunctionBackend) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
+}
+func (backend *projectfsFunctionBackend) DeployFunction(_ context.Context, request contracts.DeployFunctionRequest) (contracts.FunctionDeploymentResult, error) {
+	_, err := backend.root.StageFunctionRelease(request.Slug, request.Name, request.OperationID, request.Archive)
+	return contracts.FunctionDeploymentResult{}, err
 }
 
 func (s *functionDeployStub) Lifecycle(context.Context, contracts.LifecycleRequest) error { return nil }
@@ -203,6 +221,48 @@ func TestFunctionDeployEndpointDoesNotReturnArchiveControlledFailureDetail(t *te
 	}
 	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || body.Diagnostic != "Function archive processing failed" || strings.Contains(response.Body.String(), archiveSentinel) || strings.Contains(logs.String(), archiveSentinel) {
 		t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
+	}
+}
+
+func TestFunctionDeployEndpointRedactsArchiveDerivedFilesystemPath(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	project, err := root.ProjectPath("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const entrySentinel = "archive-entry-sentinel"
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	for _, name := range []string{"index.ts", strings.Repeat(entrySentinel, 20) + ".ts"} {
+		file, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Write([]byte("export default {}")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: &projectfsFunctionBackend{root: root}, Logger: logger})
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/projects/bee/functions/demo/deploy", bytes.NewReader(archive.Bytes()))
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	request.Header.Set("Content-Type", "application/zip")
+	request.Header.Set("X-Operation-ID", "operation-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var body contracts.ErrorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusUnprocessableEntity || body.Error.Code != "FUNCTION_DEPLOY_FAILED" || body.Error.Message != "Function deployment failed" || body.Diagnostic != "Function archive processing failed" || strings.Contains(response.Body.String(), entrySentinel) || strings.Contains(logs.String(), entrySentinel) {
+		t.Fatalf("response=%d body=%#v logs=%s", response.Code, body, logs.String())
 	}
 }
 

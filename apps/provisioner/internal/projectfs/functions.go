@@ -240,7 +240,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 		if isDirectory {
 			if err := os.MkdirAll(filepath.Join(stage, filepath.FromSlash(clean)), 0o700); err != nil {
-				return fail(fmt.Errorf("create function directory: %w", err))
+				return fail(archiveIngestionError(fmt.Errorf("create function archive directory: %w", err)))
 			}
 			continue
 		}
@@ -256,7 +256,7 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 		output := filepath.Join(stage, filepath.FromSlash(clean))
 		if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
-			return fail(fmt.Errorf("create function parent directory: %w", err))
+			return fail(archiveIngestionError(fmt.Errorf("create function archive parent directory: %w", err)))
 		}
 		source, err := item.Open()
 		if err != nil {
@@ -275,12 +275,13 @@ func (r *Root) StageFunctionRelease(slug, name, operationID string, archive io.R
 		}
 		copied := int64(len(contents))
 		destination, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return fail(archiveIngestionError(fmt.Errorf("create function archive entry: %w", err)))
+		}
+		_, err = destination.Write(contents)
+		closeErr := destination.Close()
 		if err == nil {
-			_, err = destination.Write(contents)
-			closeErr := destination.Close()
-			if err == nil {
-				err = closeErr
-			}
+			err = closeErr
 		}
 		if err != nil {
 			return fail(fmt.Errorf("write function archive entry: %w", err))
