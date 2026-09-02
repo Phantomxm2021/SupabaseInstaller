@@ -833,3 +833,29 @@ it('forces R2 path-style and submits the upload limit in bytes', async () => {
   await user.click(screen.getByRole('button', { name: 'Install server' }))
   await waitFor(() => expect(body?.configuration.storage).toMatchObject({ backend: 'r2', forcePathStyle: true, uploadFileSizeLimit: 512 * 1024 * 1024 }))
 })
+
+it('blocks an invalid R2 upload limit instead of preserving the previous bytes', async () => {
+  window.PointerEvent = class extends window.MouseEvent {} as typeof PointerEvent
+  let submitted = false
+  vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET') return projectListResponse()
+    submitted = true
+    return new Response(JSON.stringify({ projectId: 'r2-invalid', operationId: 'op-r2-invalid' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+  await user.type(screen.getByLabelText('Server name'), 'R2 invalid')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Standard' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('combobox', { name: 'Storage backend' }))
+  await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+  const limit = screen.getByLabelText('Upload limit (MiB)')
+  fireEvent.change(limit, { target: { value: '5121' } })
+  expect(screen.getByText(/between 1 and 5120 MiB/i)).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  expect(screen.getByText('Step 3 of 4 · Security & integrations')).toBeVisible()
+  expect(submitted).toBe(false)
+})
