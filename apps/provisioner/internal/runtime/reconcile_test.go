@@ -129,7 +129,7 @@ func TestReconcileDoesNotQueryStorageWhenPreviouslyDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &fakeReconcileRunner{storageCountError: errors.New("must not query")}
+	runner := &fakeReconcileRunner{storageObjects: 1}
 	backend := NewBackend(root, runner, &sequenceInspector{})
 	initial := baseConfig()
 	initial.Services.Storage = false
@@ -138,11 +138,34 @@ func TestReconcileDoesNotQueryStorageWhenPreviouslyDisabled(t *testing.T) {
 	}
 	changed := baseConfig()
 	changed.Storage.Bucket = "new-bucket"
-	if _, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2)); err != nil {
-		t.Fatalf("enable storage reconcile: %v", err)
+	_, err = backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2))
+	if err == nil || !strings.Contains(errors.Unwrap(err).Error(), "Storage contains objects") {
+		t.Fatalf("error=%v, want non-empty storage rejection", err)
 	}
-	if runner.storageCountCalls != 0 {
-		t.Fatalf("storage count calls=%d, want 0", runner.storageCountCalls)
+	if runner.storageCountCalls != 1 || runner.validated != 1 || len(runner.recreated) != 0 {
+		t.Fatalf("side effects: count=%d validated=%d recreated=%v", runner.storageCountCalls, runner.validated, runner.recreated)
+	}
+}
+
+func TestReconcileAllowsEmptyStorageWhenPreviouslyDisabled(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	initial := baseConfig()
+	initial.Services.Storage = false
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(initial, 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	changed := baseConfig()
+	changed.Storage.Bucket = "new-bucket"
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2)); err != nil {
+		t.Fatalf("empty transition: %v", err)
+	}
+	if runner.storageCountCalls != 1 {
+		t.Fatalf("storage count calls=%d, want 1", runner.storageCountCalls)
 	}
 }
 

@@ -16,3 +16,5 @@
 - Final security RED/GREEN: a symlinked `generation-*` directory still passed `os.Stat`; `RuntimeGeneration` now uses `Lstat` and requires `.manager-runtime`, `generations`, and selected generation components to be non-symlink directories. Coverage proves no count/stage/publish/recreate.
 - Follow-up commit: `fix: reject symlinked runtime generations`
 - Proof follow-up: symlinked-generation coverage now snapshots generation entries and the `current` target, and asserts validation/up calls remain unchanged in addition to zero query/recreate.
+- Final policy follow-up RED/GREEN: previously-disabled Storage with a changed location and nonzero objects was incorrectly allowed. The guard now applies on non-initial revisions when the candidate enables Storage and identity changes, regardless of prior enabled state; zero-count and no-side-effect coverage pass.
+- Follow-up commit: `fix: guard enabling storage after disabled transition`
