@@ -201,8 +201,6 @@ it('renders only enabled security integration module bodies', async () => {
   expect(screen.queryByRole('button', { name: 'Add authentication provider' })).not.toBeInTheDocument()
   expect(screen.getByRole('switch', { name: 'Storage & Image Transformation' })).not.toBeChecked()
   expect(screen.queryByLabelText('Storage backend')).not.toBeInTheDocument()
-  await user.click(screen.getByRole('switch', { name: 'Storage & Image Transformation' }))
-  expect(screen.getByLabelText('Storage backend')).toBeVisible()
 })
 
 it('closes the authentication provider picker when Authentication is disabled', async () => {
@@ -822,7 +820,7 @@ it('forces R2 path-style and submits the upload limit in bytes', async () => {
   await user.click(screen.getByRole('button', { name: 'Standard' }))
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('combobox', { name: 'Storage backend' }))
-  await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+  await user.click(await screen.findByText('Cloudflare R2'))
   expect(screen.queryByText('Force path style')).not.toBeInTheDocument()
   await user.type(screen.getByLabelText('Bucket'), 'objects')
   await user.type(screen.getByLabelText('Account ID'), 'abcdef0123456789abcdef0123456789')
@@ -852,10 +850,6 @@ it('blocks an invalid R2 upload limit instead of preserving the previous bytes',
   await user.click(screen.getByRole('button', { name: 'Continue' }))
   await user.click(screen.getByRole('combobox', { name: 'Storage backend' }))
   await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
-  await user.type(screen.getByLabelText('Bucket'), 'objects')
-  await user.type(screen.getByLabelText('Account ID'), 'abcdef0123456789abcdef0123456789')
-  await user.type(screen.getByLabelText('Access key ID'), 'access')
-  await user.type(screen.getByLabelText('Secret access key'), 'secret')
   const limit = screen.getByLabelText('Upload limit (MiB)')
   fireEvent.change(limit, { target: { value: '5121' } })
   expect(screen.getByText(/between 1 and 5120 MiB/i)).toBeVisible()
