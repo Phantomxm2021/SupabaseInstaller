@@ -13,6 +13,7 @@ const page = (
   logs,
   olderCursor: "",
   newerCursor: "new",
+  hasMoreNewer: false,
   health: { status: "healthy", dropped: 0, rejected: 0, detail: "" },
   serverTime: "2026-09-04T12:00:00Z",
   ...overrides,
@@ -329,6 +330,48 @@ it("does not merge a stale filter response into the current filter key", async (
   await flushAsync();
   expect(screen.queryByText("stale-error")).not.toBeInTheDocument();
   expect(screen.getByText("warn-only")).toBeVisible();
+});
+
+it("drains every contiguous newer page without skipping a 450-record burst", async () => {
+  const requestedAfter: string[] = [];
+  setup(async (input) => {
+    const after = new URL(String(input), "http://local").searchParams.get("after") ?? "";
+    requestedAfter.push(after);
+    if (!after) return new Response(JSON.stringify(page([log("base", "2026-09-04T00:00:00Z")], { newerCursor: "cursor-0" })), { status: 200, headers: { "Content-Type": "application/json" } });
+    const start = after === "cursor-0" ? 1 : after === "cursor-200" ? 201 : 401;
+    const end = Math.min(start + 199, 450);
+    const logs = Array.from({ length: end - start + 1 }, (_, index) => log(`event-${start + index}`, new Date(Date.UTC(2026, 8, 4) + (start + index) * 1000).toISOString()));
+    return new Response(JSON.stringify(page(logs, { newerCursor: `cursor-${end}`, hasMoreNewer: end < 450 })), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  await screen.findByText("base");
+  fireEvent.click(screen.getByRole("button", { name: /^refresh$/i }));
+  await screen.findByText("event-450");
+  expect(requestedAfter).toEqual(["", "cursor-0", "cursor-200", "cursor-400"]);
+  expect(screen.getAllByRole("row")).toHaveLength(452);
+});
+
+it("sorts RFC3339 nanoseconds newest-first with ID as the stable final tie-breaker", async () => {
+  setup(async () => new Response(JSON.stringify(page([
+    log("exact", "2026-09-04T10:00:00Z"),
+    log("nano-a", "2026-09-04T10:00:00.123456789Z"),
+    log("nano-b", "2026-09-04T10:00:00.123456789Z"),
+    log("micro", "2026-09-04T10:00:00.123456001Z"),
+  ])), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await screen.findByText("exact");
+  expect(screen.getAllByRole("row").slice(1).map((row) => within(row).getByText(/^(exact|nano-a|nano-b|micro)$/).textContent)).toEqual(["nano-b", "nano-a", "micro", "exact"]);
+});
+
+it("caps rendered retained logs at 2,000 and stops older pagination at the cap", async () => {
+  const logs = Array.from({ length: 2_050 }, (_, index) => log(`bounded-${index}`, `2026-09-04T10:00:${String(index % 60).padStart(2, "0")}.${String(index).padStart(9, "0")}Z`));
+  setup(async () => new Response(JSON.stringify(page(logs, { olderCursor: "older" })), { status: 200, headers: { "Content-Type": "application/json" } }));
+  expect(await screen.findByText(/Showing latest 2,000/i)).toBeVisible();
+  expect(screen.getAllByRole("row")).toHaveLength(2_001);
+  expect(screen.queryByRole("button", { name: /load older/i })).not.toBeInTheDocument();
+});
+
+it.each(["offline", "not_installed"])("shows explicit no-records copy when health is %s", async (status) => {
+  setup(async () => new Response(JSON.stringify(page([], { health: { status, dropped: 0, rejected: 0, detail: "" } })), { status: 200, headers: { "Content-Type": "application/json" } }));
+  expect(await screen.findByText("No retained logs.")).toBeVisible();
 });
 
 function fireInput(input: HTMLElement, value: string) {

@@ -440,4 +440,4 @@ export interface SecretRevealResponse {
 export type FunctionLogLevel = "debug" | "info" | "warn" | "error";
 export interface FunctionLogRecord { id: string; projectId: string; functionName: string; executionId: string; eventType: string; message: string; timestamp: string; ingestedAt: string; level: FunctionLogLevel; truncated: boolean; }
 export interface FunctionLogHealth { status: "healthy" | "dropped" | "offline" | "incompatible" | "disabled" | "not_installed" | "storage_error"; dropped: number; rejected: number; detail: string; }
-export interface FunctionLogPage { logs: FunctionLogRecord[]; olderCursor: string; newerCursor: string; health: FunctionLogHealth; serverTime: string; }
+export interface FunctionLogPage { logs: FunctionLogRecord[]; olderCursor: string; newerCursor: string; hasMoreNewer: boolean; health: FunctionLogHealth; serverTime: string; }

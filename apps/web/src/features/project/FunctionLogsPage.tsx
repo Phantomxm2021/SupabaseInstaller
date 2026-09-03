@@ -14,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 type LevelFilter = '' | FunctionLogLevel
+const maxRetainedLogs = 2_000
+const maxNewerPagesPerCycle = 5
 
 export function FunctionLogsPage() {
   const { projectId = '', functionName = '' } = useParams()
@@ -54,10 +56,10 @@ function LogResults({ projectId, functionName, level, search, paused }: { projec
   const base = `/api/projects/${encodeURIComponent(projectId)}/functions/${encodeURIComponent(functionName)}/logs`
   const query = useQuery({
     queryKey: ['function-logs', projectId, functionName, level, search],
-    queryFn: ({ signal }) => apiFetch<FunctionLogPage>(makeURL(base, { limit: '200', level, search, after: newerCursor.current }), { signal }),
+    queryFn: ({ signal }) => fetchLogCycle(base, level, search, newerCursor.current, signal),
     enabled: Boolean(projectId && functionName),
     retry: false,
-    refetchInterval: paused ? false : 5_000,
+    refetchInterval: (current) => paused ? false : current.state.data?.hasMoreNewer ? 10 : 5_000,
   })
 
   useEffect(() => () => {
@@ -100,11 +102,11 @@ function LogResults({ projectId, functionName, level, search, paused }: { projec
     {health && <HealthNotice health={health} />}
     {query.isError && records.length > 0 && <Alert variant="destructive">Could not refresh logs. Previously loaded records are still shown.</Alert>}
     {olderError && <Alert variant="destructive">{olderError}</Alert>}
-    <div className="function-logs-actions"><span>{records.length} retained {records.length === 1 ? 'event' : 'events'}</span><Button variant="outline" size="sm" disabled={query.isFetching} onClick={() => void query.refetch()}><RefreshCw className={query.isFetching ? 'animate-spin' : ''} /> Refresh</Button></div>
+    <div className="function-logs-actions"><span>{records.length >= maxRetainedLogs ? `Showing latest ${maxRetainedLogs.toLocaleString()} events` : `${records.length} retained ${records.length === 1 ? 'event' : 'events'}`}</span><Button variant="outline" size="sm" disabled={query.isFetching} onClick={() => void query.refetch()}><RefreshCw className={query.isFetching ? 'animate-spin' : ''} /> Refresh</Button></div>
     <Card className="function-logs-card"><CardContent className="function-logs-table-wrap">
-      {records.length === 0 && health?.status === 'healthy' ? <div className="function-logs-empty"><p>No retained logs.</p><span>Runtime events will appear here as they are collected.</span></div> : <Table><TableHeader><TableRow><TableHead>Timestamp</TableHead><TableHead>Level</TableHead><TableHead>Event type</TableHead><TableHead>Message</TableHead></TableRow></TableHeader><TableBody>{records.map((record) => <TableRow key={record.id}><TableCell className="function-log-timestamp">{formatTimestamp(record.timestamp)}</TableCell><TableCell><Badge variant={record.level === 'error' ? 'destructive' : 'outline'}>{record.level}</Badge></TableCell><TableCell>{record.eventType}</TableCell><TableCell><pre className="function-log-message">{record.message}{record.truncated ? ' …' : ''}</pre></TableCell></TableRow>)}</TableBody></Table>}
+      {records.length === 0 ? <div className="function-logs-empty"><p>No retained logs.</p><span>Runtime events will appear here as they are collected.</span></div> : <Table><TableHeader><TableRow><TableHead>Timestamp</TableHead><TableHead>Level</TableHead><TableHead>Event type</TableHead><TableHead>Message</TableHead></TableRow></TableHeader><TableBody>{records.map((record) => <TableRow key={record.id}><TableCell className="function-log-timestamp">{formatTimestamp(record.timestamp)}</TableCell><TableCell><Badge variant={record.level === 'error' ? 'destructive' : 'outline'}>{record.level}</Badge></TableCell><TableCell>{record.eventType}</TableCell><TableCell><pre className="function-log-message">{record.message}{record.truncated ? ' …' : ''}</pre></TableCell></TableRow>)}</TableBody></Table>}
     </CardContent></Card>
-    {olderCursor && <div className="function-logs-older"><Button variant="outline" disabled={olderPending} onClick={() => void loadOlder()}>{olderPending ? 'Loading…' : 'Load older'}</Button></div>}
+    {olderCursor && records.length < maxRetainedLogs && <div className="function-logs-older"><Button variant="outline" disabled={olderPending} onClick={() => void loadOlder()}>{olderPending ? 'Loading…' : 'Load older'}</Button></div>}
   </>
 }
 
@@ -128,10 +130,43 @@ function makeURL(base: string, values: Record<string, string>) {
   return `${base}?${params.toString()}`
 }
 
+async function fetchLogCycle(base: string, level: LevelFilter, search: string, after: string, signal: AbortSignal) {
+  let cursor = after
+  let combined: FunctionLogPage | null = null
+  for (let pageNumber = 0; pageNumber < (after ? maxNewerPagesPerCycle : 1); pageNumber += 1) {
+    const page = await apiFetch<FunctionLogPage>(makeURL(base, { limit: '200', level, search, after: cursor }), { signal })
+    combined = combined ? { ...page, logs: mergeLogs(combined.logs, page.logs), olderCursor: combined.olderCursor || page.olderCursor } : page
+    if (!page.hasMoreNewer || !page.newerCursor || page.newerCursor === cursor) break
+    cursor = page.newerCursor
+  }
+  if (!combined) throw new Error('Function log query returned no page')
+  return combined
+}
+
 function mergeLogs(current: FunctionLogRecord[], incoming: FunctionLogRecord[]) {
   const unique = new Map(current.map((record) => [record.id, record]))
   for (const record of incoming) unique.set(record.id, record)
-  return [...unique.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.id.localeCompare(a.id))
+  return [...unique.values()].sort(compareLogsNewestFirst).slice(0, maxRetainedLogs)
+}
+
+function compareLogsNewestFirst(a: FunctionLogRecord, b: FunctionLogRecord) {
+  const timestampOrder = compareRFC3339Nanoseconds(b.timestamp, a.timestamp)
+  return timestampOrder || b.id.localeCompare(a.id)
+}
+
+function compareRFC3339Nanoseconds(a: string, b: string) {
+  const parsedA = parseUTCNanoseconds(a)
+  const parsedB = parseUTCNanoseconds(b)
+  if (parsedA && parsedB) return parsedA.seconds - parsedB.seconds || parsedA.fraction.localeCompare(parsedB.fraction)
+  return Date.parse(a) - Date.parse(b) || a.localeCompare(b)
+}
+
+function parseUTCNanoseconds(value: string) {
+  const match = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?Z$/.exec(value)
+  if (!match) return null
+  const seconds = Date.parse(`${match[1]}Z`) / 1000
+  if (!Number.isFinite(seconds)) return null
+  return { seconds, fraction: (match[2] ?? '').padEnd(9, '0') }
 }
 
 function limitUTF8(value: string, maxBytes: number) {

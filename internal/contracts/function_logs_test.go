@@ -196,3 +196,13 @@ func TestFunctionLogJSONFieldNames(t *testing.T) {
 		}
 	}
 }
+
+func TestFunctionLogPageJSONIncludesNewerDrainState(t *testing.T) {
+	raw, err := json.Marshal(FunctionLogPage{Logs: []FunctionLogRecord{}, HasMoreNewer: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"hasMoreNewer":true`) {
+		t.Fatalf("JSON %s missing hasMoreNewer", raw)
+	}
+}

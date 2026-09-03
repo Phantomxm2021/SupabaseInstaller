@@ -74,7 +74,7 @@ func TestFunctionLogsPublicRouteMappings(t *testing.T) {
 		want       int
 		code       string
 	}{
-		{"success", "/api/projects/p-1/functions/demo/logs", &logsProvisionerFake{page: contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}, Health: contracts.FunctionLogHealth{Status: "healthy"}}}, 200, `"status":"healthy"`},
+		{"success", "/api/projects/p-1/functions/demo/logs", &logsProvisionerFake{page: contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}, Health: contracts.FunctionLogHealth{Status: "healthy"}}}, 200, `"hasMoreNewer":false`},
 		{"invalid query", "/api/projects/p-1/functions/demo/logs?limit=nope", &logsProvisionerFake{}, 400, "INVALID_FUNCTION_LOG_QUERY"},
 		{"invalid name", "/api/projects/p-1/functions/Bad/logs", &logsProvisionerFake{}, 400, "INVALID_FUNCTION_NAME"},
 		{"missing project", "/api/projects/missing/functions/demo/logs", &logsProvisionerFake{}, 404, "PROJECT_NOT_FOUND"},

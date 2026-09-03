@@ -53,11 +53,12 @@ type FunctionLogHealth struct {
 }
 
 type FunctionLogPage struct {
-	Logs        []FunctionLogRecord `json:"logs"`
-	OlderCursor string              `json:"olderCursor"`
-	NewerCursor string              `json:"newerCursor"`
-	Health      FunctionLogHealth   `json:"health"`
-	ServerTime  time.Time           `json:"serverTime"`
+	Logs         []FunctionLogRecord `json:"logs"`
+	OlderCursor  string              `json:"olderCursor"`
+	NewerCursor  string              `json:"newerCursor"`
+	HasMoreNewer bool                `json:"hasMoreNewer"`
+	Health       FunctionLogHealth   `json:"health"`
+	ServerTime   time.Time           `json:"serverTime"`
 }
 
 var ErrFunctionNotFound = errors.New("function not found")

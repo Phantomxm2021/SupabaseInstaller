@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -598,8 +599,12 @@ func (s *Store) Query(ctx context.Context, projectID, functionName string, query
 		where = append(where, fmt.Sprintf("(timestamp_ns %s ? OR (timestamp_ns = ? AND event_id %s ?))", comparison, comparison))
 		args = append(args, cursor.Timestamp.UnixNano(), cursor.Timestamp.UnixNano(), cursor.ID)
 	}
-	args = append(args, query.Limit)
-	rows, err := s.db.QueryContext(ctx, `SELECT event_id,project_id,function_name,timestamp_ns,ingested_at_ns,execution_id,level,event_type,message,truncated FROM function_logs WHERE `+strings.Join(where, " AND ")+` ORDER BY timestamp_ns DESC,event_id DESC LIMIT ?`, args...)
+	order := "DESC"
+	if query.After != "" {
+		order = "ASC"
+	}
+	args = append(args, query.Limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT event_id,project_id,function_name,timestamp_ns,ingested_at_ns,execution_id,level,event_type,message,truncated FROM function_logs WHERE `+strings.Join(where, " AND ")+` ORDER BY timestamp_ns `+order+`,event_id `+order+` LIMIT ?`, args...)
 	if err != nil {
 		return contracts.FunctionLogPage{}, err
 	}
@@ -616,6 +621,13 @@ func (s *Store) Query(ctx context.Context, projectID, functionName string, query
 	}
 	if err := rows.Err(); err != nil {
 		return contracts.FunctionLogPage{}, err
+	}
+	if len(page.Logs) > query.Limit {
+		page.HasMoreNewer = query.After != ""
+		page.Logs = page.Logs[:query.Limit]
+	}
+	if query.After != "" {
+		slices.Reverse(page.Logs)
 	}
 	if len(page.Logs) > 0 {
 		page.NewerCursor, err = contracts.EncodeFunctionLogCursor(contracts.FunctionLogCursor{Timestamp: page.Logs[0].Timestamp, ID: page.Logs[0].ID})

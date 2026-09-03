@@ -185,6 +185,58 @@ func TestQueryOrderingIsolationFiltersAndCursors(t *testing.T) {
 	}
 }
 
+func TestQueryAfterDrainsOldestContiguousPagesWithoutGaps(t *testing.T) {
+	ctx := context.Background()
+	store := testStore(t, Options{})
+	base := time.Unix(1_000, 0).UTC()
+	rows := []contracts.FunctionLogRecord{record("base", "p", "fn", base, contracts.FunctionLogLevelInfo, "base")}
+	for i := 1; i <= 450; i++ {
+		rows = append(rows, record(fmt.Sprintf("event-%03d", i), "p", "fn", base.Add(time.Duration(i)*time.Second), contracts.FunctionLogLevelInfo, "event"))
+	}
+	if err := store.InsertBatch(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := store.Query(ctx, "p", "fn", contracts.FunctionLogQuery{Limit: 1, Before: mustCursor(t, base.Add(time.Second), "event-001")})
+	if err != nil || len(initial.Logs) != 1 || initial.Logs[0].ID != "base" {
+		t.Fatalf("initial = %+v, %v", initial, err)
+	}
+	cursor := initial.NewerCursor
+	got := make([]string, 0, 450)
+	for pageNumber := 0; ; pageNumber++ {
+		page, queryErr := store.Query(ctx, "p", "fn", contracts.FunctionLogQuery{Limit: 200, After: cursor})
+		if queryErr != nil {
+			t.Fatal(queryErr)
+		}
+		for index := len(page.Logs) - 1; index >= 0; index-- {
+			got = append(got, page.Logs[index].ID)
+		}
+		cursor = page.NewerCursor
+		if !page.HasMoreNewer {
+			break
+		}
+		if pageNumber > 3 {
+			t.Fatal("newer pagination did not terminate")
+		}
+	}
+	if len(got) != 450 {
+		t.Fatalf("drained %d records, want 450", len(got))
+	}
+	for i, id := range got {
+		if want := fmt.Sprintf("event-%03d", i+1); id != want {
+			t.Fatalf("record %d = %q, want %q", i, id, want)
+		}
+	}
+}
+
+func mustCursor(t *testing.T, timestamp time.Time, id string) string {
+	t.Helper()
+	cursor, err := contracts.EncodeFunctionLogCursor(contracts.FunctionLogCursor{Timestamp: timestamp, ID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cursor
+}
+
 func TestMaintainExpiresThenDeletesOldestUntilUnderCapacity(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(10_000_000, 0).UTC()
