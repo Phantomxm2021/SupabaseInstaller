@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"time"
 	"unicode/utf8"
@@ -209,8 +210,8 @@ func DecodeFunctionLogCursor(encoded string) (FunctionLogCursor, error) {
 	if err := decoder.Decode(&cursor); err != nil {
 		return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON: %w", err)
 	}
-	if decoder.Decode(&struct{}{}) == nil {
-		return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON: trailing value")
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON: trailing data")
 	}
 	if cursor.Timestamp.IsZero() || cursor.ID == "" {
 		return FunctionLogCursor{}, fmt.Errorf("cursor timestamp and id are required")

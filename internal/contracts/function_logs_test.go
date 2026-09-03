@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -106,7 +107,15 @@ func TestFunctionLogCursorRoundTrip(t *testing.T) {
 }
 
 func TestFunctionLogCursorRejectsMalformedValues(t *testing.T) {
-	for _, cursor := range []string{"", "not base64!", "e30", "eyJ0aW1lc3RhbXAiOiIyMDI2LTA5LTAzVDIwOjUxOjMzWiIsImlkIjoieCIsImV4dHJhIjp0cnVlfQ"} {
+	validJSON := `{"timestamp":"2026-09-03T20:51:33Z","id":"x"}`
+	for _, cursor := range []string{
+		"",
+		"not base64!",
+		"e30",
+		"eyJ0aW1lc3RhbXAiOiIyMDI2LTA5LTAzVDIwOjUxOjMzWiIsImlkIjoieCIsImV4dHJhIjp0cnVlfQ",
+		base64.RawURLEncoding.EncodeToString([]byte(validJSON + `{`)),
+		base64.RawURLEncoding.EncodeToString([]byte(validJSON + `{}`)),
+	} {
 		if _, err := DecodeFunctionLogCursor(cursor); err == nil {
 			t.Errorf("DecodeFunctionLogCursor(%q) succeeded", cursor)
 		}
