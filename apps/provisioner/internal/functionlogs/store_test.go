@@ -3,6 +3,7 @@ package functionlogs
 import (
 	"context"
 	"errors"
+	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"strings"
@@ -315,6 +316,63 @@ func TestOpenReaderQueriesWithoutCreatingOrMutatingDatabase(t *testing.T) {
 	}
 	if !before.ModTime().Equal(after.ModTime()) {
 		t.Fatalf("database mtime changed: %v -> %v", before.ModTime(), after.ModTime())
+	}
+}
+
+func TestOpenReaderRejectsDatabaseSymlink(t *testing.T) {
+	dir := t.TempDir()
+	external := filepath.Join(t.TempDir(), "external.db")
+	store, err := Open(external, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+	link := filepath.Join(dir, "logs.db")
+	if err := os.Symlink(external, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenReader(link, time.Now); err == nil {
+		t.Fatal("OpenReader accepted database symlink")
+	}
+}
+
+func TestOpenReaderReadsWALAndRemainsBoundAcrossPathSwap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "logs.db")
+	now := time.Now().UTC()
+	writer, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if err := writer.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("original", "p", "fn", now, contracts.FunctionLogLevelInfo, "wal")}); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenReader(path, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd := int(reader.readerFile.Fd())
+	if err := os.Rename(path, path+".old"); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = replacement.Close()
+	page, err := reader.Query(context.Background(), "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Logs) != 1 || page.Logs[0].ID != "original" {
+		t.Fatalf("page = %#v", page)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err == nil {
+		t.Fatal("reader descriptor remains open")
 	}
 }
 

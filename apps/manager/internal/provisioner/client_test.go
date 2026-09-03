@@ -51,6 +51,18 @@ func TestClientFunctionLogsEncodesPathQueryAndAuthenticates(t *testing.T) {
 	}
 }
 
+func TestClientFunctionLogsRejectsNonCanonicalSuccessJSON(t *testing.T) {
+	for _, body := range []string{`{"logs":[],"health":{"status":"healthy"},"extra":1}`, `{"logs":[],"logs":[],"health":{"status":"healthy"}}`, `{"logs":[],"health":{"status":"healthy"}} {}`} {
+		httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+		})}
+		client := NewClient("http://provisioner:9090", "token", httpClient)
+		if _, err := client.FunctionLogs(context.Background(), "bee", "demo", contracts.FunctionLogQuery{Limit: 10}); err == nil {
+			t.Fatalf("accepted body %q", body)
+		}
+	}
+}
+
 func TestClientDeployFunctionPreservesAllowListedProvisionerDiagnostic(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{

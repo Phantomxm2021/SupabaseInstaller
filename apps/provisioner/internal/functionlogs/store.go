@@ -5,10 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	_ "modernc.org/sqlite"
 
@@ -30,13 +34,15 @@ type Options struct {
 }
 
 type Store struct {
-	db        *sql.DB
-	path      string
-	now       func() time.Time
-	sizeBytes func(string) (int64, error)
-	retention time.Duration
-	maxBytes  int64
-	redactor  *Redactor
+	db         *sql.DB
+	path       string
+	now        func() time.Time
+	sizeBytes  func(string) (int64, error)
+	retention  time.Duration
+	maxBytes   int64
+	redactor   *Redactor
+	readerFile *os.File
+	readerTemp string
 }
 
 func Open(path string, options Options) (*Store, error) {
@@ -92,30 +98,119 @@ func Open(path string, options Options) (*Store, error) {
 // OpenReader opens an existing SQLite log database without running schema or
 // retention work. mode=ro also prevents accidental writes at the driver layer.
 func OpenReader(path string, now func() time.Time) (*Store, error) {
-	info, err := os.Stat(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, errors.New("invalid function log database path")
+	}
+	parent := filepath.Dir(abs)
+	resolvedParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, os.ErrNotExist
+		}
+		return nil, errors.New("function log database parent is unsafe")
+	}
+	parent = resolvedParent
+	parentFD, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
+	fd, err := unix.Openat(parentFD, filepath.Base(abs), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	_ = unix.Close(parentFD)
+	if err != nil {
+		return nil, err
+	}
+	readerFile := os.NewFile(uintptr(fd), filepath.Base(abs))
+	if readerFile == nil {
+		_ = unix.Close(fd)
+		return nil, errors.New("open function log database")
+	}
+	info, err := readerFile.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		_ = readerFile.Close()
 		return nil, errors.New("function log database is not a regular file")
 	}
 	if now == nil {
 		now = time.Now
 	}
-	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
+	// SQLite derives WAL sidecars from the database pathname and cannot safely
+	// discover them through /proc/self/fd. Copy the already-opened inode and its
+	// no-follow sidecars into a private snapshot, then query that snapshot only.
+	tempDir, err := os.MkdirTemp("", "function-log-reader-*")
+	if err != nil {
+		_ = readerFile.Close()
+		return nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tempDir); _ = readerFile.Close() }
+	snapshotPath := filepath.Join(tempDir, "function-logs.db")
+	if err := copyOpenFile(readerFile, snapshotPath); err != nil {
+		cleanup()
+		return nil, err
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sideParentFD, openErr := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+		if openErr != nil {
+			cleanup()
+			return nil, openErr
+		}
+		sideFD, sideErr := unix.Openat(sideParentFD, filepath.Base(abs)+suffix, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(sideParentFD)
+		if sideErr != nil {
+			if errors.Is(sideErr, unix.ENOENT) {
+				continue
+			}
+			cleanup()
+			return nil, sideErr
+		}
+		side := os.NewFile(uintptr(sideFD), suffix)
+		sideInfo, statErr := side.Stat()
+		if statErr != nil || !sideInfo.Mode().IsRegular() {
+			side.Close()
+			cleanup()
+			return nil, errors.New("function log sidecar is unsafe")
+		}
+		if err := copyOpenFile(side, snapshotPath+suffix); err != nil {
+			side.Close()
+			cleanup()
+			return nil, err
+		}
+		_ = side.Close()
+	}
+	dsn := (&url.URL{Scheme: "file", Path: snapshotPath, RawQuery: "mode=ro"}).String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
+		cleanup()
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
+		cleanup()
 		return nil, err
 	}
-	return &Store{db: db, path: path, now: now}, nil
+	return &Store{db: db, path: path, now: now, readerFile: readerFile, readerTemp: tempDir}, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func copyOpenFile(source *os.File, destination string) error {
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	target, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(target, source)
+	closeErr := target.Close()
+	return errors.Join(copyErr, closeErr)
+}
+
+func (s *Store) Close() error {
+	dbErr := s.db.Close()
+	if s.readerFile != nil {
+		return errors.Join(dbErr, s.readerFile.Close(), os.RemoveAll(s.readerTemp))
+	}
+	return dbErr
+}
 
 func validateRecord(record contracts.FunctionLogRecord) error {
 	if record.ID == "" || record.ProjectID == "" || record.ExecutionID == "" || record.EventType == "" {

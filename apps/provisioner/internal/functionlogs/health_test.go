@@ -55,3 +55,15 @@ func TestWriteHealthSnapshotCanonicalizesDroppedStatus(t *testing.T) {
 		t.Fatalf("status = %q", health.Status)
 	}
 }
+
+func TestHealthSnapshotFutureTimestampIsIncompatible(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "health.json")
+	now := time.Now().UTC()
+	if err := WriteHealthSnapshot(path, contracts.FunctionLogHealth{Status: "healthy"}, now.Add(HealthStaleAfter+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	health, err := ReadHealthSnapshot(path, now)
+	if err != nil || health.Status != "incompatible" {
+		t.Fatalf("health/error = %#v/%v", health, err)
+	}
+}

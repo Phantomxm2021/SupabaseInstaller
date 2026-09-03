@@ -131,6 +131,15 @@ func (r *Root) FunctionLogDatabasePath(slug string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	for _, directory := range []string{projectPath, filepath.Join(projectPath, ".manager-runtime"), filepath.Join(projectPath, ".manager-runtime", "function-logs")} {
+		info, statErr := os.Lstat(directory)
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("function log directory is unsafe")
+		}
+	}
 	return filepath.Join(projectPath, ".manager-runtime", "function-logs", "function-logs.db"), nil
 }
 

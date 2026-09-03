@@ -30,6 +30,7 @@ var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type CollectorStore interface {
 	InsertBatch(context.Context, []contracts.FunctionLogRecord) error
+	// Maintain must return promptly when its context is cancelled.
 	Maintain(context.Context) error
 }
 
@@ -96,13 +97,37 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 		logger: options.Logger, now: options.Now, healthPath: options.HealthPath, health: contracts.FunctionLogHealth{Status: "healthy"},
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
-	_ = c.persistHealth()
+	if options.HealthPath != "" {
+		previous, readErr := ReadHealthSnapshot(options.HealthPath, options.Now())
+		if readErr != nil {
+			return nil, errors.New("read function log health")
+		}
+		if previous.Status != "offline" && !(previous.Status == "incompatible" && previous.Dropped == 0 && previous.Rejected == 0) {
+			c.health.Dropped, c.health.Rejected = previous.Dropped, previous.Rejected
+			if previous.Status == "incompatible" {
+				c.health.Status = "incompatible"
+			} else if previous.Dropped > 0 {
+				c.health.Status = "dropped"
+			}
+		}
+		if err := WriteHealthSnapshot(c.healthPath, c.health, c.now()); err != nil {
+			return nil, errors.New("write function log health")
+		}
+	}
 	go c.maintain(options.MaintenanceInterval)
 	return c, nil
 }
 
 func (c *Collector) persistHealth() error {
-	return WriteHealthSnapshot(c.healthPath, c.Health(), c.now())
+	err := WriteHealthSnapshot(c.healthPath, c.Health(), c.now())
+	if err != nil {
+		c.healthMu.Lock()
+		c.health.Status = "storage_error"
+		c.health.Detail = "function log health persistence unavailable"
+		c.healthMu.Unlock()
+		c.logger.Error("function log health persistence failed")
+	}
+	return err
 }
 
 func validateFunctionsRoot(path string) (string, string, os.FileInfo, error) {
@@ -219,9 +244,19 @@ func (c *Collector) maintain(interval time.Duration) {
 }
 
 func (c *Collector) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return c.CloseContext(ctx)
+}
+
+func (c *Collector) CloseContext(ctx context.Context) error {
 	c.close.Do(func() { close(c.stop) })
-	<-c.done
-	return nil
+	select {
+	case <-c.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func NewCollectorHandler(collector *Collector) http.Handler {

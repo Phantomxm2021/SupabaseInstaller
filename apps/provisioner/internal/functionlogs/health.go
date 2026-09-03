@@ -87,6 +87,9 @@ func ReadHealthSnapshot(path string, now time.Time) (contracts.FunctionLogHealth
 	if now.Sub(snapshot.UpdatedAt) > HealthStaleAfter {
 		snapshot.Health.Status = "offline"
 	}
+	if snapshot.UpdatedAt.Sub(now) > HealthStaleAfter {
+		snapshot.Health = contracts.FunctionLogHealth{Status: "incompatible"}
+	}
 	snapshot.Health.Detail = ""
 	return snapshot.Health, nil
 }

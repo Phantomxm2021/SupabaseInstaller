@@ -98,6 +98,15 @@ func TestFunctionLogsRemainAvailableWhenFunctionsDisabled(t *testing.T) {
 	}
 }
 
+func TestFunctionLogsDisabledStillReturnsProvisionerFailure(t *testing.T) {
+	want := errors.New("storage unavailable")
+	service := NewService(nil, nil, nil, &serviceProvisionerFake{err: want}, time.Now)
+	_, err := service.FunctionLogs(context.Background(), contracts.Project{Slug: "bee", Services: contracts.Services{Functions: false}}, "demo", contracts.FunctionLogQuery{Limit: 10})
+	if !errors.Is(err, want) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 type serviceProvisionerFake struct {
 	name string
 	err  error

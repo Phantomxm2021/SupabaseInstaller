@@ -407,3 +407,81 @@ func TestCollectorMaintenanceFailureDoesNotCountDroppedEvents(t *testing.T) {
 		t.Fatalf("health = %+v", health)
 	}
 }
+
+func TestCollectorRestartPreservesCountersAndDroppedEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "hello"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	healthPath := filepath.Join(t.TempDir(), "health.json")
+	now := time.Now().UTC()
+	if err := WriteHealthSnapshot(healthPath, contracts.FunctionLogHealth{Status: "storage_error", Dropped: 4, Rejected: 7}, now); err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: &collectorStore{}, Redactor: &Redactor{}, FunctionsRoot: root, HealthPath: healthPath, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	health := collector.Health()
+	if health.Dropped != 4 || health.Rejected != 7 || health.Status != "dropped" {
+		t.Fatalf("health = %#v", health)
+	}
+}
+
+type blockingMaintenanceStore struct{ started chan struct{} }
+
+func (*blockingMaintenanceStore) InsertBatch(context.Context, []contracts.FunctionLogRecord) error {
+	return nil
+}
+func (s *blockingMaintenanceStore) Maintain(context.Context) error { close(s.started); select {} }
+
+func TestCollectorCloseContextReturnsDeadlineWhenMaintenanceIgnoresContext(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, "hello"), 0o700)
+	store := &blockingMaintenanceStore{started: make(chan struct{})}
+	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: store, Redactor: &Redactor{}, FunctionsRoot: root, MaintenanceInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("maintenance did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := collector.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext error=%v", err)
+	}
+}
+
+func TestCollectorInitialHealthPersistenceFailureIsReturned(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, "hello"), 0o700)
+	if _, err := NewCollector(CollectorOptions{ProjectID: "project", Store: &collectorStore{}, Redactor: &Redactor{}, FunctionsRoot: root, HealthPath: filepath.Join(t.TempDir(), "missing", "health.json")}); err == nil {
+		t.Fatal("NewCollector succeeded")
+	}
+}
+
+func TestCollectorLaterHealthPersistenceFailureSetsSafeStorageError(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, "hello"), 0o700)
+	healthDir := t.TempDir()
+	var logs bytes.Buffer
+	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: &collectorStore{}, Redactor: &Redactor{}, FunctionsRoot: root, HealthPath: filepath.Join(healthDir, "health.json"), Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	if err := os.RemoveAll(healthDir); err != nil {
+		t.Fatal(err)
+	}
+	collector.reject(1, false)
+	if health := collector.Health(); health.Status != "storage_error" || strings.Contains(health.Detail, healthDir) {
+		t.Fatalf("health=%#v", health)
+	}
+	if strings.Contains(logs.String(), healthDir) || !strings.Contains(logs.String(), "health persistence failed") {
+		t.Fatalf("logs=%q", logs.String())
+	}
+}

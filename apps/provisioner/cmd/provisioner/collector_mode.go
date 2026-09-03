@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -74,7 +75,11 @@ func runCollectorProcess() error {
 	if err != nil {
 		return err
 	}
-	defer collector.Close()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = collector.CloseContext(ctx)
+	}()
 	server := &http.Server{
 		Addr: config.ListenAddr, Handler: functionlogs.NewCollectorHandler(collector), ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024,

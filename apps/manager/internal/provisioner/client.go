@@ -200,11 +200,74 @@ func (c *Client) FunctionLogs(ctx context.Context, slug, name string, query cont
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return contracts.FunctionLogPage{}, clientErrorForPayload(request.URL.Path, response.StatusCode, payload)
 	}
+	if err := rejectDuplicateJSONFields(payload); err != nil {
+		return contracts.FunctionLogPage{}, errors.New("decode function logs response")
+	}
 	var page contracts.FunctionLogPage
-	if err := json.Unmarshal(payload, &page); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&page); err != nil {
+		return contracts.FunctionLogPage{}, errors.New("decode function logs response")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return contracts.FunctionLogPage{}, errors.New("decode function logs response")
 	}
 	return page, nil
+}
+
+func rejectDuplicateJSONFields(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var walk func() error
+	walk = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delimiter {
+		case '{':
+			seen := map[string]struct{}{}
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return errors.New("invalid JSON field")
+				}
+				if _, exists := seen[key]; exists {
+					return errors.New("duplicate JSON field")
+				}
+				seen[key] = struct{}{}
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		case '[':
+			for decoder.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		default:
+			return errors.New("invalid JSON")
+		}
+	}
+	if err := walk(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("trailing JSON")
+	}
+	return nil
 }
 
 func (c *Client) RollbackFunction(ctx context.Context, slug, name, operationID string) (contracts.FunctionDeploymentResult, error) {
