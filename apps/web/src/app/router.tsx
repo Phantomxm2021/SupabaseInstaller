@@ -10,6 +10,7 @@ import { OverviewPage } from "../features/project/OverviewPage";
 import { ConfigurationPage } from "../features/project/ConfigurationPage";
 import { FunctionsPage } from "../features/project/FunctionsPage";
 import { FunctionSecretsPage } from "../features/project/FunctionSecretsPage";
+import { FunctionLogsPage } from "../features/project/FunctionLogsPage";
 import { FunctionsWorkspace } from "../features/project/FunctionsWorkspace";
 import {
   ComingSoonPage,
@@ -75,6 +76,7 @@ export function createAppRouter(_queryClient: QueryClient) {
               children: [
                 { index: true, element: <FunctionsPage /> },
                 { path: "secrets", element: <FunctionSecretsPage /> },
+                { path: ":functionName/logs", element: <FunctionLogsPage /> },
               ],
             },
             {

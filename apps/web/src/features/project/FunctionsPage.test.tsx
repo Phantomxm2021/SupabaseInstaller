@@ -4,6 +4,21 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { FunctionsPage } from './FunctionsPage'
 
+it('navigates each managed function Actions menu to its own logs page even when Functions is disabled', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ functions: [{ name: 'hello world' }, { name: 'snow/雪' }], enabled: false }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+  const renderPage = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/project one/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /><Route path="/projects/:projectId/functions/:functionName/logs" element={<p>logs destination</p>} /></Routes></MemoryRouter></QueryClientProvider>)
+  const user = userEvent.setup()
+  renderPage()
+  await user.click(await screen.findByRole('button', { name: 'Actions for hello world' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'View logs' }))
+  expect(await screen.findByText('logs destination')).toBeVisible()
+
+  renderPage()
+  await user.click((await screen.findAllByRole('button', { name: 'Actions for snow/雪' })).at(-1)!)
+  await user.click((await screen.findAllByRole('menuitem', { name: 'View logs' })).at(-1)!)
+  expect((await screen.findAllByText('logs destination')).at(-1)).toBeVisible()
+})
+
 it('tracks a queued deployment and refreshes the function list after it succeeds', async () => {
   let functionReads = 0
   let operationReads = 0

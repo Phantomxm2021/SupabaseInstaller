@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Archive, Check, ChevronDown, Code2, FileArchive, LoaderCircle, RotateCcw, ShieldAlert, Trash2, Upload, X } from 'lucide-react'
-import { useParams } from 'react-router-dom'
+import { AlertTriangle, Archive, Check, ChevronDown, Code2, FileArchive, LoaderCircle, RotateCcw, ScrollText, ShieldAlert, Trash2, Upload, X } from 'lucide-react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { apiFetch } from '@/api/client'
 import type { FunctionSummary, Operation } from '@/api/types'
@@ -29,6 +29,7 @@ const functionStepLabels: Record<string, string> = {
 
 export function FunctionsPage() {
   const { projectId = '' } = useParams()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [name, setName] = useState('')
   const [archive, setArchive] = useState<File | null>(null)
@@ -101,7 +102,7 @@ export function FunctionsPage() {
     <Card className="functions-list-card">
       <CardHeader className="functions-card-header"><CardTitle>Managed functions</CardTitle><CardDescription>Only Manager-owned releases appear here.</CardDescription></CardHeader>
       <CardContent className="functions-list-content">
-        {items.length === 0 ? <div className="functions-empty-state"><Code2 /><p>No functions deployed yet.</p></div> : <Table><TableHeader><TableRow><TableHead>Function</TableHead><TableHead>Current release</TableHead><TableHead>Previous release</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.name}><TableCell className="font-medium">{item.name}</TableCell><TableCell>{item.current ? <ReleaseBadge release={item.current} /> : <Badge variant="outline">None</Badge>}</TableCell><TableCell>{item.previous ? <ReleaseBadge release={item.previous} /> : <Badge variant="outline">Unavailable</Badge>}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger render={<Button variant="outline" size="sm" aria-label={`Actions for ${item.name}`} />}>Actions <ChevronDown /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={!enabled} onClick={() => openDeploymentDialog(item.name)}><Upload /> Deploy new version</DropdownMenuItem><DropdownMenuItem disabled={!enabled || !item.previous || rollback.isPending} onClick={() => rollback.mutate(item.name)}><RotateCcw /> Roll back</DropdownMenuItem><DropdownMenuItem variant="destructive" disabled={!enabled} onClick={() => setDeleteName(item.name)}><Trash2 /> Delete</DropdownMenuItem></DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}</TableBody></Table>}
+        {items.length === 0 ? <div className="functions-empty-state"><Code2 /><p>No functions deployed yet.</p></div> : <Table><TableHeader><TableRow><TableHead>Function</TableHead><TableHead>Current release</TableHead><TableHead>Previous release</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.name}><TableCell className="font-medium">{item.name}</TableCell><TableCell>{item.current ? <ReleaseBadge release={item.current} /> : <Badge variant="outline">None</Badge>}</TableCell><TableCell>{item.previous ? <ReleaseBadge release={item.previous} /> : <Badge variant="outline">Unavailable</Badge>}</TableCell><TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger render={<Button variant="outline" size="sm" aria-label={`Actions for ${item.name}`} />}>Actions <ChevronDown /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => navigate('/projects/' + encodeURIComponent(projectId) + '/functions/' + encodeURIComponent(item.name) + '/logs')}><ScrollText /> View logs</DropdownMenuItem><DropdownMenuItem disabled={!enabled} onClick={() => openDeploymentDialog(item.name)}><Upload /> Deploy new version</DropdownMenuItem><DropdownMenuItem disabled={!enabled || !item.previous || rollback.isPending} onClick={() => rollback.mutate(item.name)}><RotateCcw /> Roll back</DropdownMenuItem><DropdownMenuItem variant="destructive" disabled={!enabled} onClick={() => setDeleteName(item.name)}><Trash2 /> Delete</DropdownMenuItem></DropdownMenuContent></DropdownMenu></TableCell></TableRow>)}</TableBody></Table>}
       </CardContent>
     </Card>
     <Dialog open={deployDialogOpen} onOpenChange={setDeployDialogOpen}>

@@ -4,6 +4,7 @@ import { matchRoutes, Navigate } from "react-router-dom";
 import { ConfigurationPage } from "../features/project/configuration/ConfigurationPage";
 import { FunctionsPage } from "../features/project/FunctionsPage";
 import { FunctionSecretsPage } from "../features/project/FunctionSecretsPage";
+import { FunctionLogsPage } from "../features/project/FunctionLogsPage";
 import {
   EmailsRoute,
   RetainedAuthenticationRedirect,
@@ -57,6 +58,8 @@ it("does not register removed project configuration compatibility routes", () =>
     (route) => route.path === "functions",
   );
   expect(functionsRoute?.children?.map((route) => route.path)).toContain("secrets");
+  expect(functionsRoute?.children?.map((route) => route.path)).toEqual([undefined, "secrets", ":functionName/logs"]);
+  expect(elementType(matchRoutes(router.routes, "/projects/bee/functions/demo/logs")?.at(-1)?.route.element)).toBe(FunctionLogsPage);
   expect(
     elementType(
       matchRoutes(router.routes, "/projects/bee/functions/secrets")?.at(-1)
