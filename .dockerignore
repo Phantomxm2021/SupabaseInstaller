@@ -3,6 +3,10 @@
 node_modules
 apps/web/dist
 internal/templates
+!internal/templates/manager
+!internal/templates/manager/function-logs
+!internal/templates/manager/function-logs/event-worker
+!internal/templates/manager/function-logs/event-worker/**
 coverage
 *.db
 *.db-shm
