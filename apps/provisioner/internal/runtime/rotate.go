@@ -423,6 +423,8 @@ func redactedRotationFailureDiagnostic(request contracts.RotateDatabasePasswordR
 		secrets.RealtimeDBEncryptionKey, secrets.LogflarePublicAccessToken,
 		secrets.LogflarePrivateAccessToken, secrets.S3ProtocolAccessKeyID,
 		secrets.S3ProtocolAccessKeySecret, secrets.PoolerTenantID,
+		secrets.SupabasePublishableKey, secrets.SupabaseSecretKey, secrets.AnonKeyAsymmetric,
+		secrets.ServiceRoleKeyAsymmetric, secrets.JWTKeys, secrets.JWTJWKS,
 	}
 	for _, value := range request.RuntimeSecrets {
 		values = append(values, value)
