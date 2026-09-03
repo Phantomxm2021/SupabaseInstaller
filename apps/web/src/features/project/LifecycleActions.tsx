@@ -27,7 +27,7 @@ const actionLabels: Record<LifecycleAction, string> = {
   restart: 'Restarting Project',
 }
 
-export function LifecycleActions({ project }: { project: Project }) {
+export function LifecycleActions({ project, onSyncOfficialRuntime }: { project: Project; onSyncOfficialRuntime?: () => void }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [message, setMessage] = useState('')
@@ -70,6 +70,7 @@ export function LifecycleActions({ project }: { project: Project }) {
               <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('stop')}><Pause /> {lifecycle.isPending ? 'Stopping Project…' : 'Stop Project'}</DropdownMenuItem>
               <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('restart')}><RotateCw /> {lifecycle.isPending ? 'Restarting Project…' : 'Restart Project'}</DropdownMenuItem>
             </>}
+            {onSyncOfficialRuntime && <DropdownMenuItem onClick={onSyncOfficialRuntime}><RotateCw /> Sync official runtime</DropdownMenuItem>}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}><Trash2 /> Delete Project</DropdownMenuItem>
           </DropdownMenuContent>

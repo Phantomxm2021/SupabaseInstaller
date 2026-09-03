@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Alert } from '@/components/ui/alert'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { apiFetch } from '../../api/client'
 import type { Project } from '../../api/types'
@@ -43,7 +42,7 @@ export function OverviewPage() {
           <CopyButton value={studioURL} label="Project URL" />
         </div>
       </div>
-      <LifecycleActions project={data} />
+      <LifecycleActions project={data} onSyncOfficialRuntime={() => setSyncOpen(true)} />
     </header>
     <section className="project-overview-hero" data-testid="project-overview-hero">
       <div className="project-overview-facts">
@@ -52,10 +51,6 @@ export function OverviewPage() {
         <OverviewFact icon={<Globe2 />} label="Supabase Studio" value={studioURL} detail={data.services.studio && data.status === 'RUNNING' ? <a href={studioURL} target="_blank" rel="noreferrer">Open Supabase Studio <ExternalLink /></a> : 'Studio unavailable while the project is stopped'} />
         <OverviewFact icon={<Database />} label="Services" value={`${enabledServiceCount} active services`} detail="Components enabled for this project" />
         <OverviewFact icon={<ServerCog />} label="Configuration" value={`Revision ${data.configurationRevision ?? 0}`} detail={`${data.slug} · ${humanize(data.preset)} preset`} />
-        <article className="project-overview-sync">
-          <div><p>Official runtime</p><strong>Keep this server current</strong><small>Reapply the bundled official Docker template.</small></div>
-          <Button type="button" variant="secondary" onClick={() => setSyncOpen(true)}>Sync official runtime</Button>
-        </article>
       </div>
       <aside className="project-overview-runtime" aria-label="Runtime summary">
         <div className="project-overview-runtime-grid" aria-hidden="true" />

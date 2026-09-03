@@ -27,7 +27,7 @@ it('uses the Supabase-style overview hierarchy while keeping local project data'
   expect(hero).toBeVisible()
   expect(within(hero).getByText('Status')).toBeVisible()
   expect(within(hero).getByText('Compute')).toBeVisible()
-  expect(within(hero).getByRole('button', { name: 'Sync official runtime' })).toBeVisible()
+  expect(within(hero).queryByRole('button', { name: 'Sync official runtime' })).not.toBeInTheDocument()
   expect(within(hero).queryByText('Version')).not.toBeInTheDocument()
   expect(within(hero).queryByText('self-hosted/v0.8.0')).not.toBeInTheDocument()
   expect(within(hero).getByText('Primary Database')).toBeVisible()
@@ -52,7 +52,8 @@ it('requires confirmation before it queues an official runtime sync', async () =
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/overview']}><Routes><Route path="/projects/:projectId/overview" element={<OverviewPage />} /></Routes></MemoryRouter></QueryClientProvider>)
 
-  await user.click(await screen.findByRole('button', { name: 'Sync official runtime' }))
+  await user.click(await screen.findByRole('button', { name: 'Actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Sync official runtime' }))
   expect(await screen.findByRole('heading', { name: 'Sync the official Supabase runtime?' })).toBeVisible()
   expect(screen.getByText(/Database and Storage volumes are retained/)).toBeVisible()
   expect(mutationPath).toBe('')
