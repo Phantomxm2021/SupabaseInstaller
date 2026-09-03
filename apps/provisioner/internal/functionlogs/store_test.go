@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -350,6 +351,9 @@ func TestOpenReaderReadsWALAndRemainsBoundAcrossPathSwap(t *testing.T) {
 	if err := writer.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("original", "p", "fn", now, contracts.FunctionLogLevelInfo, "wal")}); err != nil {
 		t.Fatal(err)
 	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
 	readPath := filepath.Join(dir, "function-logs.read.db")
 	reader, err := OpenReader(readPath, time.Now)
 	if err != nil {
@@ -381,7 +385,7 @@ func TestSnapshotPublishFailurePreservesPreviousReadableSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "function-logs.db")
 	now := time.Now().UTC()
-	writer, err := Open(path, Options{})
+	writer, err := Open(path, Options{SnapshotInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,9 +393,28 @@ func TestSnapshotPublishFailurePreservesPreviousReadableSnapshot(t *testing.T) {
 	if err := writer.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("one", "p", "fn", now, contracts.FunctionLogLevelInfo, "one")}); err != nil {
 		t.Fatal(err)
 	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reader, e := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+		if e == nil {
+			page, _ := reader.Query(context.Background(), "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+			_ = reader.Close()
+			if len(page.Logs) == 1 {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
 	writer.publishSnapshot = func(context.Context) error { return errors.New("publish failed") }
-	if err := writer.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("two", "p", "fn", now.Add(time.Second), contracts.FunctionLogLevelInfo, "two")}); err == nil {
-		t.Fatal("InsertBatch succeeded")
+	if err := writer.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("two", "p", "fn", now.Add(time.Second), contracts.FunctionLogLevelInfo, "two")}); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for writer.SnapshotHealthy() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if writer.SnapshotHealthy() {
+		t.Fatal("snapshot failure not visible")
 	}
 	reader, err := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
 	if err != nil {
@@ -410,7 +433,7 @@ func TestSnapshotPublishFailurePreservesPreviousReadableSnapshot(t *testing.T) {
 func TestPublishedSnapshotsRemainConsistentDuringConcurrentInserts(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "function-logs.db")
-	writer, err := Open(path, Options{})
+	writer, err := Open(path, Options{SnapshotInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,15 +471,174 @@ func TestPublishedSnapshotsRemainConsistentDuringConcurrentInserts(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			reader, _ := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
-			final, _ := reader.Query(ctx, "p", "fn", contracts.FunctionLogQuery{Limit: 200})
-			_ = reader.Close()
-			if len(final.Logs) != 40 {
-				t.Fatalf("final rows=%d", len(final.Logs))
+			deadline := time.Now().Add(time.Second)
+			for time.Now().Before(deadline) {
+				reader, _ := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+				final, _ := reader.Query(ctx, "p", "fn", contracts.FunctionLogQuery{Limit: 200})
+				_ = reader.Close()
+				if len(final.Logs) == 40 {
+					return
+				}
+				time.Sleep(time.Millisecond)
 			}
-			return
+			t.Fatal("final snapshot did not reach 40 rows")
 		default:
 		}
+	}
+}
+
+func TestSnapshotPublisherCoalescesAndDoesNotBlockInsert(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "function-logs.db"), Options{SnapshotInterval: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	store.publishSnapshot = func(context.Context) error {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		<-release
+		return nil
+	}
+	start := time.Now()
+	for i := 0; i < 100; i++ {
+		id := fmt.Sprintf("rapid-%03d", i)
+		if err := store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record(id, "p", "fn", time.Now().UTC(), contracts.FunctionLogLevelInfo, id)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("inserts waited for snapshot publisher")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("publisher did not start")
+	}
+	close(release)
+	time.Sleep(30 * time.Millisecond)
+	if got := calls.Load(); got > 2 {
+		t.Fatalf("publication calls=%d", got)
+	}
+}
+
+func TestStoreCloseFlushesLatestDirtySnapshot(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "function-logs.db"), Options{SnapshotInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("latest", "p", "fn", now, contracts.FunctionLogLevelInfo, "latest")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	page, err := reader.Query(context.Background(), "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+	if err != nil || len(page.Logs) != 1 {
+		t.Fatalf("page/error=%#v/%v", page, err)
+	}
+}
+
+func TestPostRenameSyncFailureCommitsNewSnapshotButMarksUnhealthy(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "function-logs.db"), Options{SnapshotInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.snapshotHooks.syncDirectory = func(*os.File) error { return errors.New("sync failed") }
+	now := time.Now().UTC()
+	_ = store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("committed", "p", "fn", now, contracts.FunctionLogLevelInfo, "new")})
+	deadline := time.Now().Add(time.Second)
+	for store.SnapshotHealthy() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	reader, err := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := reader.Query(context.Background(), "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+	_ = reader.Close()
+	if err != nil || len(page.Logs) != 1 || store.SnapshotHealthy() {
+		t.Fatalf("page/healthy/error=%#v/%v/%v", page, store.SnapshotHealthy(), err)
+	}
+}
+
+func TestRenameFailurePreservesPriorSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "function-logs.db"), Options{SnapshotInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now().UTC()
+	_ = store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("old", "p", "fn", now, contracts.FunctionLogLevelInfo, "old")})
+	waitForSnapshotRows(t, dir, 1)
+	store.snapshotHooks.rename = func(string, string) error { return errors.New("rename failed") }
+	_ = store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("new", "p", "fn", now.Add(time.Second), contracts.FunctionLogLevelInfo, "new")})
+	deadline := time.Now().Add(time.Second)
+	for store.SnapshotHealthy() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	reader, _ := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+	page, _ := reader.Query(context.Background(), "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+	_ = reader.Close()
+	if len(page.Logs) != 1 || page.Logs[0].ID != "old" {
+		t.Fatalf("page=%#v", page)
+	}
+}
+
+func waitForSnapshotRows(t *testing.T, dir string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reader, err := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+		if err == nil {
+			page, _ := reader.Query(context.Background(), "p", "fn", contracts.FunctionLogQuery{Limit: 200})
+			_ = reader.Close()
+			if len(page.Logs) == want {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("snapshot did not reach %d rows", want)
+}
+
+func TestStoreCloseContextIsBoundedByBlockedPublisher(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "function-logs.db"), Options{SnapshotInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	store.publishSnapshot = func(context.Context) error { close(started); <-release; return nil }
+	_ = store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("one", "p", "fn", time.Now().UTC(), contracts.FunctionLogLevelInfo, "one")})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("publisher did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := store.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext error=%v", err)
+	}
+	close(release)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel2()
+	if err := store.CloseContext(ctx2); err != nil {
+		t.Fatal(err)
 	}
 }
 

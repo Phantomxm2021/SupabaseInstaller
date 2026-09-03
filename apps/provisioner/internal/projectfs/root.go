@@ -1089,11 +1089,13 @@ func syncDirectory(directory string) error {
 }
 
 type Root struct {
-	base       string
-	baseDir    *os.File
-	metadataMu sync.Mutex
-	runtimeMu  sync.Mutex
-	hooks      runtimeHooks
+	base          string
+	baseDir       *os.File
+	baseCloseOnce sync.Once
+	baseCloseErr  error
+	metadataMu    sync.Mutex
+	runtimeMu     sync.Mutex
+	hooks         runtimeHooks
 }
 
 // BasePath returns the host-mounted root that stores managed project data.
@@ -1173,12 +1175,26 @@ func New(base string) (*Root, error) {
 	}
 	root := &Root{base: filepath.Clean(absolute), baseDir: os.NewFile(uintptr(baseFD), absolute)}
 	if err := root.cleanupAbandonedRuntimeCandidatesAtStartup(); err != nil {
+		_ = root.Close()
 		return nil, fmt.Errorf("clean abandoned runtime candidates: %w", err)
 	}
 	if err := root.repairLegacyFunctionDirectoriesAtStartup(); err != nil {
+		_ = root.Close()
 		return nil, fmt.Errorf("repair legacy function directories: %w", err)
 	}
 	return root, nil
+}
+
+func (r *Root) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.baseCloseOnce.Do(func() {
+		if r.baseDir != nil {
+			r.baseCloseErr = r.baseDir.Close()
+		}
+	})
+	return r.baseCloseErr
 }
 
 // OpenFunctionLogFile walks only fixed managed components from the pinned

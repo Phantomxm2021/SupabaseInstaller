@@ -58,11 +58,13 @@ type Collector struct {
 	now            func() time.Time
 	healthPath     string
 
-	healthMu sync.RWMutex
-	health   contracts.FunctionLogHealth
-	stop     chan struct{}
-	done     chan struct{}
-	close    sync.Once
+	healthMu                    sync.RWMutex
+	health                      contracts.FunctionLogHealth
+	stop                        chan struct{}
+	done                        chan struct{}
+	close                       sync.Once
+	snapshotFailure             bool
+	statusBeforeSnapshotFailure string
 }
 
 func NewCollector(options CollectorOptions) (*Collector, error) {
@@ -128,6 +130,31 @@ func (c *Collector) persistHealth() error {
 		c.logger.Error("function log health persistence failed")
 	}
 	return err
+}
+
+func (c *Collector) syncSnapshotHealth() {
+	store, ok := c.store.(interface{ SnapshotHealthy() bool })
+	if !ok {
+		return
+	}
+	healthy := store.SnapshotHealthy()
+	c.healthMu.Lock()
+	defer c.healthMu.Unlock()
+	if !healthy && !c.snapshotFailure {
+		c.snapshotFailure = true
+		c.statusBeforeSnapshotFailure = c.health.Status
+		c.health.Status = "storage_error"
+		c.health.Detail = "function log snapshot unavailable"
+		return
+	}
+	if healthy && c.snapshotFailure {
+		c.snapshotFailure = false
+		c.health.Status = c.statusBeforeSnapshotFailure
+		if c.health.Dropped > 0 && c.health.Status == "healthy" {
+			c.health.Status = "dropped"
+		}
+		c.health.Detail = ""
+	}
 }
 
 func validateFunctionsRoot(path string) (string, string, os.FileInfo, error) {
@@ -236,6 +263,7 @@ func (c *Collector) maintain(interval time.Duration) {
 				c.logger.Error("function log maintenance failed")
 			}
 		case <-heartbeat.C:
+			c.syncSnapshotHealth()
 			_ = c.persistHealth()
 		case <-c.stop:
 			return

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -20,31 +21,49 @@ import (
 )
 
 const (
-	defaultRetention = 7 * 24 * time.Hour
-	defaultMaxBytes  = int64(512 * 1024 * 1024)
-	maintenanceBatch = 10_000
+	defaultRetention        = 7 * 24 * time.Hour
+	defaultMaxBytes         = int64(512 * 1024 * 1024)
+	maintenanceBatch        = 10_000
+	defaultSnapshotInterval = 5 * time.Second
 )
 
 type Options struct {
-	Now       func() time.Time
-	SizeBytes func(path string) (int64, error)
-	Redactor  *Redactor
-	Retention time.Duration
-	MaxBytes  int64
+	Now              func() time.Time
+	SizeBytes        func(path string) (int64, error)
+	Redactor         *Redactor
+	Retention        time.Duration
+	MaxBytes         int64
+	SnapshotInterval time.Duration
 }
 
 type Store struct {
-	db              *sql.DB
-	path            string
-	now             func() time.Time
-	sizeBytes       func(string) (int64, error)
-	retention       time.Duration
-	maxBytes        int64
-	redactor        *Redactor
-	readerFile      *os.File
-	readerTemp      string
-	snapshotPath    string
-	publishSnapshot func(context.Context) error
+	db               *sql.DB
+	path             string
+	now              func() time.Time
+	sizeBytes        func(string) (int64, error)
+	retention        time.Duration
+	maxBytes         int64
+	redactor         *Redactor
+	readerFile       *os.File
+	readerTemp       string
+	snapshotPath     string
+	publishSnapshot  func(context.Context) error
+	snapshotInterval time.Duration
+	dirty            chan struct{}
+	closeRequest     chan context.Context
+	publisherDone    chan struct{}
+	closeOnce        sync.Once
+	dbCloseOnce      sync.Once
+	closeErr         error
+	snapshotMu       sync.RWMutex
+	snapshotHealthy  bool
+	snapshotHooks    snapshotPublishHooks
+}
+
+type snapshotPublishHooks struct {
+	beforeRename  func() error
+	rename        func(string, string) error
+	syncDirectory func(*os.File) error
 }
 
 func Open(path string, options Options) (*Store, error) {
@@ -72,6 +91,9 @@ func Open(path string, options Options) (*Store, error) {
 	if options.MaxBytes <= 0 {
 		options.MaxBytes = defaultMaxBytes
 	}
+	if options.SnapshotInterval <= 0 {
+		options.SnapshotInterval = defaultSnapshotInterval
+	}
 	if options.Redactor == nil {
 		options.Redactor = &Redactor{}
 	}
@@ -82,6 +104,7 @@ func Open(path string, options Options) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	store := &Store{db: db, path: path, now: options.Now, sizeBytes: options.SizeBytes, retention: options.Retention, maxBytes: options.MaxBytes, redactor: options.Redactor}
 	store.snapshotPath = filepath.Join(filepath.Dir(path), "function-logs.read.db")
+	store.snapshotInterval = options.SnapshotInterval
 	if _, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS function_logs (
 		event_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, function_name TEXT NOT NULL,
 		timestamp_ns INTEGER NOT NULL, ingested_at_ns INTEGER NOT NULL, execution_id TEXT NOT NULL,
@@ -95,7 +118,73 @@ func Open(path string, options Options) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("maintain function log store: %w", err)
 	}
+	if err = store.publishAndRecord(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("publish initial function log snapshot: %w", err)
+	}
+	store.dirty = make(chan struct{}, 1)
+	store.closeRequest = make(chan context.Context, 1)
+	store.publisherDone = make(chan struct{})
+	go store.runSnapshotPublisher()
 	return store, nil
+}
+
+func (s *Store) markSnapshotDirty() {
+	if s.dirty == nil {
+		return
+	}
+	select {
+	case s.dirty <- struct{}{}:
+	default:
+	}
+}
+func (s *Store) SnapshotHealthy() bool {
+	s.snapshotMu.RLock()
+	defer s.snapshotMu.RUnlock()
+	return s.snapshotHealthy
+}
+func (s *Store) publishAndRecord(ctx context.Context) error {
+	err := s.publishReadSnapshot(ctx)
+	s.snapshotMu.Lock()
+	s.snapshotHealthy = err == nil
+	s.snapshotMu.Unlock()
+	return err
+}
+
+func (s *Store) runSnapshotPublisher() {
+	defer close(s.publisherDone)
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	pending := false
+	for {
+		select {
+		case <-s.dirty:
+			pending = true
+			if timer == nil {
+				timer = time.NewTimer(s.snapshotInterval)
+				timerC = timer.C
+			}
+		case <-timerC:
+			timer = nil
+			timerC = nil
+			pending = false
+			_ = s.publishAndRecord(context.Background())
+		case ctx := <-s.closeRequest:
+			if timer != nil {
+				timer.Stop()
+			}
+			if pending {
+				s.closeErr = s.publishAndRecord(ctx)
+			} else {
+				select {
+				case <-s.dirty:
+					s.closeErr = s.publishAndRecord(ctx)
+				default:
+				}
+			}
+			return
+		}
+	}
 }
 
 func (s *Store) publishReadSnapshot(ctx context.Context) error {
@@ -124,14 +213,27 @@ func (s *Store) publishReadSnapshot(ctx context.Context) error {
 	if err := errors.Join(syncErr, closeErr); err != nil {
 		return err
 	}
-	if err := os.Rename(tempPath, s.snapshotPath); err != nil {
+	if s.snapshotHooks.beforeRename != nil {
+		if err := s.snapshotHooks.beforeRename(); err != nil {
+			return err
+		}
+	}
+	rename := os.Rename
+	if s.snapshotHooks.rename != nil {
+		rename = s.snapshotHooks.rename
+	}
+	if err := rename(tempPath, s.snapshotPath); err != nil {
 		return err
 	}
 	directory, err := os.Open(filepath.Dir(s.snapshotPath))
 	if err != nil {
 		return err
 	}
-	syncErr = directory.Sync()
+	if s.snapshotHooks.syncDirectory != nil {
+		syncErr = s.snapshotHooks.syncDirectory(directory)
+	} else {
+		syncErr = directory.Sync()
+	}
 	closeErr = directory.Close()
 	return errors.Join(syncErr, closeErr)
 }
@@ -219,11 +321,27 @@ func copyOpenFile(source *os.File, destination string) error {
 }
 
 func (s *Store) Close() error {
-	dbErr := s.db.Close()
 	if s.readerFile != nil {
+		dbErr := s.db.Close()
 		return errors.Join(dbErr, s.readerFile.Close(), os.RemoveAll(s.readerTemp))
 	}
-	return dbErr
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.CloseContext(ctx)
+}
+
+func (s *Store) CloseContext(ctx context.Context) error {
+	if s.readerFile != nil {
+		return errors.New("reader does not support CloseContext")
+	}
+	s.closeOnce.Do(func() { s.closeRequest <- ctx })
+	select {
+	case <-s.publisherDone:
+		s.dbCloseOnce.Do(func() { s.closeErr = errors.Join(s.closeErr, s.db.Close()) })
+		return s.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func validateRecord(record contracts.FunctionLogRecord) error {
@@ -280,7 +398,8 @@ func (s *Store) InsertBatch(ctx context.Context, records []contracts.FunctionLog
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return s.publishReadSnapshot(ctx)
+	s.markSnapshotDirty()
+	return nil
 }
 
 func (s *Store) Query(ctx context.Context, projectID, functionName string, query contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
@@ -363,7 +482,8 @@ func (s *Store) Maintain(ctx context.Context) error {
 			return err
 		}
 		if size <= s.maxBytes {
-			return s.publishReadSnapshot(ctx)
+			s.markSnapshotDirty()
+			return nil
 		}
 		deleted, err := s.deleteBatch(ctx, "1=1")
 		if err != nil {

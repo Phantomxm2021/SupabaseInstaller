@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -515,5 +516,33 @@ func TestCollectorLaterHealthPersistenceFailureSetsSafeStorageError(t *testing.T
 	}
 	if strings.Contains(logs.String(), healthDir) || !strings.Contains(logs.String(), "health persistence failed") {
 		t.Fatalf("logs=%q", logs.String())
+	}
+}
+
+type snapshotStateStore struct {
+	collectorStore
+	healthy atomic.Bool
+}
+
+func (s *snapshotStateStore) SnapshotHealthy() bool { return s.healthy.Load() }
+
+func TestCollectorSnapshotFailureHealthRecoversWithoutDroppedEvents(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, "hello"), 0o700)
+	store := &snapshotStateStore{}
+	store.healthy.Store(false)
+	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: store, Redactor: &Redactor{}, FunctionsRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	collector.syncSnapshotHealth()
+	if health := collector.Health(); health.Status != "storage_error" || health.Dropped != 0 {
+		t.Fatalf("failed health=%#v", health)
+	}
+	store.healthy.Store(true)
+	collector.syncSnapshotHealth()
+	if health := collector.Health(); health.Status != "healthy" || health.Dropped != 0 {
+		t.Fatalf("recovered health=%#v", health)
 	}
 }

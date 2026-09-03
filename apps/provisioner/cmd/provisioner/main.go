@@ -32,12 +32,12 @@ func main() {
 		slog.Error("invalid provisioner configuration", "error", err)
 		os.Exit(1)
 	}
-
 	root, err := projectfs.New(cfg.ProjectRoot)
 	if err != nil {
 		slog.Error("initialize project root", "error", err)
 		os.Exit(1)
 	}
+	defer root.Close()
 	dockerSource, err := health.NewDockerSource(cfg.DockerHost)
 	if err != nil {
 		slog.Error("initialize Docker client", "error", err)

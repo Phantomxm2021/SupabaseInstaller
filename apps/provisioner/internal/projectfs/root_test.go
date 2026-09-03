@@ -2,6 +2,7 @@ package projectfs
 
 import (
 	"errors"
+	"golang.org/x/sys/unix"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,6 +10,23 @@ import (
 	"sync"
 	"testing"
 )
+
+func TestRootCloseReleasesPinnedDescriptorAndIsIdempotent(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd := root.baseDir.Fd()
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unix.FcntlInt(fd, unix.F_GETFD, 0); err == nil {
+		t.Fatal("pinned descriptor remains open")
+	}
+}
 
 func TestOpenFunctionLogFileRejectsParentSymlinkAndPinsOpenedLeaf(t *testing.T) {
 	base := t.TempDir()
