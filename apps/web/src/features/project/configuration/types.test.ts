@@ -44,6 +44,12 @@ describe('configuration projection normalization', () => {
     expect(config.database.extensions).toEqual([])
   })
 
+  it('hydrates legacy missing auth site and internal database pool defaults', () => {
+    const config = normalizeRedactedConfiguration(omittedConfiguration())
+    expect(config.general.authSiteUrl).toBe('')
+    expect(config.pooler.internalDbPoolSize).toBe(5)
+  })
+
   it('labels rendered configuration changes as recreate', () => {
     expect(sectionImpact('smtp', {})).toBe('recreate')
     expect(sectionImpact('oauth', {})).toBe('recreate')
