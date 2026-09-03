@@ -95,6 +95,29 @@ func TestOfficialRuntimeSyncQueuesAConfigurationReconcile(t *testing.T) {
 	}
 }
 
+func TestOfficialRuntimeSyncAcceptsLegacyStoredJWTExpiry(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := projectservice.DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.JWTExpiry = 0 // Legacy saved configurations omitted this default.
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "bee", Name: "Bee", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: configuration.NewOrchestrator(database, operation.NewService(database, func() string { return "legacy-sync-op" }, time.Now))})
+
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/projects/bee/runtime/sync", nil))
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"operationId":"legacy-sync-op"`) {
+		t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
+	}
+}
+
 func TestConfigurationHTTPRejectsUnsupportedNetworkFields(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {

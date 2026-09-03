@@ -181,6 +181,56 @@ func (o *Orchestrator) QueuePatch(ctx context.Context, projectID string, patch c
 	return queued, snapshot, nil
 }
 
+// QueueOfficialRuntimeSync reapplies a persisted runtime without treating its
+// historical configuration as new user input. This keeps old, valid projects
+// deployable when a later Manager release introduces a defaulted field.
+func (o *Orchestrator) QueueOfficialRuntimeSync(ctx context.Context, projectID string) (operation.Operation, store.ConfigurationSnapshot, error) {
+	if o.configs == nil || o.operations == nil {
+		return operation.Operation{}, store.ConfigurationSnapshot{}, errors.New("configuration orchestrator is unavailable")
+	}
+	if !o.tryAcquire(projectID) {
+		return operation.Operation{}, store.ConfigurationSnapshot{}, store.ErrConfigurationBusy
+	}
+	canonical, err := o.configs.Get(ctx, projectID)
+	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, err
+	}
+	if active, found, activeErr := o.store.FindActiveOperation(ctx, projectID, operation.TypeUpdateConfig); activeErr != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, activeErr
+	} else if found {
+		if o.now().Sub(active.CreatedAt) > time.Hour {
+			if active.Status == operation.Queued {
+				_ = o.operations.Start(ctx, active.ID)
+			}
+			_ = o.operations.Fail(ctx, active.ID, "RESUME", errors.New("configuration apply worker exceeded one-hour deadline"))
+		} else {
+			o.release(projectID)
+			return active, canonical, nil
+		}
+	}
+	cfg := project.NormalizeStoredConfiguration(canonical.Configuration)
+	if err := project.ValidateStoredConfiguration(cfg); err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, err
+	}
+	queued, err := o.operations.NewQueuedOperation(projectID, operation.TypeUpdateConfig)
+	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, err
+	}
+	snapshot, lease, err := o.store.AdmitConfiguration(ctx, store.ConfigurationAdmission{Operation: queued, ProjectID: projectID, Owner: queued.ID, ExpectedRevision: canonical.Revision, Configuration: cfg, OperationKind: "SYNC_OFFICIAL_RUNTIME", Now: o.now()})
+	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, err
+	}
+	o.leaseMu.Lock()
+	o.leases[projectID] = lease
+	o.leaseMu.Unlock()
+	return queued, snapshot, nil
+}
+
 func (o *Orchestrator) acquire(projectID string) {
 	o.locksMu.Lock()
 	lock := o.locks[projectID]

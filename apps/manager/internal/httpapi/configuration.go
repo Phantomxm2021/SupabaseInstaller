@@ -13,6 +13,7 @@ import (
 
 	"supabase-manager/apps/manager/internal/auth"
 	"supabase-manager/apps/manager/internal/configuration"
+	"supabase-manager/apps/manager/internal/operation"
 	"supabase-manager/apps/manager/internal/project"
 	"supabase-manager/apps/manager/internal/store"
 	"supabase-manager/internal/contracts"
@@ -365,7 +366,14 @@ func (h configurationHandlers) queueConfigurationReconcile(w http.ResponseWriter
 		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Server configuration is unavailable")
 		return
 	}
-	queued, snapshot, err := h.options.Orchestrator.QueuePatch(r.Context(), r.PathValue("id"), patch)
+	var queued operation.Operation
+	var snapshot store.ConfigurationSnapshot
+	var err error
+	if officialRuntimeSync {
+		queued, snapshot, err = h.options.Orchestrator.QueueOfficialRuntimeSync(r.Context(), r.PathValue("id"))
+	} else {
+		queued, snapshot, err = h.options.Orchestrator.QueuePatch(r.Context(), r.PathValue("id"), patch)
+	}
 	if err != nil {
 		h.handleConfigError(w, err)
 		return

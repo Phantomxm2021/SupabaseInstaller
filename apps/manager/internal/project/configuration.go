@@ -164,8 +164,19 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 // configured secret has an empty action by design; command validation remains
 // strict at PreparePatch/Save boundaries.
 func ValidateStoredConfiguration(cfg contracts.ProjectConfiguration) error {
+	return validateConfiguration(NormalizeStoredConfiguration(cfg), true, true)
+}
+
+// NormalizeStoredConfiguration upgrades compatibility defaults that may be
+// absent from configurations persisted by an earlier Manager release. It is
+// intentionally not used for user-submitted configuration: zero remains an
+// invalid explicit JWT expiry in that path.
+func NormalizeStoredConfiguration(cfg contracts.ProjectConfiguration) contracts.ProjectConfiguration {
 	if cfg.Auth.JWTExpiry == 0 {
 		cfg.Auth.JWTExpiry = 3600
+	}
+	if cfg.Pooler.InternalDBPoolSize == 0 {
+		cfg.Pooler.InternalDBPoolSize = 5
 	}
 	if cfg.General.StudioPasswordSet && cfg.General.StudioPassword.Action == "" {
 		cfg.General.StudioPassword.Action = "retain"
@@ -190,7 +201,7 @@ func ValidateStoredConfiguration(cfg contracts.ProjectConfiguration) error {
 			cfg.Functions.Variables[index].Value.Action = "retain"
 		}
 	}
-	return validateConfiguration(cfg, true, true)
+	return cfg
 }
 
 func validateServicesConfiguration(services contracts.Services, validation *ValidationError) {
