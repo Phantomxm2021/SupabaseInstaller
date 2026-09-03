@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -182,7 +183,7 @@ func TestQueryOrderingIsolationFiltersAndCursors(t *testing.T) {
 func TestMaintainExpiresThenDeletesOldestUntilUnderCapacity(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(10_000_000, 0).UTC()
-	probes := []int64{600, 600, 400}
+	probes := []int64{400, 600, 400}
 	store := testStore(t, Options{Now: func() time.Time { return now }, Retention: 7 * 24 * time.Hour, MaxBytes: 512, SizeBytes: func(string) (int64, error) {
 		value := probes[0]
 		if len(probes) > 1 {
@@ -236,9 +237,64 @@ func TestMaintainExpiresOnlyRowsOlderThanSevenDaysWhenBelowCapacity(t *testing.T
 	}
 }
 
-func TestMaintainStopsWhenSizeProbeDoesNotShrinkAndNoRowsRemain(t *testing.T) {
-	store := testStore(t, Options{MaxBytes: 1, SizeBytes: func(string) (int64, error) { return 2, nil }})
-	if err := store.Maintain(context.Background()); err != nil {
+func TestMaintainErrorsWhenStillOverCapacityWithNoRows(t *testing.T) {
+	store := testStore(t, Options{})
+	store.maxBytes = 1
+	store.sizeBytes = func(string) (int64, error) { return 2, nil }
+	if err := store.Maintain(context.Background()); err == nil || !strings.Contains(err.Error(), "over capacity") {
+		t.Fatalf("error = %v, want over capacity", err)
+	}
+}
+
+func TestStorePersistsAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "logs.db")
+	store, err := Open(path, Options{})
+	if err != nil {
 		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := store.InsertBatch(ctx, []contracts.FunctionLogRecord{record("persisted", "p", "fn", now, contracts.FunctionLogLevelInfo, "hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	page, err := store.Query(ctx, "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Logs) != 1 || page.Logs[0].ID != "persisted" {
+		t.Fatalf("reopened logs = %+v", page.Logs)
+	}
+}
+
+func TestConcurrentInsertAndQuerySmoke(t *testing.T) {
+	store := testStore(t, Options{})
+	ctx := context.Background()
+	now := time.Unix(400, 0).UTC()
+	var wait sync.WaitGroup
+	errors := make(chan error, 2)
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		errors <- store.InsertBatch(ctx, []contracts.FunctionLogRecord{record("concurrent", "p", "fn", now, contracts.FunctionLogLevelInfo, "hello")})
+	}()
+	go func() {
+		defer wait.Done()
+		_, err := store.Query(ctx, "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+		errors <- err
+	}()
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }

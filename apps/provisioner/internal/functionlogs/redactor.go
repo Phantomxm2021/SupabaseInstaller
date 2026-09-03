@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -70,8 +71,14 @@ func readDotenvValues(path string, include func(string) bool) ([]string, error) 
 	defer file.Close()
 	var values []string
 	scanner := bufio.NewScanner(file)
+	firstLine := true
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		line := scanner.Text()
+		if firstLine {
+			line = strings.TrimPrefix(line, "\ufeff")
+			firstLine = false
+		}
+		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -80,15 +87,62 @@ func readDotenvValues(path string, include func(string) bool) ([]string, error) 
 		if !ok || name == "" || !include(name) {
 			continue
 		}
-		value = strings.TrimSpace(value)
-		if len(value) >= 2 && ((value[0] == '\'' && value[len(value)-1] == '\'') || (value[0] == '"' && value[len(value)-1] == '"')) {
-			value = value[1 : len(value)-1]
+		value, ok = parseDotenvValue(value)
+		if !ok {
+			continue
 		}
 		if value != "" {
 			values = append(values, value)
 		}
 	}
 	return values, scanner.Err()
+}
+
+func parseDotenvValue(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", true
+	}
+	if raw[0] != '\'' && raw[0] != '"' {
+		for index := 1; index < len(raw); index++ {
+			if raw[index] == '#' && (raw[index-1] == ' ' || raw[index-1] == '\t') {
+				return strings.TrimSpace(raw[:index]), true
+			}
+		}
+		return raw, true
+	}
+	quote := raw[0]
+	escaped := false
+	for index := 1; index < len(raw); index++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if raw[index] == '\\' {
+			escaped = true
+			continue
+		}
+		if raw[index] != quote {
+			continue
+		}
+		remainder := strings.TrimSpace(raw[index+1:])
+		if remainder != "" && !strings.HasPrefix(remainder, "#") {
+			return "", false
+		}
+		quoted := raw[:index+1]
+		if quote == '"' {
+			value, err := strconv.Unquote(quoted)
+			if err != nil {
+				return "", false
+			}
+			return strings.ReplaceAll(value, "$$", "$"), true
+		}
+		value := quoted[1 : len(quoted)-1]
+		value = strings.ReplaceAll(value, `\\`, `\`)
+		value = strings.ReplaceAll(value, `\'`, `'`)
+		return value, true
+	}
+	return "", false
 }
 
 func (r *Redactor) SanitizeMessage(input string) (string, bool) {

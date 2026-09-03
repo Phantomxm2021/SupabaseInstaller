@@ -21,12 +21,11 @@ const (
 )
 
 type Options struct {
-	Now                 func() time.Time
-	SizeBytes           func(path string) (int64, error)
-	Redactor            *Redactor
-	Retention           time.Duration
-	MaxBytes            int64
-	MaintenanceInterval time.Duration
+	Now       func() time.Time
+	SizeBytes func(path string) (int64, error)
+	Redactor  *Redactor
+	Retention time.Duration
+	MaxBytes  int64
 }
 
 type Store struct {
@@ -171,7 +170,10 @@ func (s *Store) Query(ctx context.Context, projectID, functionName string, query
 		encodedCursor, comparison = query.After, ">"
 	}
 	if encodedCursor != "" {
-		cursor, _ := contracts.DecodeFunctionLogCursor(encodedCursor)
+		cursor, err := contracts.DecodeFunctionLogCursor(encodedCursor)
+		if err != nil {
+			return contracts.FunctionLogPage{}, fmt.Errorf("decode function log cursor: %w", err)
+		}
 		where = append(where, fmt.Sprintf("(timestamp_ns %s ? OR (timestamp_ns = ? AND event_id %s ?))", comparison, comparison))
 		args = append(args, cursor.Timestamp.UnixNano(), cursor.Timestamp.UnixNano(), cursor.ID)
 	}
@@ -229,7 +231,7 @@ func (s *Store) Maintain(ctx context.Context) error {
 			return err
 		}
 		if deleted == 0 {
-			return nil
+			return fmt.Errorf("function log store remains over capacity: %d bytes exceeds %d bytes", size, s.maxBytes)
 		}
 		if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 			return err

@@ -77,3 +77,41 @@ func TestSanitizeMessageRedactsCredentialSpanningInternalChunkBoundary(t *testin
 		t.Fatalf("boundary credential remained in output")
 	}
 }
+
+func TestDotenvParsingCommonFormsWithoutExpansion(t *testing.T) {
+	tests := []struct {
+		name       string
+		line       string
+		secret     string
+		mustRemain string
+	}{
+		{name: "BOM and export", line: "\ufeffexport JWT_SECRET=abc", secret: "abc"},
+		{name: "unquoted inline comment", line: "JWT_SECRET=abc # note", secret: "abc"},
+		{name: "double quoted inline comment", line: `JWT_SECRET="abc" # note`, secret: "abc"},
+		{name: "single quoted hash", line: "JWT_SECRET='abc#value' # note", secret: "abc#value"},
+		{name: "unquoted hash is data", line: "JWT_SECRET=abc#value", secret: "abc#value"},
+		{name: "escaped quote and slash", line: `JWT_SECRET="abc\"def\\ghi"`, secret: `abc"def\ghi`},
+		{name: "no expansion", line: `JWT_SECRET="$OTHER"`, secret: "$OTHER", mustRemain: "actual-value"},
+		{name: "unterminated quote ignored", line: `JWT_SECRET="wrong-secret`, secret: "", mustRemain: "wrong-secret"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".env")
+			if err := os.WriteFile(path, []byte(test.line+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			redactor, err := LoadRedactor(path, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := test.secret + test.mustRemain
+			message, _ := redactor.SanitizeMessage(input)
+			if test.secret != "" && strings.Contains(message, test.secret) {
+				t.Fatalf("parsed secret %q remained in %q", test.secret, message)
+			}
+			if test.mustRemain != "" && !strings.Contains(message, test.mustRemain) {
+				t.Fatalf("literal %q was expanded or loaded: %q", test.mustRemain, message)
+			}
+		})
+	}
+}
