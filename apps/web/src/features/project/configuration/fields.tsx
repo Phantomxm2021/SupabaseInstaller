@@ -51,7 +51,7 @@ export function NumberField<T extends FieldValues>({ form, name, label, min, max
 export function ReadOnlyField({ label, value, copy = false }: { label: string; value: string; copy?: boolean }) {
   const uid = useId()
   const id = `readonly-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${uid.replace(/[^a-zA-Z0-9]/g, '')}`
-  return <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><div className="flex gap-2"><Input id={id} value={value} readOnly aria-readonly="true" />{copy && <CopyButton value={value} label={label} />}</div></Field>
+  return <Field><div className="flex items-center justify-between gap-2"><FieldLabel htmlFor={id}>{label}</FieldLabel>{copy && <CopyButton value={value} label={label} />}</div><Input id={id} value={value} readOnly aria-readonly="true" /></Field>
 }
 export function SectionSaveButton({ label, disabled }: { label: string; disabled: boolean }) { return <div className="flex justify-end"><Button type="submit" disabled={disabled}><span>Save {label}</span></Button></div> }
 
