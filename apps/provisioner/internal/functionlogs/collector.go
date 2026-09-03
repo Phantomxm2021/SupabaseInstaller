@@ -51,6 +51,7 @@ type Collector struct {
 	redactor       *Redactor
 	configuredRoot string
 	canonicalRoot  string
+	rootIdentity   os.FileInfo
 	logger         *slog.Logger
 	now            func() time.Time
 
@@ -68,7 +69,7 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 	if options.Store == nil {
 		return nil, errors.New("function log store is required")
 	}
-	configuredRoot, canonicalRoot, err := validateFunctionsRoot(options.FunctionsRoot)
+	configuredRoot, canonicalRoot, rootIdentity, err := validateFunctionsRoot(options.FunctionsRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +90,7 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 		options.MaintenanceInterval = defaultMaintenanceTime
 	}
 	c := &Collector{
-		projectID: options.ProjectID, store: options.Store, redactor: redactor, configuredRoot: configuredRoot, canonicalRoot: canonicalRoot,
+		projectID: options.ProjectID, store: options.Store, redactor: redactor, configuredRoot: configuredRoot, canonicalRoot: canonicalRoot, rootIdentity: rootIdentity,
 		logger: options.Logger, now: options.Now, health: contracts.FunctionLogHealth{Status: "healthy"},
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
@@ -97,27 +98,27 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 	return c, nil
 }
 
-func validateFunctionsRoot(path string) (string, string, error) {
+func validateFunctionsRoot(path string) (string, string, os.FileInfo, error) {
 	if path == "" {
-		return "", "", errors.New("functions root is required")
+		return "", "", nil, errors.New("functions root is required")
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return "", "", errors.New("invalid functions root")
+		return "", "", nil, errors.New("invalid functions root")
 	}
 	info, err := os.Lstat(abs)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", "", errors.New("functions root must be a real directory")
+		return "", "", nil, errors.New("functions root must be a real directory")
 	}
 	canonical, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		return "", "", errors.New("resolve functions root")
+		return "", "", nil, errors.New("resolve functions root")
 	}
 	canonical, err = filepath.Abs(canonical)
 	if err != nil {
-		return "", "", errors.New("resolve functions root")
+		return "", "", nil, errors.New("resolve functions root")
 	}
-	return filepath.Clean(abs), filepath.Clean(canonical), nil
+	return filepath.Clean(abs), filepath.Clean(canonical), info, nil
 }
 
 func (c *Collector) Health() contracts.FunctionLogHealth {
@@ -154,7 +155,7 @@ func (c *Collector) functionExists(name string) bool {
 		return false
 	}
 	rootInfo, err := os.Lstat(c.configuredRoot)
-	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(c.rootIdentity, rootInfo) {
 		return false
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(c.configuredRoot)
@@ -170,6 +171,8 @@ func (c *Collector) functionExists(name string) bool {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
+	// This establishes membership at validation time only. The collector passes no
+	// filesystem path onward and never opens or reads the candidate after this check.
 	resolvedCandidate, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
 		return false

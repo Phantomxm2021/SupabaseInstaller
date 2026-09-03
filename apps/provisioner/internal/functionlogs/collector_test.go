@@ -334,6 +334,39 @@ func TestCollectorRejectsReplacedFunctionsRoot(t *testing.T) {
 	}
 }
 
+func TestCollectorRejectsOrdinaryDirectoryReplacingFunctionsRoot(t *testing.T) {
+	configuredRoot := filepath.Join(t.TempDir(), "functions")
+	if err := os.Mkdir(configuredRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(configuredRoot, "hello"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := &collectorStore{}
+	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: store, Redactor: &Redactor{}, FunctionsRoot: configuredRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	if err := os.Rename(configuredRoot, configuredRoot+"-original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(configuredRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(configuredRoot, "hello"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := requestBatch(t, NewCollectorHandler(collector), validBatch(), "application/json").Code; got != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", got, http.StatusBadRequest)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.records) != 0 {
+		t.Fatalf("stored records = %+v", store.records)
+	}
+}
+
 func TestCollectorRunsAndStopsPeriodicMaintenance(t *testing.T) {
 	maintained := make(chan struct{}, 2)
 	store := &collectorStore{maintained: maintained}
