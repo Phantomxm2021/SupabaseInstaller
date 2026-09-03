@@ -2002,21 +2002,7 @@ a.auth-template-row:hover {
   line-height: 18px;
 }
 .project-overview-origin > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-overview-origin button {
-  display: inline-flex;
-  height: 26px;
-  flex: none;
-  align-items: center;
-  gap: 5px;
-  padding: 0 8px;
-  border: 1px solid #343936;
-  border-radius: 6px;
-  background: #1a1d1b;
-  color: #d7dcd8;
-  font: inherit;
-  font-size: 12px;
-}
-.project-overview-origin button:hover { background: #242825; }
+.project-overview-origin [data-slot="button"] { flex: none; }
 .project-overview-origin button svg { width: 13px; height: 13px; }
 .project-overview-hero {
   display: grid;

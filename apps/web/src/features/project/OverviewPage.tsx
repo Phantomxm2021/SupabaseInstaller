@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Copy, Database, ExternalLink, Globe2, Package, ServerCog, ShieldCheck } from 'lucide-react'
+import { Database, ExternalLink, Globe2, Package, ServerCog, ShieldCheck } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { Alert } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -7,6 +7,7 @@ import { apiFetch } from '../../api/client'
 import type { Project } from '../../api/types'
 import { LifecycleActions } from './LifecycleActions'
 import { ServiceTable } from './ServiceTable'
+import { CopyButton } from '@/components/app/CopyButton'
 export function OverviewPage() {
   const { projectId = '' } = useParams()
   const project = useQuery({ queryKey: ['project', projectId], queryFn: () => apiFetch<Project>(`/api/projects/${projectId}`), enabled: Boolean(projectId) })
@@ -24,7 +25,7 @@ export function OverviewPage() {
         <h1>{data.name}</h1>
         <div className="project-overview-origin">
           <span>{studioURL}</span>
-          <button type="button" aria-label="Copy project URL" onClick={() => void navigator.clipboard?.writeText(studioURL)}><Copy />Copy</button>
+          <CopyButton value={studioURL} label="Project URL" />
         </div>
       </div>
       <LifecycleActions project={data} />

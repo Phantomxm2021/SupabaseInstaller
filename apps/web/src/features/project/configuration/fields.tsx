@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { CopyButton } from '@/components/app/CopyButton'
 import type { SecretAction, SecretInput, UpdateSecretInput } from '../../../api/types'
 
 export type SectionSave<T> = (input: { value: T; dirty: unknown; setError: (name: string, message: string) => void }) => void
@@ -50,7 +51,7 @@ export function NumberField<T extends FieldValues>({ form, name, label, min, max
 export function ReadOnlyField({ label, value, copy = false }: { label: string; value: string; copy?: boolean }) {
   const uid = useId()
   const id = `readonly-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${uid.replace(/[^a-zA-Z0-9]/g, '')}`
-  return <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><div className="flex gap-2"><Input id={id} value={value} readOnly aria-readonly="true" />{copy && <Button type="button" variant="outline" onClick={() => void navigator.clipboard?.writeText(value)} aria-label={`Copy ${label}`}>Copy</Button>}</div></Field>
+  return <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><div className="flex gap-2"><Input id={id} value={value} readOnly aria-readonly="true" />{copy && <CopyButton value={value} label={label} />}</div></Field>
 }
 export function SectionSaveButton({ label, disabled }: { label: string; disabled: boolean }) { return <div className="flex justify-end"><Button type="submit" disabled={disabled}><span>Save {label}</span></Button></div> }
 
