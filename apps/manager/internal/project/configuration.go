@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"supabase-manager/internal/contracts"
+	"supabase-manager/internal/templates"
 )
 
 // ValidationError preserves field paths for API clients and form rendering.
@@ -44,7 +45,7 @@ func (e *ValidationError) add(field, message string) {
 // DefaultConfiguration returns a complete safe configuration for a preset.
 func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguration {
 	return contracts.ProjectConfiguration{
-		General:  contracts.GeneralConfig{SupabaseVersion: "self-hosted/v0.8.0", StudioUsername: "supabase"},
+		General:  contracts.GeneralConfig{SupabaseVersion: templates.LatestOfficial().ID, StudioUsername: "supabase"},
 		Services: ApplyPreset(preset),
 		Auth: contracts.AuthConfig{
 			Enabled:       true,
@@ -132,8 +133,8 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 	if strings.TrimSpace(cfg.General.AuthSiteURL) != "" && !validAbsoluteHTTPURL(cfg.General.AuthSiteURL) {
 		validation.add("general.authSiteUrl", "must be an absolute http or https URL")
 	}
-	if cfg.General.SupabaseVersion != "self-hosted/v0.8.0" {
-		validation.add("general.supabaseVersion", "must be self-hosted/v0.8.0")
+	if !supportedRuntimeManifest(cfg.General.SupabaseVersion) {
+		validation.add("general.supabaseVersion", "must be a supported runtime image manifest")
 	}
 	validateServicesConfiguration(cfg.Services, validation)
 	if cfg.Services.Auth != cfg.Auth.Enabled {
@@ -157,6 +158,14 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 		return nil
 	}
 	return validation
+}
+
+func supportedRuntimeManifest(value string) bool {
+	if _, ok := templates.Lookup(value); ok {
+		return true
+	}
+	_, ok := templates.ResolveLegacy(value)
+	return ok
 }
 
 // ValidateStoredConfiguration validates the redacted canonical state emitted

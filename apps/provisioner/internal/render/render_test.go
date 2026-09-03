@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 	provisionersecrets "supabase-manager/apps/provisioner/internal/secrets"
 	"supabase-manager/internal/contracts"
+	"supabase-manager/internal/templates"
 )
 
 func TestWriteRepresentativeRenderFiles(t *testing.T) {
@@ -197,6 +198,18 @@ func testConfiguration() contracts.ProjectConfiguration {
 		Database:  contracts.DatabaseConfig{Version: "17"},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true},
 		Pooler:    contracts.PoolerConfig{SessionPort: 6544, TransactionPort: 6543, PoolSize: 20, MaxClientConnections: 100},
+	}
+}
+
+func TestRenderAcceptsLatestOfficialRuntimeManifest(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.General.SupabaseVersion = templates.LatestOfficial().ID
+	out, err := Project(Input{Slug: "official-manifest", APIPort: 18001, Configuration: cfg})
+	if err != nil {
+		t.Fatalf("Project() error = %v", err)
+	}
+	if !strings.Contains(out.Compose, "image: supabase/studio:2026.08.03-sha-022b374") {
+		t.Fatalf("rendered Compose did not use the official Studio image: %s", out.Compose)
 	}
 }
 

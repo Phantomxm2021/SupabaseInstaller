@@ -7,10 +7,14 @@ import (
 	"testing"
 
 	"supabase-manager/internal/contracts"
+	"supabase-manager/internal/templates"
 )
 
 func TestDefaultConfiguration(t *testing.T) {
 	got := DefaultConfiguration(contracts.PresetLightweight)
+	if got.General.SupabaseVersion != templates.LatestOfficial().ID {
+		t.Fatalf("runtime manifest = %q, want %q", got.General.SupabaseVersion, templates.LatestOfficial().ID)
+	}
 	if got.Storage.UploadFileSizeLimit != 50*1024*1024 {
 		t.Fatalf("storage upload limit = %d, want 50 MiB", got.Storage.UploadFileSizeLimit)
 	}
@@ -31,6 +35,14 @@ func TestDefaultConfiguration(t *testing.T) {
 	}
 	if got.Auth.MFA != (contracts.MFAConfig{TOTPEnrollEnabled: true, TOTPVerifyEnabled: true, MaxEnrolledFactors: 10, PhoneOTPLength: 6}) {
 		t.Fatalf("unexpected Auth MFA defaults: %#v", got.Auth.MFA)
+	}
+}
+
+func TestConfigurationValidationAcceptsLegacyTemplateSnapshot(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.General.SupabaseVersion = "self-hosted/v0.8.0"
+	if err := ValidateStoredConfiguration(cfg); err != nil {
+		t.Fatalf("ValidateStoredConfiguration() error = %v", err)
 	}
 }
 

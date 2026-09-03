@@ -44,8 +44,12 @@ func Project(input Input) (OutputFiles, error) {
 	if input.Slug == "" || input.APIPort < 1 || input.APIPort > 65535 {
 		return OutputFiles{}, fmt.Errorf("slug and valid API port are required")
 	}
-	if input.Configuration.General.SupabaseVersion != "self-hosted/v0.8.0" {
-		return OutputFiles{}, fmt.Errorf("general.supabaseVersion: unsupported pinned version %q", input.Configuration.General.SupabaseVersion)
+	manifest, ok := templates.Lookup(input.Configuration.General.SupabaseVersion)
+	if !ok {
+		manifest, ok = templates.ResolveLegacy(input.Configuration.General.SupabaseVersion)
+	}
+	if !ok {
+		return OutputFiles{}, fmt.Errorf("general.supabaseVersion: unsupported runtime manifest %q", input.Configuration.General.SupabaseVersion)
 	}
 	if input.Configuration.General.Domain == "" || input.Configuration.General.SiteURL == "" {
 		return OutputFiles{}, fmt.Errorf("domain and site URL are required")
@@ -102,7 +106,7 @@ func Project(input Input) (OutputFiles, error) {
 	var compose map[string]any
 	if len(input.TemplateCompose) == 0 {
 		var err error
-		compose, err = loadOfficialCompose(input.Configuration)
+		compose, err = loadOfficialCompose(input.Configuration, manifest)
 		if err != nil {
 			return OutputFiles{}, err
 		}
@@ -271,10 +275,10 @@ func validateSelectedServices(config contracts.ProjectConfiguration, available m
 	return nil
 }
 
-func loadOfficialCompose(config contracts.ProjectConfiguration) (map[string]any, error) {
+func loadOfficialCompose(config contracts.ProjectConfiguration, manifest templates.RuntimeManifest) (map[string]any, error) {
 	root := templates.Files()
 	read := func(name string) (map[string]any, error) {
-		data, err := root.ReadFile("self-hosted-v0.8.0/" + name)
+		data, err := root.ReadFile(manifest.TemplateRoot + "/" + name)
 		if err != nil {
 			return nil, fmt.Errorf("read pinned Compose overlay %s: %w", name, err)
 		}
@@ -316,6 +320,11 @@ func loadOfficialCompose(config contracts.ProjectConfiguration) (map[string]any,
 		mergeCompose(base, overlay)
 	}
 	if services, ok := base["services"].(map[string]any); ok {
+		for name, image := range manifest.Images {
+			if service, ok := services[name].(map[string]any); ok {
+				service["image"] = image
+			}
+		}
 		if caddy, ok := services["caddy"].(map[string]any); ok {
 			if caddy["image"] == "caddy:2" {
 				caddy["image"] = "caddy:2.9.1"
