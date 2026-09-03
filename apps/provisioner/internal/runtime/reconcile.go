@@ -79,6 +79,28 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if len(previousServices) == 0 && metadata.Revision > 0 {
 			previousServices = enabledServices(previousConfig)
 		}
+		previousRef, previousRefErr := backend.projectFS.CurrentRuntimeGeneration(request.Slug)
+		previousProject := compose.ProjectRef{Slug: request.Slug, Dir: previousRef.ProjectDir, ComposeFile: previousRef.ComposeFile, EnvFile: previousRef.EnvFile}
+		currentRef, _ := backend.projectFS.CurrentRuntimeFiles(request.Slug)
+		currentProject := compose.ProjectRef{Slug: request.Slug, Dir: currentRef.ProjectDir, ComposeFile: currentRef.ComposeFile, EnvFile: currentRef.EnvFile}
+		locationChangeGate := metadata.Revision > 0 && request.Configuration.Services.Storage && storageLocationChanged(previousConfig.Storage, request.Configuration.Storage)
+		if locationChangeGate {
+			if previousRefErr != nil {
+				return fail(fmt.Errorf("resolve previous runtime generation: %w", previousRefErr))
+			}
+			for _, inputPath := range []string{previousProject.ComposeFile, previousProject.EnvFile} {
+				if inputErr := validateRuntimeInput(inputPath); inputErr != nil {
+					return fail(fmt.Errorf("resolve previous runtime generation: %w", inputErr))
+				}
+			}
+			count, countErr := backend.runner.StorageObjectCount(ctx, previousProject)
+			if countErr != nil {
+				return fail(fmt.Errorf("Storage contains objects: unable to determine object count: %w", countErr))
+			}
+			if count != 0 {
+				return fail(fmt.Errorf("Storage contains objects: count=%d", count))
+			}
+		}
 		slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "render")
 		rendered, err := render.Project(render.Input{
 			ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.APIPort,
@@ -94,10 +116,6 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			return fail(reconcileFailure(err, false))
 		}
 		candidateProject := compose.ProjectRef{Slug: request.Slug, Dir: candidateRef.ProjectDir, ComposeFile: candidateRef.ComposeFile, EnvFile: candidateRef.EnvFile}
-		previousRef, _ := backend.projectFS.CurrentRuntimeGeneration(request.Slug)
-		previousProject := compose.ProjectRef{Slug: request.Slug, Dir: previousRef.ProjectDir, ComposeFile: previousRef.ComposeFile, EnvFile: previousRef.EnvFile}
-		currentRef, _ := backend.projectFS.CurrentRuntimeFiles(request.Slug)
-		currentProject := compose.ProjectRef{Slug: request.Slug, Dir: currentRef.ProjectDir, ComposeFile: currentRef.ComposeFile, EnvFile: currentRef.EnvFile}
 		newServices := append([]string(nil), rendered.EnabledComposeServices...)
 		var proxyChanged bool
 		disabled := difference(previousServices, newServices)
@@ -325,6 +343,25 @@ func routeForProxy(slug string, configuration contracts.ProjectConfiguration, se
 		CertificateFile:    managedTLSCertificateFile(configuration.Network.ManagedTLS),
 		CertificateKeyFile: managedTLSPrivateKeyFile(configuration.Network.ManagedTLS),
 	}, true
+}
+
+func storageLocationChanged(before, after contracts.StorageConfig) bool {
+	return before.Backend != after.Backend || before.Bucket != after.Bucket || before.Region != after.Region || before.Endpoint != after.Endpoint || before.AccountID != after.AccountID || before.LocalPath != after.LocalPath
+}
+
+func validateRuntimeInput(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("runtime input %q is not a regular file", path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return file.Close()
 }
 
 func managedTLSCertificateFile(config *contracts.ManagedTLSConfig) string {

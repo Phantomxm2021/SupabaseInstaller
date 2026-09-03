@@ -18,9 +18,9 @@ function omittedConfiguration(): RedactedProjectConfiguration {
       mailer: defaultConfiguration().auth.mailer,
       oauth: { google: { enabled: false, clientId: '', secretSet: false, secret: { action: '' } } },
     },
-    storage: { backend: 'local', s3CompatibleApi: false, bucket: '', region: '', endpoint: '', accountId: '', accessKeyId: '', secretAccessKeySet: false, secretAccessKey: { action: '' }, forcePathStyle: false, localPath: '/data' },
+    storage: { backend: 'local', s3CompatibleApi: false, bucket: '', region: '', endpoint: '', accountId: '', accessKeyId: '', secretAccessKeySet: false, secretAccessKey: { action: '' }, forcePathStyle: false, uploadFileSizeLimit: 50 * 1024 * 1024, localPath: '/data' },
     realtime: { maxConnections: 100, databasePoolSize: 5, logLevel: 'info' },
-    functions: { defaultJwtVerification: true, directory: '/functions' },
+    functions: { defaultJwtVerification: true, variables: [] },
     database: { version: '17', directPort: false, directPortNumber: 0, maxConnections: 100, sharedBuffers: '128MB' },
     pooler: { transactionPort: 6543, sessionPort: 5432, poolSize: 20, maxClientConnections: 100 },
     network: { gateway: 'envoy', httpsMode: 'external', apiPort: 8000, studioPort: 3000, directDatabasePort: 5432, poolerPort: 6543 },
@@ -67,13 +67,13 @@ describe('configuration projection normalization', () => {
     const phone = { enabled: true, provider: 'twilio', secretSet: true, secret: { action: 'remove' as const }, fields: { accountSid: 'a', messageServiceSid: 'm' } }
     const auth = { ...defaultConfiguration().auth, email: { ...defaultConfiguration().auth.email, confirmEmail: false }, phone, smtp: { ...smtp, password: { action: 'retain' as const } } }
     expect(authSchema.safeParse(auth).success).toBe(false)
-    expect(functionsSchema.safeParse({ defaultJwtVerification: true, directory: './functions', variables: [{ name: 'SUPABASE_URL', valueSet: false, value: { action: '' } }] }).success).toBe(false)
+    expect(functionsSchema.safeParse({ defaultJwtVerification: true, variables: [{ name: 'SUPABASE_URL', valueSet: false, value: { action: '' } }] }).success).toBe(false)
   })
 
   it('accepts redacted configured function values and sends retain at update boundary', () => {
-    const initial = { defaultJwtVerification: true, directory: './functions', variables: [{ name: 'OPENAI_API_KEY', valueSet: true, value: { action: '' as const } }] }
+    const initial = { defaultJwtVerification: true, variables: [{ name: 'OPENAI_API_KEY', valueSet: true, value: { action: '' as const } }] }
     expect(functionsSchema.safeParse(initial).success).toBe(true)
-    expect(normalizeConfigurationValue(initial)).toEqual({ defaultJwtVerification: true, directory: './functions', variables: [{ name: 'OPENAI_API_KEY', valueSet: true, value: { action: 'retain' } }] })
+    expect(normalizeConfigurationValue(initial)).toEqual({ defaultJwtVerification: true, variables: [{ name: 'OPENAI_API_KEY', valueSet: true, value: { action: 'retain' } }] })
   })
 
   it('distinguishes service disable from removing a secret on an already disabled section', () => {

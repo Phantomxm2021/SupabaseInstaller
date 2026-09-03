@@ -310,6 +310,56 @@ func TestHydrateUsesDedicatedStudioPasswordOverRuntimeDashboardPassword(t *testi
 	}
 }
 
+func TestRevealAllowsOnlyOpaqueAPIKeys(t *testing.T) {
+	orchestrator, database, _, project, _, _, _ := newRecoveryFixture(t, "UPDATE_CONFIG")
+	for kind, value := range map[string]string{
+		"publishable-api-key": "publishable-secret-value",
+		"secret-api-key":      "secret-secret-value",
+	} {
+		envelope, err := orchestrator.cipher.Encrypt(project.ID, kind, []byte(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.PutSecret(context.Background(), project.ID, kind, envelope); err != nil {
+			t.Fatal(err)
+		}
+		got, err := orchestrator.Reveal(context.Background(), project.ID, kind)
+		if err != nil {
+			t.Fatalf("Reveal(%q) error = %v", kind, err)
+		}
+		if got != value {
+			t.Fatalf("Reveal(%q) = %q, want %q", kind, got, value)
+		}
+	}
+}
+
+func TestRevealRejectsSigningAndUnknownKindsWithoutLeakingValues(t *testing.T) {
+	orchestrator, database, _, project, _, _, _ := newRecoveryFixture(t, "UPDATE_CONFIG")
+	const forbiddenValue = "forbidden-private-material"
+	for _, kind := range []string{
+		"jwt-keys",
+		"jwt-jwks",
+		"anon-key-asymmetric",
+		"service-role-key-asymmetric",
+		"unknown-secret-kind",
+	} {
+		envelope, err := orchestrator.cipher.Encrypt(project.ID, kind, []byte(forbiddenValue))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := database.PutSecret(context.Background(), project.ID, kind, envelope); err != nil {
+			t.Fatal(err)
+		}
+		got, err := orchestrator.Reveal(context.Background(), project.ID, kind)
+		if err == nil {
+			t.Fatalf("Reveal(%q) succeeded with value %q", kind, got)
+		}
+		if got != "" || strings.Contains(err.Error(), forbiddenValue) {
+			t.Fatalf("Reveal(%q) leaked value/error: value=%q error=%q", kind, got, err)
+		}
+	}
+}
+
 func TestDatabasePasswordRotationReportsUnavailableRuntimeSecret(t *testing.T) {
 	orchestrator, _, operations, currentProject, snapshot, _, queued := newRecoveryFixture(t, "ROTATE_DATABASE_PASSWORD")
 	snapshot.Configuration.General.StudioPasswordSet = true
@@ -469,6 +519,47 @@ func TestRunDoesNotRestoreOrCompareLegacyCandidateRevision(t *testing.T) {
 	}
 	if !strings.Contains(stored.ErrorMessage, "stale config revision") {
 		t.Fatalf("stored error = %q, want concrete provisioner diagnostic", stored.ErrorMessage)
+	}
+}
+
+type unknownAuthKeysProvisioner struct{ calls *int }
+
+func (unknownAuthKeysProvisioner) Reconcile(context.Context, contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	return contracts.ReconcileProjectResponse{}, nil
+}
+
+func (s unknownAuthKeysProvisioner) ReconcileAuthKeys(context.Context, contracts.AuthKeysReconcileRequest) (contracts.ReconcileProjectResponse, error) {
+	if s.calls != nil {
+		*s.calls++
+	}
+	return contracts.ReconcileProjectResponse{}, &provisioner.ClientError{Code: "AUTH_KEYS_RECONCILE_FAILED", Message: "outcome unavailable", RuntimeStateChanged: true}
+}
+
+func TestRunAuthKeysUnknownOutcomeRetainsAdmittedCandidate(t *testing.T) {
+	orchestrator, database, operations, currentProject, snapshot, lease, op := newRecoveryFixture(t, "MIGRATE_AUTH_KEYS")
+	calls := 0
+	orchestrator.provisioner = unknownAuthKeysProvisioner{calls: &calls}
+	candidate := contracts.AuthKeysCandidate{SupabasePublishableKey: "candidate-publishable"}
+	_, err := orchestrator.RunAuthKeys(context.Background(), currentProject, op, snapshot, candidate)
+	if err == nil {
+		t.Fatal("RunAuthKeys() succeeded for unknown runtime outcome")
+	}
+	owned, err := database.OwnsConfigurationLease(context.Background(), currentProject.ID, op.ID, lease.Fence, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !owned {
+		t.Fatal("unknown outcome lost the admitted lease")
+	}
+	stored, err := operations.Get(context.Background(), op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != operation.Running {
+		t.Fatalf("operation status=%s, want RUNNING for recovery", stored.Status)
+	}
+	if _, err := database.GetSecret(context.Background(), currentProject.ID, "publishable-api-key"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("candidate secret persisted on unknown outcome: %v", err)
 	}
 }
 

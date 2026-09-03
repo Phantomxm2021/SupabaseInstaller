@@ -807,10 +807,45 @@ func TestRenderUsesOnlyPostgreSQL17AndGatewayChoices(t *testing.T) {
 	cfg.Network.HTTPSMode = contracts.HTTPSModeCaddy
 	out, err := Project(Input{Slug: "pg17-caddy", APIPort: 18003, Configuration: cfg})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("legacy Caddy render rejected: %v", err)
 	}
 	if !strings.Contains(out.Compose, "supabase/postgres:17.6.1.136") || !strings.Contains(out.Compose, "caddy:2.9.1") || !strings.Contains(out.Compose, "  caddy:") {
-		t.Fatal("PostgreSQL 17/Caddy selection incorrect")
+		t.Fatal("legacy Caddy Compose behavior was not preserved")
+	}
+}
+
+func TestRenderR2ForcesCompatibleStorageOptions(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Storage = true
+	cfg.Storage = contracts.StorageConfig{
+		Backend: contracts.StorageBackendR2, AccountID: "account", Bucket: "bucket",
+		ForcePathStyle: false, UploadFileSizeLimit: 123456,
+	}
+	out, err := Project(Input{Slug: "r2", APIPort: 18001, Configuration: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "GLOBAL_S3_FORCE_PATH_STYLE=true\n") {
+		t.Fatal("R2 path-style compatibility option missing from dotenv")
+	}
+	if !strings.Contains(out.Compose, "GLOBAL_S3_FORCE_PATH_STYLE: ${GLOBAL_S3_FORCE_PATH_STYLE}") || !strings.Contains(out.Compose, "TUS_ALLOW_S3_TAGS: \"false\"") {
+		t.Fatal("R2 storage compatibility options missing from Compose")
+	}
+}
+
+func TestRenderStorageFileSizeLimit(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Storage = true
+	cfg.Storage.UploadFileSizeLimit = 987654321
+	out, err := Project(Input{Slug: "storage-limit", APIPort: 18001, Configuration: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "STORAGE_FILE_SIZE_LIMIT=987654321\n") {
+		t.Fatal("typed storage file-size limit missing from dotenv")
+	}
+	if !strings.Contains(out.Compose, "FILE_SIZE_LIMIT: ${STORAGE_FILE_SIZE_LIMIT}") {
+		t.Fatal("storage FILE_SIZE_LIMIT is not wired to dotenv")
 	}
 }
 

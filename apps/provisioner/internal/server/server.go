@@ -76,6 +76,7 @@ func New(options Options) http.Handler {
 	private.HandleFunc("POST /internal/v1/projects/lifecycle", service.lifecycle)
 	private.HandleFunc("POST /internal/v1/projects/inspect", service.inspect)
 	private.HandleFunc("POST /internal/v1/projects/reconcile", service.reconcile)
+	private.HandleFunc("POST /internal/v1/projects/reconcile-auth-keys", service.reconcileAuthKeys)
 	private.HandleFunc("POST /internal/v1/nginx/certificates/stage", service.stageCertificate)
 	private.HandleFunc("POST /internal/v1/projects/rotate-database-password", service.rotateDatabasePassword)
 	private.HandleFunc("POST /internal/v1/projects/rollback-database-password", service.rollbackDatabasePassword)
@@ -330,6 +331,46 @@ func (s *server) reconcile(response http.ResponseWriter, request *http.Request) 
 	writeJSON(response, http.StatusOK, result)
 }
 
+func (s *server) reconcileAuthKeys(response http.ResponseWriter, request *http.Request) {
+	if s.backend == nil {
+		writeError(response, http.StatusServiceUnavailable, "BACKEND_UNAVAILABLE", "Provisioner reconciliation backend is unavailable")
+		return
+	}
+	var envelope contracts.AuthKeysReconcileRequest
+	if err := decodeJSON(response, request, &envelope); err != nil || envelope.Request.OperationID == "" || envelope.Request.ProjectID == "" || envelope.Request.Slug == "" {
+		writeError(response, http.StatusBadRequest, "INVALID_REQUEST", "A typed auth-key reconcile request is required")
+		return
+	}
+	input := envelope.Request
+	if input.IdempotencyKey == "" {
+		input.IdempotencyKey = input.OperationID + ":auth-keys"
+	}
+	input.Secrets.SupabasePublishableKey = envelope.Candidate.SupabasePublishableKey
+	input.Secrets.SupabaseSecretKey = envelope.Candidate.SupabaseSecretKey
+	input.Secrets.AnonKeyAsymmetric = envelope.Candidate.AnonKeyAsymmetric
+	input.Secrets.ServiceRoleKeyAsymmetric = envelope.Candidate.ServiceRoleKeyAsymmetric
+	input.Secrets.JWTKeys = envelope.Candidate.JWTKeys
+	input.Secrets.JWTJWKS = envelope.Candidate.JWTJWKS
+	result, err := s.backend.Reconcile(request.Context(), input)
+	if err != nil {
+		known := append(reconcileKnownValues(input), envelope.Candidate.SupabasePublishableKey, envelope.Candidate.SupabaseSecretKey, envelope.Candidate.AnonKeyAsymmetric, envelope.Candidate.ServiceRoleKeyAsymmetric, envelope.Candidate.JWTKeys, envelope.Candidate.JWTJWKS)
+		failure := operationalErrorEnvelope("AUTH_KEYS_RECONCILE_FAILED", "Auth key runtime reconciliation failed", err, known)
+		var typed *contracts.ReconcileFailure
+		if errors.As(err, &typed) {
+			result = typed.Response
+			result.OperationID, result.ProjectID = input.OperationID, input.ProjectID
+			result.Error = &failure.Error
+			result.Diagnostic, result.DiagnosticVersion = failure.Diagnostic, contracts.DiagnosticVersionCompleteRedaction
+		} else {
+			result = contracts.ReconcileProjectResponse{OperationID: input.OperationID, ProjectID: input.ProjectID, RolledBack: false, RuntimeChanged: true, RuntimeOutcomeUnknown: true, Error: &failure.Error, Diagnostic: failure.Diagnostic, DiagnosticVersion: contracts.DiagnosticVersionCompleteRedaction}
+		}
+		s.logger.Error("auth key runtime reconciliation failed", "project_id", input.ProjectID, "operation_id", input.OperationID, "error", failure.Diagnostic)
+		writeJSON(response, http.StatusUnprocessableEntity, result)
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
+}
+
 func (s *server) logReconcileFailure(input contracts.ReconcileProjectRequest, detail string) {
 	s.logger.Error("project runtime reconciliation failed", "project_id", input.ProjectID, "slug", input.Slug, "operation_id", input.OperationID, "error", detail)
 }
@@ -342,6 +383,8 @@ func reconcileKnownValues(input contracts.ReconcileProjectRequest) []string {
 		secrets.RealtimeDBEncryptionKey, secrets.LogflarePublicAccessToken,
 		secrets.LogflarePrivateAccessToken, secrets.S3ProtocolAccessKeyID,
 		secrets.S3ProtocolAccessKeySecret, secrets.PoolerTenantID,
+		secrets.SupabasePublishableKey, secrets.SupabaseSecretKey, secrets.AnonKeyAsymmetric,
+		secrets.ServiceRoleKeyAsymmetric, secrets.JWTKeys, secrets.JWTJWKS,
 	}
 	for _, value := range input.RuntimeSecrets {
 		values = append(values, value)

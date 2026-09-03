@@ -56,6 +56,7 @@ services:
             GOTRUE_JWT_AUD: authenticated
             GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
             GOTRUE_JWT_EXP: ${JWT_EXPIRY}
+            GOTRUE_JWT_KEYS: ${JWT_KEYS:-[]}
             GOTRUE_JWT_ISSUER: ${API_EXTERNAL_URL}
             GOTRUE_JWT_SECRET: ${JWT_SECRET}
             GOTRUE_RATE_LIMIT_ANONYMOUS_USERS: ${RATE_LIMIT_ANONYMOUS_USERS}

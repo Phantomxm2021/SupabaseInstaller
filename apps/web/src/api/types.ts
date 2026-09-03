@@ -182,6 +182,8 @@ export interface StorageConfig {
   secretAccessKeySet: boolean;
   secretAccessKey: SecretInput;
   forcePathStyle: boolean;
+  /** Maximum upload size in bytes (1 MiB–5120 MiB). */
+  uploadFileSizeLimit: number;
   localPath: string;
 }
 export interface RealtimeConfig {
@@ -196,7 +198,6 @@ export interface FunctionVariable {
 }
 export interface FunctionsConfig {
   defaultJwtVerification: boolean;
-  directory: string;
   variables: FunctionVariable[];
 }
 export interface FunctionRelease {
@@ -225,7 +226,7 @@ export interface PoolerConfig {
 }
 export interface NetworkConfig {
   gateway: "envoy" | "kong";
-  httpsMode: "external" | "caddy";
+  httpsMode: "external";
   managedTls?: {
     certificateName: string;
     certificateFile: string;
@@ -288,6 +289,7 @@ export interface RedactedStorageConfig {
   secretAccessKeySet: boolean;
   secretAccessKey: RedactedSecretInput;
   forcePathStyle: boolean;
+  uploadFileSizeLimit: number;
   localPath: string;
 }
 export interface RedactedFunctionVariable {
@@ -297,7 +299,6 @@ export interface RedactedFunctionVariable {
 }
 export interface RedactedFunctionsConfig {
   defaultJwtVerification: boolean;
-  directory: string;
   variables?: RedactedFunctionVariable[];
 }
 export interface RedactedDatabaseConfig {
@@ -310,7 +311,7 @@ export interface RedactedDatabaseConfig {
 }
 export interface RedactedNetworkConfig {
   gateway: "envoy" | "kong";
-  httpsMode: "external" | "caddy";
+  httpsMode: "external";
   managedTls?: {
     certificateName: string;
     certificateFile: string;
@@ -413,4 +414,19 @@ export interface Operation {
   progress: number;
   errorCode?: string;
   errorMessage?: string;
+}
+
+export interface AuthKeysOperationRequest {
+  password: string;
+  confirmProjectName?: string;
+}
+
+export interface AuthKeysOperationResponse {
+  projectId: string;
+  operationId: string;
+}
+
+export interface SecretRevealResponse {
+  kind: string;
+  value: string;
 }

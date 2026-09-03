@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"supabase-manager/apps/manager/internal/operation"
@@ -75,7 +76,16 @@ func (orchestrator *Orchestrator) Run(ctx context.Context, project contracts.Pro
 	if err != nil {
 		return orchestrator.rollback(ctx, project, current.ID, "LOAD_SECRETS", err)
 	}
-	completeSecretSet := len(persisted) == len(persistedProjectSecretSpecs())
+	// The six opt-in auth-key records are intentionally absent on legacy
+	// installs; only the original credential set determines whether generation
+	// is needed. A complete opt-in bundle is loaded and validated separately.
+	completeSecretSet := true
+	for _, spec := range persistedProjectSecretSpecs()[:len(persistedProjectSecretSpecs())-6] {
+		if _, ok := persisted[spec.kind]; !ok {
+			completeSecretSet = false
+			break
+		}
+	}
 	if !completeSecretSet {
 		fresh, generateErr := orchestrator.generator.Generate()
 		if generateErr != nil {
@@ -264,6 +274,9 @@ func (orchestrator *Orchestrator) rollback(ctx context.Context, project contract
 }
 
 func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID string, generated contracts.ProjectSecrets, existing map[string]struct{}) error {
+	if err := validateAuthKeyBundle(generated); err != nil {
+		return err
+	}
 	values := map[string]string{
 		"database-password":          generated.DatabasePassword,
 		"jwt-secret":                 generated.JWTSecret,
@@ -275,6 +288,15 @@ func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID 
 		"realtime-db-encryption-key": generated.RealtimeDBEncryptionKey, "logflare-public-access-token": generated.LogflarePublicAccessToken, "logflare-private-access-token": generated.LogflarePrivateAccessToken,
 		"s3-protocol-access-key-id": generated.S3ProtocolAccessKeyID, "s3-protocol-access-key-secret": generated.S3ProtocolAccessKeySecret, "pooler-tenant-id": generated.PoolerTenantID,
 	}
+	if generated.SupabasePublishableKey != "" {
+		values["publishable-api-key"] = generated.SupabasePublishableKey
+		values["secret-api-key"] = generated.SupabaseSecretKey
+		values["anon-key-asymmetric"] = generated.AnonKeyAsymmetric
+		values["service-role-key-asymmetric"] = generated.ServiceRoleKeyAsymmetric
+		values["jwt-keys"] = generated.JWTKeys
+		values["jwt-jwks"] = generated.JWTJWKS
+	}
+	atomic := make(map[string]managersecrets.Envelope)
 	for kind, plaintext := range values {
 		if _, exists := existing[kind]; exists {
 			continue
@@ -283,7 +305,16 @@ func (orchestrator *Orchestrator) persistSecrets(ctx context.Context, projectID 
 		if err != nil {
 			return err
 		}
+		if strings.Contains(kind, "api-key") || strings.Contains(kind, "asymmetric") || kind == "jwt-keys" || kind == "jwt-jwks" {
+			atomic[kind] = envelope
+			continue
+		}
 		if err := orchestrator.store.PutSecret(ctx, projectID, kind, envelope); err != nil {
+			return err
+		}
+	}
+	if len(atomic) > 0 {
+		if err := orchestrator.store.PutSecretsAtomic(ctx, projectID, atomic); err != nil {
 			return err
 		}
 	}
@@ -311,6 +342,12 @@ func persistedProjectSecretSpecs() []persistedProjectSecretSpec {
 		{"s3-protocol-access-key-id", func(secrets *contracts.ProjectSecrets, value string) { secrets.S3ProtocolAccessKeyID = value }, func(secrets contracts.ProjectSecrets) string { return secrets.S3ProtocolAccessKeyID }},
 		{"s3-protocol-access-key-secret", func(secrets *contracts.ProjectSecrets, value string) { secrets.S3ProtocolAccessKeySecret = value }, func(secrets contracts.ProjectSecrets) string { return secrets.S3ProtocolAccessKeySecret }},
 		{"pooler-tenant-id", func(secrets *contracts.ProjectSecrets, value string) { secrets.PoolerTenantID = value }, func(secrets contracts.ProjectSecrets) string { return secrets.PoolerTenantID }},
+		{"publishable-api-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.SupabasePublishableKey = value }, func(secrets contracts.ProjectSecrets) string { return secrets.SupabasePublishableKey }},
+		{"secret-api-key", func(secrets *contracts.ProjectSecrets, value string) { secrets.SupabaseSecretKey = value }, func(secrets contracts.ProjectSecrets) string { return secrets.SupabaseSecretKey }},
+		{"anon-key-asymmetric", func(secrets *contracts.ProjectSecrets, value string) { secrets.AnonKeyAsymmetric = value }, func(secrets contracts.ProjectSecrets) string { return secrets.AnonKeyAsymmetric }},
+		{"service-role-key-asymmetric", func(secrets *contracts.ProjectSecrets, value string) { secrets.ServiceRoleKeyAsymmetric = value }, func(secrets contracts.ProjectSecrets) string { return secrets.ServiceRoleKeyAsymmetric }},
+		{"jwt-keys", func(secrets *contracts.ProjectSecrets, value string) { secrets.JWTKeys = value }, func(secrets contracts.ProjectSecrets) string { return secrets.JWTKeys }},
+		{"jwt-jwks", func(secrets *contracts.ProjectSecrets, value string) { secrets.JWTJWKS = value }, func(secrets contracts.ProjectSecrets) string { return secrets.JWTJWKS }},
 	}
 }
 
@@ -336,6 +373,9 @@ func (orchestrator *Orchestrator) loadPersistedSecrets(ctx context.Context, proj
 			return contracts.ProjectSecrets{}, nil, fmt.Errorf("decrypt persisted secret %q: %w", spec.kind, err)
 		}
 		spec.set(&result, string(plain))
+	}
+	if err := validateAuthKeyBundle(result); err != nil {
+		return contracts.ProjectSecrets{}, nil, err
 	}
 	return result, found, nil
 }

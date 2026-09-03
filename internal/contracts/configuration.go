@@ -170,17 +170,18 @@ const (
 )
 
 type StorageConfig struct {
-	Backend            StorageBackend `json:"backend"`
-	S3CompatibleAPI    bool           `json:"s3CompatibleApi"`
-	Bucket             string         `json:"bucket"`
-	Region             string         `json:"region"`
-	Endpoint           string         `json:"endpoint"`
-	AccountID          string         `json:"accountId"`
-	AccessKeyID        string         `json:"accessKeyId"`
-	SecretAccessKeySet bool           `json:"secretAccessKeySet"`
-	SecretAccessKey    SecretInput    `json:"secretAccessKey,omitempty"`
-	ForcePathStyle     bool           `json:"forcePathStyle"`
-	LocalPath          string         `json:"localPath"`
+	Backend             StorageBackend `json:"backend"`
+	S3CompatibleAPI     bool           `json:"s3CompatibleApi"`
+	Bucket              string         `json:"bucket"`
+	Region              string         `json:"region"`
+	Endpoint            string         `json:"endpoint"`
+	AccountID           string         `json:"accountId"`
+	AccessKeyID         string         `json:"accessKeyId"`
+	SecretAccessKeySet  bool           `json:"secretAccessKeySet"`
+	SecretAccessKey     SecretInput    `json:"secretAccessKey,omitempty"`
+	ForcePathStyle      bool           `json:"forcePathStyle"`
+	UploadFileSizeLimit int64          `json:"uploadFileSizeLimit"`
+	LocalPath           string         `json:"localPath"`
 }
 
 type LogLevel string
@@ -206,7 +207,6 @@ type FunctionVariable struct {
 
 type FunctionsConfig struct {
 	DefaultJWTVerification bool               `json:"defaultJwtVerification"`
-	Directory              string             `json:"directory"`
 	Variables              []FunctionVariable `json:"variables,omitempty"`
 }
 

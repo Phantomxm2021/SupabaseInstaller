@@ -45,6 +45,9 @@ func RegisterConfigurationRoutes(mux *http.ServeMux, options ConfigurationOption
 	register("PATCH /api/projects/{id}/configuration/oauth/{provider}", h.patchOAuth)
 	register("POST /api/projects/{id}/secrets/{kind}/reveal", h.reveal)
 	register("POST /api/projects/{id}/secrets/databasePassword/rotate", h.rotate)
+	register("POST /api/projects/{id}/auth-keys/migrate", h.authKeys)
+	register("POST /api/projects/{id}/auth-keys/rotate-api", h.authKeys)
+	register("POST /api/projects/{id}/auth-keys/rotate-signing", h.authKeys)
 }
 
 type configurationHandlers struct{ options ConfigurationOptions }
@@ -476,4 +479,56 @@ func (h configurationHandlers) rotate(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]any{"projectId": r.PathValue("id"), "operationId": queued.ID, "revision": snapshot.Revision})
+}
+
+func (h configurationHandlers) authKeys(w http.ResponseWriter, r *http.Request) {
+	if h.options.Orchestrator == nil {
+		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Server configuration is unavailable")
+		return
+	}
+	identity, ok := IdentityFromContext(r.Context())
+	if !ok || h.options.Auth == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "Authentication is required")
+		return
+	}
+	var input struct {
+		Password           string `json:"password"`
+		ConfirmProjectName string `json:"confirmProjectName"`
+	}
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_JSON", "Request body is invalid")
+		return
+	}
+	if err := h.options.Auth.VerifyPassword(r.Context(), identity, input.Password); err != nil {
+		writeError(w, http.StatusUnauthorized, "RECENT_AUTH_REQUIRED", "Administrator password confirmation is required")
+		return
+	}
+	p, err := h.options.Projects.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.handleConfigError(w, err)
+		return
+	}
+	path := r.URL.Path
+	kind := "MIGRATE_AUTH_KEYS"
+	if strings.HasSuffix(path, "/rotate-api") {
+		kind = "ROTATE_API_KEYS"
+	}
+	if strings.HasSuffix(path, "/rotate-signing") {
+		kind = "ROTATE_SIGNING_KEYS"
+		if input.ConfirmProjectName != p.Name {
+			writeError(w, http.StatusUnprocessableEntity, "PROJECT_NAME_CONFIRMATION_REQUIRED", "Exact project name confirmation is required; signing rotation invalidates all ES256 sessions")
+			return
+		}
+	}
+	op, snapshot, candidate, err := h.options.Orchestrator.QueueAuthKeysOperation(r.Context(), p.ID, kind)
+	if err != nil {
+		h.handleConfigError(w, err)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+		defer cancel()
+		_, _ = h.options.Orchestrator.RunAuthKeys(ctx, p, op, snapshot, candidate)
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]string{"projectId": p.ID, "operationId": op.ID})
 }

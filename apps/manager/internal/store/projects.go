@@ -204,6 +204,23 @@ ON CONFLICT(project_id, kind) DO UPDATE SET
 	return nil
 }
 
+func (s *Store) PutSecretsAtomic(ctx context.Context, projectID string, values map[string]secrets.Envelope) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store encrypted secrets: %w", err)
+	}
+	for kind, envelope := range values {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id, kind, envelope_version, nonce, ciphertext, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, kind) DO UPDATE SET envelope_version=excluded.envelope_version, nonce=excluded.nonce, ciphertext=excluded.ciphertext, updated_at=excluded.updated_at`, projectID, kind, envelope.Version, envelope.Nonce, envelope.Ciphertext, formatTime(time.Now())); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("store encrypted secret: %w", err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("store encrypted secrets: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) GetSecret(ctx context.Context, projectID, kind string) (secrets.Envelope, error) {
 	var envelope secrets.Envelope
 	err := s.db.QueryRowContext(ctx, `

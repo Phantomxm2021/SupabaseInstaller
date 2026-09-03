@@ -119,6 +119,30 @@ func TestRunnerUsesArgumentVectorAndFixedProjectDirectory(t *testing.T) {
 	}
 }
 
+func TestStorageObjectCountUsesFixedSafeQuery(t *testing.T) {
+	executor := &sequenceExecutor{results: []executorResult{{output: []byte("0\n")}}}
+	runner := NewRunner(executor)
+	got, err := runner.StorageObjectCount(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"})
+	if err != nil || got != 0 {
+		t.Fatalf("StorageObjectCount() = %d, %v; want 0, nil", got, err)
+	}
+	want := []string{"compose", "--file", "/projects/bee/docker-compose.yml", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "exec", "-T", "db", "psql", "-v", "ON_ERROR_STOP=1", "-U", "supabase_admin", "-d", "postgres", "-At", "-c", "SELECT count(*) FROM storage.objects;"}
+	if !reflect.DeepEqual(executor.calls[0], want) {
+		t.Fatalf("query args = %#v, want %#v", executor.calls[0], want)
+	}
+}
+
+func TestStorageObjectCountFailsClosedOnMalformedOutput(t *testing.T) {
+	for _, output := range []string{"", "1\n2\n", "-1\n", "not-a-count\n", "1 extra\n"} {
+		t.Run(strings.TrimSpace(output), func(t *testing.T) {
+			executor := &sequenceExecutor{results: []executorResult{{output: []byte(output)}}}
+			if got, err := NewRunner(executor).StorageObjectCount(context.Background(), ProjectRef{Slug: "bee", Dir: "/projects/bee"}); err == nil || got != 0 {
+				t.Fatalf("StorageObjectCount() = %d, %v; want parse error", got, err)
+			}
+		})
+	}
+}
+
 func TestDownRuntimeDoesNotDeleteVolumes(t *testing.T) {
 	executor := &fakeExecutor{}
 	runner := NewRunner(executor)

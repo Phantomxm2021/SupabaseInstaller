@@ -20,6 +20,7 @@ import (
 	"supabase-manager/apps/manager/internal/project"
 	managersecrets "supabase-manager/apps/manager/internal/secrets"
 	"supabase-manager/apps/manager/internal/store"
+	"supabase-manager/internal/authkeys"
 	"supabase-manager/internal/contracts"
 )
 
@@ -29,6 +30,10 @@ type Provisioner interface {
 
 type PasswordRotationProvisioner interface {
 	RotateDatabasePassword(context.Context, contracts.RotateDatabasePasswordRequest) (contracts.RotateDatabasePasswordResponse, error)
+}
+
+type AuthKeysProvisioner interface {
+	ReconcileAuthKeys(context.Context, contracts.AuthKeysReconcileRequest) (contracts.ReconcileProjectResponse, error)
 }
 
 // PasswordRotationRollbackProvisioner is an explicit compensation boundary
@@ -324,6 +329,159 @@ func randomSecret() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+// QueueAuthKeysOperation admits a durable candidate without changing the
+// active encrypted bundle. The candidate is encrypted in operation_secrets and
+// is published only after Provisioner reconciliation succeeds.
+func (o *Orchestrator) QueueAuthKeysOperation(ctx context.Context, projectID, kind string) (operation.Operation, store.ConfigurationSnapshot, contracts.AuthKeysCandidate, error) {
+	if o.configs == nil || o.operations == nil || o.cipher == nil {
+		return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, errors.New("configuration orchestrator is unavailable")
+	}
+	if !o.tryAcquire(projectID) {
+		return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, store.ErrConfigurationBusy
+	}
+	current, err := o.configs.GetDesired(ctx, projectID)
+	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, err
+	}
+	legacy, _, err := o.hydrate(ctx, projectID, current.Configuration)
+	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, err
+	}
+	complete := legacy.SupabasePublishableKey != "" && legacy.SupabaseSecretKey != "" && legacy.AnonKeyAsymmetric != "" && legacy.ServiceRoleKeyAsymmetric != "" && legacy.JWTKeys != "" && legacy.JWTJWKS != ""
+	if kind == "MIGRATE_AUTH_KEYS" && complete {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, errors.New("auth key bundle is already complete")
+	}
+	candidate := contracts.AuthKeysCandidate{SupabasePublishableKey: legacy.SupabasePublishableKey, SupabaseSecretKey: legacy.SupabaseSecretKey, AnonKeyAsymmetric: legacy.AnonKeyAsymmetric, ServiceRoleKeyAsymmetric: legacy.ServiceRoleKeyAsymmetric, JWTKeys: legacy.JWTKeys, JWTJWKS: legacy.JWTJWKS}
+	bundle := authkeys.Bundle{SupabasePublishableKey: candidate.SupabasePublishableKey, SupabaseSecretKey: candidate.SupabaseSecretKey, AnonKeyAsymmetric: candidate.AnonKeyAsymmetric, ServiceRoleKeyAsymmetric: candidate.ServiceRoleKeyAsymmetric, JWTKeys: candidate.JWTKeys, JWTJWKS: candidate.JWTJWKS}
+	if kind == "ROTATE_API_KEYS" {
+		generated, e := authkeys.Generate(rand.Reader, legacy.JWTSecret)
+		if e != nil {
+			o.release(projectID)
+			return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, e
+		}
+		candidate.SupabasePublishableKey, candidate.SupabaseSecretKey = generated.SupabasePublishableKey, generated.SupabaseSecretKey
+	} else {
+		generated, e := authkeys.Generate(rand.Reader, legacy.JWTSecret)
+		if e != nil {
+			o.release(projectID)
+			return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, e
+		}
+		candidate = contracts.AuthKeysCandidate{SupabasePublishableKey: generated.SupabasePublishableKey, SupabaseSecretKey: generated.SupabaseSecretKey, AnonKeyAsymmetric: generated.AnonKeyAsymmetric, ServiceRoleKeyAsymmetric: generated.ServiceRoleKeyAsymmetric, JWTKeys: generated.JWTKeys, JWTJWKS: generated.JWTJWKS}
+	}
+	if kind == "ROTATE_API_KEYS" {
+		if bundle.JWTKeys == "" || bundle.JWTJWKS == "" {
+			o.release(projectID)
+			return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, errors.New("API rotation requires an existing signing bundle")
+		}
+	}
+	op, err := o.operations.NewQueuedOperation(projectID, operation.TypeUpdateConfig)
+	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, err
+	}
+	ops := map[string]managersecrets.Envelope{}
+	fields := map[string]string{"publishable-api-key": candidate.SupabasePublishableKey, "secret-api-key": candidate.SupabaseSecretKey, "anon-key-asymmetric": candidate.AnonKeyAsymmetric, "service-role-key-asymmetric": candidate.ServiceRoleKeyAsymmetric, "jwt-keys": candidate.JWTKeys, "jwt-jwks": candidate.JWTJWKS}
+	for field, value := range fields {
+		env, e := o.cipher.Encrypt(projectID, "operation.auth-key."+field, []byte(value))
+		if e != nil {
+			o.release(projectID)
+			return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, e
+		}
+		ops[field] = env
+	}
+	next, lease, err := o.store.AdmitConfiguration(ctx, store.ConfigurationAdmission{Operation: op, ProjectID: projectID, Owner: op.ID, ExpectedRevision: current.Revision, Configuration: current.Configuration, OperationKind: kind, OperationSecrets: ops, Now: o.now()})
+	if err != nil {
+		o.release(projectID)
+		return operation.Operation{}, store.ConfigurationSnapshot{}, contracts.AuthKeysCandidate{}, err
+	}
+	o.leaseMu.Lock()
+	o.leases[projectID] = lease
+	o.leaseMu.Unlock()
+	return op, next, candidate, nil
+}
+
+func (o *Orchestrator) RunAuthKeys(ctx context.Context, p contracts.Project, op operation.Operation, snapshot store.ConfigurationSnapshot, candidate contracts.AuthKeysCandidate) (operation.Operation, error) {
+	retainDurableLease := false
+	defer func() {
+		o.release(p.ID)
+		if !retainDurableLease {
+			_ = o.releaseLease(context.Background(), p.ID)
+		}
+	}()
+	if op.Status == operation.Queued {
+		if err := o.operations.Start(ctx, op.ID); err != nil {
+			return op, err
+		}
+	} else if op.Status != operation.Running {
+		return op, errors.New("auth key operation is not runnable")
+	}
+	if ap := snapshot.Configuration.Network.APIPort; ap == 0 {
+		snapshot.Configuration.Network.APIPort, _ = o.store.ReservedPort(ctx, p.ID, string(ports.KindAPI))
+	}
+	legacy, runtime, err := o.hydrate(ctx, p.ID, snapshot.Configuration)
+	if err != nil {
+		return o.fail(ctx, op, "RENDER_RUNTIME", err, false)
+	}
+	req := contracts.ReconcileProjectRequest{OperationID: op.ID, IdempotencyKey: op.ID + ":auth-keys", ProjectID: p.ID, ProjectName: p.Name, Slug: p.Slug, APIPort: snapshot.Configuration.Network.APIPort, Configuration: snapshot.Configuration, Secrets: legacy, RuntimeSecrets: runtime}
+	if auth, ok := o.provisioner.(AuthKeysProvisioner); ok {
+		result, e := auth.ReconcileAuthKeys(ctx, contracts.AuthKeysReconcileRequest{Request: req, Candidate: candidate})
+		if e != nil {
+			if shouldRestoreConfiguration(e) {
+				if restoreErr := o.restoreConfigurationState(ctx, p.ID, op.ID, snapshot); restoreErr != nil {
+					retainDurableLease = true
+					return op, restoreErr
+				}
+			} else {
+				// A transport timeout or typed unknown outcome may have applied the
+				// candidate. Keep the durable operation and lease for Resume replay.
+				if markerErr := o.store.MarkAuthKeysRecoverable(ctx, p.ID, op.ID, snapshot.Fence); markerErr != nil {
+					return op, markerErr
+				}
+				retainDurableLease = true
+				return op, e
+			}
+			return o.fail(ctx, op, "COMPOSE_UP", errors.New("auth key runtime reconciliation failed"), false)
+		}
+		if result.OperationID != op.ID || result.ProjectID != p.ID || !sameServices(result.EnabledServices, enabledServices(snapshot.Configuration)) {
+			// The runtime may already be serving the candidate despite malformed
+			// verification metadata. Keep the admitted snapshot and lease for
+			// recovery; never delete a potentially active candidate speculatively.
+			if markerErr := o.store.MarkAuthKeysRecoverable(ctx, p.ID, op.ID, snapshot.Fence); markerErr != nil {
+				return op, markerErr
+			}
+			retainDurableLease = true
+			return op, errors.New("auth key runtime verification failed")
+		}
+	} else {
+		return o.fail(ctx, op, "COMPOSE_UP", errors.New("auth key provisioner is unavailable"), false)
+	}
+	values := map[string]managersecrets.Envelope{}
+	fields := map[string]string{"publishable-api-key": candidate.SupabasePublishableKey, "secret-api-key": candidate.SupabaseSecretKey, "anon-key-asymmetric": candidate.AnonKeyAsymmetric, "service-role-key-asymmetric": candidate.ServiceRoleKeyAsymmetric, "jwt-keys": candidate.JWTKeys, "jwt-jwks": candidate.JWTJWKS}
+	for field, value := range fields {
+		env, e := o.cipher.Encrypt(p.ID, field, []byte(value))
+		if e != nil {
+			return o.fail(ctx, op, "PERSIST_CONFIGURATION", errors.New("auth key persistence failed"), false)
+		}
+		values[field] = env
+	}
+	if err := o.store.PublishSecretsAndMarkConfigurationGoodOwned(ctx, p.ID, snapshot.Revision, op.ID, snapshot.Fence, "COMMITTED", values, o.now()); err != nil {
+		// Runtime reconciliation already succeeded; retain the durable candidate
+		// and lease so Resume can retry publication without splitting state.
+		if markerErr := o.store.MarkAuthKeysRecoverable(ctx, p.ID, op.ID, snapshot.Fence); markerErr != nil {
+			return op, markerErr
+		}
+		retainDurableLease = true
+		return op, err
+	}
+	if err := o.operations.Succeed(ctx, op.ID); err != nil {
+		return op, err
+	}
+	return o.operations.Get(ctx, op.ID)
 }
 
 // allocateUpdatePorts applies the same server-owned allocator used by install
@@ -973,8 +1131,10 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 			// Resume owns the admission resources before payload decoding. Keep a
 			// single scope around every exit, including corrupt/missing payloads.
 			defer o.release(project.ID)
-			defer o.releaseLeaseToken(context.Background(), project.ID, op.ID, leaseFence)
-			if commandKind != "UPDATE_CONFIG" && commandKind != "ROTATE_DATABASE_PASSWORD" {
+			if commandKind != "MIGRATE_AUTH_KEYS" && commandKind != "ROTATE_API_KEYS" && commandKind != "ROTATE_SIGNING_KEYS" {
+				defer o.releaseLeaseToken(context.Background(), project.ID, op.ID, leaseFence)
+			}
+			if commandKind != "UPDATE_CONFIG" && commandKind != "ROTATE_DATABASE_PASSWORD" && commandKind != "MIGRATE_AUTH_KEYS" && commandKind != "ROTATE_API_KEYS" && commandKind != "ROTATE_SIGNING_KEYS" {
 				if op.Status == operation.Queued {
 					_ = o.operations.Start(context.Background(), op.ID)
 				}
@@ -1006,6 +1166,19 @@ func (o *Orchestrator) Resume(ctx context.Context, lookup func(context.Context, 
 					return
 				}
 				_, _ = o.RunDatabasePasswordRotation(context.Background(), project, op, snap, string(plain))
+				return
+			}
+			if commandKind == "MIGRATE_AUTH_KEYS" || commandKind == "ROTATE_API_KEYS" || commandKind == "ROTATE_SIGNING_KEYS" {
+				candidate, decodeErr := o.authKeysOperationCandidate(context.Background(), project.ID, op.ID)
+				if decodeErr != nil {
+					if op.Status == operation.Queued {
+						_ = o.operations.Start(context.Background(), op.ID)
+					}
+					_ = o.operations.Fail(context.Background(), op.ID, "RESUME", errors.New("auth key command payload is unavailable"))
+					_ = o.releaseLeaseToken(context.Background(), project.ID, op.ID, lease.Fence)
+					return
+				}
+				_, _ = o.RunAuthKeys(context.Background(), project, op, snap, candidate)
 				return
 			}
 			_, _ = o.Run(context.Background(), project, op, snap)
@@ -1146,7 +1319,7 @@ func (o *Orchestrator) hydrate(ctx context.Context, projectID string, cfg contra
 	if o.cipher == nil {
 		return contracts.ProjectSecrets{}, nil, errors.New("secret cipher is unavailable")
 	}
-	baseKinds := []string{"database-password", "jwt-secret", "anon-key", "service-role-key", "dashboard-password", "secret-key-base", "vault-encryption-key"}
+	baseKinds := []string{"database-password", "jwt-secret", "anon-key", "service-role-key", "dashboard-password", "secret-key-base", "vault-encryption-key", "publishable-api-key", "secret-api-key", "anon-key-asymmetric", "service-role-key-asymmetric", "jwt-keys", "jwt-jwks"}
 	if cfg.General.StudioPasswordSet {
 		baseKinds = append(baseKinds, "studio.password")
 	}
@@ -1221,6 +1394,18 @@ func (o *Orchestrator) hydrate(ctx context.Context, projectID string, cfg contra
 			out.SecretKeyBase = value
 		case "vault-encryption-key":
 			out.VaultEncryptionKey = value
+		case "publishable-api-key":
+			out.SupabasePublishableKey = value
+		case "secret-api-key":
+			out.SupabaseSecretKey = value
+		case "anon-key-asymmetric":
+			out.AnonKeyAsymmetric = value
+		case "service-role-key-asymmetric":
+			out.ServiceRoleKeyAsymmetric = value
+		case "jwt-keys":
+			out.JWTKeys = value
+		case "jwt-jwks":
+			out.JWTJWKS = value
 		case "realtime-db-encryption-key":
 			out.RealtimeDBEncryptionKey = value
 			runtime["realtime.dbEncryptionKey"] = value
@@ -1242,11 +1427,45 @@ func (o *Orchestrator) hydrate(ctx context.Context, projectID string, cfg contra
 			runtime[kind] = value
 		}
 	}
+	bundle := authkeys.Bundle{SupabasePublishableKey: out.SupabasePublishableKey, SupabaseSecretKey: out.SupabaseSecretKey, AnonKeyAsymmetric: out.AnonKeyAsymmetric, ServiceRoleKeyAsymmetric: out.ServiceRoleKeyAsymmetric, JWTKeys: out.JWTKeys, JWTJWKS: out.JWTJWKS}
+	count := 0
+	for _, value := range []string{bundle.SupabasePublishableKey, bundle.SupabaseSecretKey, bundle.AnonKeyAsymmetric, bundle.ServiceRoleKeyAsymmetric, bundle.JWTKeys, bundle.JWTJWKS} {
+		if value != "" {
+			count++
+		}
+	}
+	if count != 0 && (count != 6 || bundle.Validate(out.JWTSecret) != nil) {
+		return contracts.ProjectSecrets{}, nil, errors.New("invalid asymmetric auth key bundle")
+	}
 	return out, runtime, nil
 }
 
+func (o *Orchestrator) authKeysOperationCandidate(ctx context.Context, projectID, operationID string) (contracts.AuthKeysCandidate, error) {
+	var out contracts.AuthKeysCandidate
+	fields := map[string]*string{"publishable-api-key": &out.SupabasePublishableKey, "secret-api-key": &out.SupabaseSecretKey, "anon-key-asymmetric": &out.AnonKeyAsymmetric, "service-role-key-asymmetric": &out.ServiceRoleKeyAsymmetric, "jwt-keys": &out.JWTKeys, "jwt-jwks": &out.JWTJWKS}
+	for kind, target := range fields {
+		envelope, err := o.store.GetOperationSecret(ctx, operationID, kind)
+		if err != nil {
+			return out, err
+		}
+		plain, err := o.cipher.Decrypt(projectID, "operation.auth-key."+kind, envelope)
+		if err != nil {
+			return out, err
+		}
+		*target = string(plain)
+	}
+	return out, nil
+}
+
 func (o *Orchestrator) Reveal(ctx context.Context, projectID, kind string) (string, error) {
-	allowed := map[string]string{"anonKey": "anon-key", "serviceRoleKey": "service-role-key", "jwtSecret": "jwt-secret", "databasePassword": "database-password"}
+	allowed := map[string]string{
+		"anonKey":             "anon-key",
+		"serviceRoleKey":      "service-role-key",
+		"jwtSecret":           "jwt-secret",
+		"databasePassword":    "database-password",
+		"publishable-api-key": "publishable-api-key",
+		"secret-api-key":      "secret-api-key",
+	}
 	stored, ok := allowed[strings.TrimSpace(kind)]
 	if !ok {
 		return "", fmt.Errorf("unsupported secret kind")

@@ -22,7 +22,7 @@ export const servicePresets = [
 ] as const
 
 export function serviceControlState(services: ProjectForm['configuration']['services'], httpsMode: ProjectForm['configuration']['network']['httpsMode'], name: ServiceName) {
-  const gatewayRequired = services.auth || services.rest || services.studio || services.realtime || services.storage || services.functions || httpsMode === 'caddy'
+  const gatewayRequired = services.auth || services.rest || services.studio || services.realtime || services.storage || services.functions
   const forced = name === 'database' || (name === 'gateway' && gatewayRequired) || (name === 'rest' && services.storage) || (name === 'postgresMeta' && services.studio) || (name === 'vector' && services.logs)
   const help = name === 'gateway' && gatewayRequired
     ? 'API Gateway is required by enabled services.'
@@ -44,7 +44,7 @@ export function setServiceEnabled(form: UseFormReturn<ProjectForm>, name: Servic
   if (enabled && ['storage', 'imgproxy'].includes(name)) next.rest = true
   if (enabled && name === 'gateway') next.database = true
   if (name === 'rest' && !enabled && current.storage) next.rest = true
-  if (name === 'gateway' && !enabled && (current.auth || current.rest || current.studio || current.realtime || current.storage || current.functions || form.getValues('configuration.network.httpsMode') === 'caddy')) next.gateway = true
+  if (name === 'gateway' && !enabled && (current.auth || current.rest || current.studio || current.realtime || current.storage || current.functions)) next.gateway = true
   if (name === 'studio' && enabled) next.postgresMeta = true
   if (name === 'storage' && !enabled) { next.imgproxy = false; form.setValue('configuration.storage', { ...form.getValues('configuration.storage'), backend: 'local', bucket: '', region: '', endpoint: '', accountId: '', accessKeyId: '', secretAccessKeySet: false, secretAccessKey: { action: '' }, forcePathStyle: false }) }
   if (name === 'studio' && !enabled) next.postgresMeta = false

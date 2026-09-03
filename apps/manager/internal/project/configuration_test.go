@@ -11,6 +11,9 @@ import (
 
 func TestDefaultConfiguration(t *testing.T) {
 	got := DefaultConfiguration(contracts.PresetLightweight)
+	if got.Storage.UploadFileSizeLimit != 50*1024*1024 {
+		t.Fatalf("storage upload limit = %d, want 50 MiB", got.Storage.UploadFileSizeLimit)
+	}
 	if got.Database.Version != "17" {
 		t.Fatalf("database version = %q, want the single supported PostgreSQL 17 runtime", got.Database.Version)
 	}
@@ -31,6 +34,44 @@ func TestDefaultConfiguration(t *testing.T) {
 	}
 }
 
+func TestFunctionsConfigurationDoesNotExposeDirectory(t *testing.T) {
+	payload, err := json.Marshal(DefaultConfiguration(contracts.PresetLightweight).Functions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), "directory") {
+		t.Fatalf("functions config still exposes directory: %s", payload)
+	}
+}
+
+func TestStorageUploadFileSizeLimitBounds(t *testing.T) {
+	for _, limit := range []int64{1*1024*1024 - 1, 5*1024*1024*1024 + 1} {
+		cfg := DefaultConfiguration(contracts.PresetLightweight)
+		cfg.Storage.UploadFileSizeLimit = limit
+		var validation *ValidationError
+		if err := ValidateConfiguration(cfg); !errors.As(err, &validation) || validation.Fields["storage.uploadFileSizeLimit"] == "" {
+			t.Fatalf("limit %d: expected upload limit validation, got %v", limit, err)
+		}
+	}
+}
+
+func TestR2RequiresLowercaseAccountIDAndPathStyle(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Storage = contracts.StorageConfig{Backend: contracts.StorageBackendR2, Bucket: "bee", AccountID: "ABC", AccessKeyID: "key", SecretAccessKeySet: true, SecretAccessKey: contracts.SecretInput{Action: "retain"}}
+	var validation *ValidationError
+	if err := ValidateConfiguration(cfg); !errors.As(err, &validation) || validation.Fields["storage.accountId"] == "" || validation.Fields["storage.forcePathStyle"] == "" {
+		t.Fatalf("expected R2 account/path validation, got %v", err)
+	}
+}
+
+func TestStoredConfigurationAcceptsLegacyCaddy(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Network.HTTPSMode = contracts.HTTPSModeCaddy
+	if err := ValidateStoredConfiguration(cfg); err != nil {
+		t.Fatalf("stored legacy Caddy configuration rejected: %v", err)
+	}
+}
+
 func TestConfigurationRejectsLegacyPostgreSQL15(t *testing.T) {
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
 	cfg.Database.Version = "15"
@@ -38,6 +79,26 @@ func TestConfigurationRejectsLegacyPostgreSQL15(t *testing.T) {
 	var validation *ValidationError
 	if !errors.As(err, &validation) || validation.Fields["database.version"] == "" {
 		t.Fatalf("ValidateConfiguration() error = %v, want database.version validation error", err)
+	}
+}
+
+func TestConfigurationRejectsPhoneMFAWithoutProvider(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.MFA.PhoneEnrollEnabled = true
+	err := ValidateConfiguration(cfg)
+	var validation *ValidationError
+	if !errors.As(err, &validation) || validation.Fields["auth.mfa.phoneEnrollEnabled"] == "" {
+		t.Fatalf("ValidateConfiguration() error = %v, want auth.mfa.phoneEnrollEnabled validation error", err)
+	}
+}
+
+func TestConfigurationRejectsNewCaddyValue(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Network.HTTPSMode = contracts.HTTPSModeCaddy
+	err := ValidateConfiguration(cfg)
+	var validation *ValidationError
+	if !errors.As(err, &validation) || validation.Fields["network.httpsMode"] == "" {
+		t.Fatalf("ValidateConfiguration() error = %v, want network.httpsMode validation error", err)
 	}
 }
 

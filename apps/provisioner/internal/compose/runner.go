@@ -244,6 +244,27 @@ func (r *Runner) UpDatabase(ctx context.Context, project ProjectRef) error {
 	return nil
 }
 
+// StorageObjectCount reads the number of objects from the target project's
+// database using a fixed query and argument vector. Any unavailable or
+// malformed result fails closed so a storage location cannot be changed
+// without positively establishing that it is empty.
+func (r *Runner) StorageObjectCount(ctx context.Context, project ProjectRef) (int64, error) {
+	args := append(r.baseArgs(project), "exec", "-T", "db", "psql", "-v", "ON_ERROR_STOP=1", "-U", "supabase_admin", "-d", "postgres", "-At", "-c", "SELECT count(*) FROM storage.objects;")
+	output, err := r.executor.Run(ctx, "docker", args, nil)
+	if err != nil {
+		return 0, fmt.Errorf("inspect storage object count: %w", err)
+	}
+	value := strings.TrimSpace(string(output))
+	if value == "" || strings.ContainsAny(value, " \t\r\n") {
+		return 0, fmt.Errorf("inspect storage object count: malformed output")
+	}
+	count, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || count < 0 {
+		return 0, fmt.Errorf("inspect storage object count: malformed output")
+	}
+	return count, nil
+}
+
 // ResetDatabaseConfig removes only the Compose-managed configuration volume
 // before a revision-zero bootstrap. Postgres 15 and 17 store incompatible
 // generated configuration in this volume, so resetting only PGDATA is not

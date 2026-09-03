@@ -60,6 +60,30 @@ func (s *Store) SetOperationCompensation(ctx context.Context, operationID, phase
 	return err
 }
 
+func (s *Store) MarkAuthKeysRecoverable(ctx context.Context, projectID, operationID string, fence int64) error {
+	if err := validateConfigurationOwner(operationID, fence); err != nil {
+		return err
+	}
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var owner string
+		var currentFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&owner, &currentFence); err != nil {
+			return err
+		}
+		if owner != operationID || currentFence != fence {
+			return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase='AUTH_KEYS_RECOVERABLE', compensation_idempotency_key=? WHERE id=? AND project_id=? AND status=?`, operationID+":auth-keys", operationID, projectID, string(contracts.OperationRunning))
+		if err != nil {
+			return err
+		}
+		if n, _ := result.RowsAffected(); n != 1 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
 func (s *Store) GetOperationCompensation(ctx context.Context, operationID string) (OperationCompensation, error) {
 	var state OperationCompensation
 	err := s.db.QueryRowContext(ctx, `SELECT compensation_phase,compensation_idempotency_key FROM operations WHERE id=?`, operationID).Scan(&state.Phase, &state.Key)
@@ -333,7 +357,24 @@ func (s *Store) AcquireConfigurationLeaseForOperation(ctx context.Context, proje
 		}
 		count, _ := res.RowsAffected()
 		if count != 1 {
-			return ErrConfigurationBusy
+			var operationKind string
+			if err := tx.QueryRowContext(ctx, `SELECT operation_kind FROM operation_configurations WHERE operation_id=? AND project_id=?`, operationID, projectID).Scan(&operationKind); err != nil || (operationKind != "MIGRATE_AUTH_KEYS" && operationKind != "ROTATE_API_KEYS" && operationKind != "ROTATE_SIGNING_KEYS") {
+				return ErrConfigurationBusy
+			}
+			var currentOwner string
+			if err := tx.QueryRowContext(ctx, `SELECT owner FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&currentOwner); err != nil || currentOwner != owner {
+				return ErrConfigurationBusy
+			}
+			var phase string
+			if err := tx.QueryRowContext(ctx, `SELECT compensation_phase FROM operations WHERE id=? AND project_id=? AND status=?`, owner, projectID, string(contracts.OperationRunning)).Scan(&phase); err != nil || phase != "AUTH_KEYS_RECOVERABLE" {
+				return ErrConfigurationBusy
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE project_configuration_leases SET fence=fence+1, acquired_at=?, expires_at=? WHERE project_id=? AND owner=?`, formatTime(now), formatTime(now.Add(ttl)), projectID, owner); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase='AUTH_KEYS_RECOVERY_CLAIMED' WHERE id=? AND project_id=? AND status=? AND compensation_phase='AUTH_KEYS_RECOVERABLE'`, owner, projectID, string(contracts.OperationRunning)); err != nil {
+				return err
+			}
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT fence FROM project_configuration_leases WHERE project_id=? AND owner=?`, projectID, owner).Scan(&lease.Fence); err != nil {
 			return err
@@ -831,6 +872,56 @@ func (s *Store) MarkConfigurationGoodOwned(ctx context.Context, projectID string
 			return err
 		}
 		if err := updateCanonicalProjectionTx(ctx, tx, projectID, cfg, time.Now()); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=? AND revision=?`, projectID, revision); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE operations SET compensation_phase=? WHERE id=?`, phase, owner); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// PublishSecretsAndMarkConfigurationGoodOwned commits auth-key ciphertext and
+// the fenced configuration publication in one transaction.
+func (s *Store) PublishSecretsAndMarkConfigurationGoodOwned(ctx context.Context, projectID string, revision int64, owner string, fence int64, phase string, values map[string]secrets.Envelope, now time.Time) error {
+	if revision <= 0 {
+		return ErrStaleConfiguration
+	}
+	if err := validateConfigurationOwner(owner, fence); err != nil {
+		return err
+	}
+	return s.InTx(ctx, func(tx *sql.Tx) error {
+		var current int64
+		if err := tx.QueryRowContext(ctx, `SELECT config_revision FROM projects WHERE id=?`, projectID).Scan(&current); err != nil {
+			return err
+		}
+		if current != revision {
+			return fmt.Errorf("%w: expected current revision %d, got %d", ErrStaleConfiguration, current, revision)
+		}
+		var leaseOwner string
+		var leaseFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT owner,fence FROM project_configuration_leases WHERE project_id=?`, projectID).Scan(&leaseOwner, &leaseFence); err != nil {
+			return err
+		}
+		if leaseOwner != owner || leaseFence != fence {
+			return fmt.Errorf("%w: configuration lease is no longer owned", ErrStaleConfiguration)
+		}
+		var boundRevision, boundFence int64
+		if err := tx.QueryRowContext(ctx, `SELECT revision,fence FROM operation_configurations WHERE operation_id=? AND project_id=?`, owner, projectID).Scan(&boundRevision, &boundFence); err != nil {
+			return err
+		}
+		if boundRevision != revision || boundFence != fence {
+			return fmt.Errorf("%w: operation fence changed", ErrStaleConfiguration)
+		}
+		for kind, env := range values {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO project_secrets(project_id,kind,envelope_version,nonce,ciphertext,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id,kind) DO UPDATE SET envelope_version=excluded.envelope_version,nonce=excluded.nonce,ciphertext=excluded.ciphertext,updated_at=excluded.updated_at`, projectID, kind, env.Version, env.Nonce, env.Ciphertext, formatTime(now)); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE projects SET last_good_revision=?,updated_at=? WHERE id=?`, revision, formatTime(now), projectID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM configuration_reservations WHERE project_id=? AND revision=?`, projectID, revision); err != nil {

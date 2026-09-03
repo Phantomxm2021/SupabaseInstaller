@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"supabase-manager/internal/authkeys"
 	"supabase-manager/internal/contracts"
 	"supabase-manager/internal/templates"
 )
@@ -33,17 +34,36 @@ var phoneSecretEnv = map[string][]string{
 	"textlocal":   {"GOTRUE_SMS_TEXTLOCAL_API_KEY"},
 }
 
+const defaultStorageUploadFileSizeLimit int64 = 50 * 1024 * 1024
+
 func renderEnvironment(input Input) (string, string, error) {
 	cfg := input.Configuration
+	storageFileSizeLimit := cfg.Storage.UploadFileSizeLimit
+	if storageFileSizeLimit == 0 {
+		storageFileSizeLimit = defaultStorageUploadFileSizeLimit
+	}
 	if err := validateAuthConfiguration(cfg.Auth); err != nil {
 		return "", "", err
 	}
 	if err := requireRuntimeSecrets(input); err != nil {
 		return "", "", err
 	}
+	bundle := authkeys.Bundle{SupabasePublishableKey: input.Secrets.SupabasePublishableKey, SupabaseSecretKey: input.Secrets.SupabaseSecretKey, AnonKeyAsymmetric: input.Secrets.AnonKeyAsymmetric, ServiceRoleKeyAsymmetric: input.Secrets.ServiceRoleKeyAsymmetric, JWTKeys: input.Secrets.JWTKeys, JWTJWKS: input.Secrets.JWTJWKS}
+	keyCount := 0
+	for _, value := range []string{bundle.SupabasePublishableKey, bundle.SupabaseSecretKey, bundle.AnonKeyAsymmetric, bundle.ServiceRoleKeyAsymmetric, bundle.JWTKeys, bundle.JWTJWKS} {
+		if value != "" {
+			keyCount++
+		}
+	}
+	if keyCount != 0 && (keyCount != 6 || bundle.Validate(input.Secrets.JWTSecret) != nil) {
+		return "", "", fmt.Errorf("invalid asymmetric auth key bundle")
+	}
 	domain := cfg.General.Domain
 	values := map[string]string{
 		"ANON_KEY": input.Secrets.AnonKey, "API_EXTERNAL_URL": "https://" + domain + "/auth/v1",
+		"SUPABASE_PUBLISHABLE_KEY": input.Secrets.SupabasePublishableKey, "SUPABASE_SECRET_KEY": input.Secrets.SupabaseSecretKey,
+		"ANON_KEY_ASYMMETRIC": input.Secrets.AnonKeyAsymmetric, "SERVICE_ROLE_KEY_ASYMMETRIC": input.Secrets.ServiceRoleKeyAsymmetric,
+		"JWT_KEYS": input.Secrets.JWTKeys, "JWT_JWKS": input.Secrets.JWTJWKS,
 		"DASHBOARD_USERNAME":     firstNonempty(strings.TrimSpace(cfg.General.StudioUsername), "supabase"),
 		"STUDIO_DEFAULT_PROJECT": firstNonempty(input.ProjectName, "Default Server"),
 		"DASHBOARD_PASSWORD":     input.Secrets.DashboardPassword, "JWT_SECRET": input.Secrets.JWTSecret,
@@ -96,11 +116,15 @@ func renderEnvironment(input Input) (string, string, error) {
 		"LOGFLARE_PUBLIC_ACCESS_TOKEN": firstNonempty(input.RuntimeSecrets[SecretLogsPublic], input.Secrets.LogflarePublicAccessToken), "LOGFLARE_PRIVATE_ACCESS_TOKEN": firstNonempty(input.RuntimeSecrets[SecretLogsPrivate], input.Secrets.LogflarePrivateAccessToken),
 		"S3_PROTOCOL_ACCESS_KEY_ID": firstNonempty(input.RuntimeSecrets[SecretS3Access], input.Secrets.S3ProtocolAccessKeyID), "S3_PROTOCOL_ACCESS_KEY_SECRET": firstNonempty(input.RuntimeSecrets[SecretS3Secret], input.Secrets.S3ProtocolAccessKeySecret),
 		"STORAGE_LOCAL_PATH":            "/var/lib/storage",
+		"STORAGE_FILE_SIZE_LIMIT":       strconv.FormatInt(storageFileSizeLimit, 10),
 		"STORAGE_IMAGE_TRANSFORMATIONS": boolString(cfg.Services.Imgproxy),
 		// Values present in the upstream example are deliberately overridden so
 		// disabled optional consumers never inherit example credentials.
 		"MINIO_ROOT_USER": "", "MINIO_ROOT_PASSWORD": "",
 		"STORAGE_TENANT_ID": firstNonempty(input.ProjectID, input.Slug), "PROXY_DOMAIN": domain,
+	}
+	if cfg.Storage.Backend == contracts.StorageBackendR2 {
+		values["GLOBAL_S3_FORCE_PATH_STYLE"] = "true"
 	}
 	if cfg.Storage.Backend == contracts.StorageBackendR2 && cfg.Storage.Endpoint == "" && cfg.Storage.AccountID != "" {
 		values["GLOBAL_S3_ENDPOINT"] = "https://" + cfg.Storage.AccountID + ".r2.cloudflarestorage.com"
@@ -530,6 +554,10 @@ func injectServiceConfiguration(services map[string]any, input Input) error {
 		env["S3_PROTOCOL_ACCESS_KEY_ID"] = "${S3_PROTOCOL_ACCESS_KEY_ID}"
 		env["S3_PROTOCOL_ACCESS_KEY_SECRET"] = "${S3_PROTOCOL_ACCESS_KEY_SECRET}"
 		env["S3_PROTOCOL_ENABLED"] = "${S3_PROTOCOL_ENABLED}"
+		env["FILE_SIZE_LIMIT"] = "${STORAGE_FILE_SIZE_LIMIT}"
+		if input.Configuration.Storage.Backend == contracts.StorageBackendR2 {
+			env["TUS_ALLOW_S3_TAGS"] = "false"
+		}
 		env["ENABLE_IMAGE_TRANSFORMATION"] = "${STORAGE_IMAGE_TRANSFORMATIONS}"
 		if input.Configuration.Services.Imgproxy {
 			env["IMGPROXY_URL"] = "http://imgproxy:5001"
