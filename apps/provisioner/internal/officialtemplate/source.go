@@ -25,9 +25,12 @@ import (
 )
 
 const (
-	defaultRepositoryAPI    = "https://api.github.com/repos/supabase/supabase"
-	defaultArchiveBase      = "https://codeload.github.com/supabase/supabase/tar.gz/refs/tags/"
-	maxArchiveBytes         = 32 << 20
+	defaultRepositoryAPI = "https://api.github.com/repos/supabase/supabase"
+	defaultArchiveBase   = "https://codeload.github.com/supabase/supabase/tar.gz/refs/tags/"
+	// Codeload archives contain the complete Supabase repository, while only
+	// docker/ is extracted below. Keep a bounded download limit, but leave
+	// enough headroom for the official repository as it grows.
+	maxArchiveBytes         = 128 << 20
 	maxExtractedBytes       = 64 << 20
 	maxTemplateFiles        = 500
 	templateDownloadTimeout = 5 * time.Minute

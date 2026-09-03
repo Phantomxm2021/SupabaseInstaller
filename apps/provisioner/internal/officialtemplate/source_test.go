@@ -63,6 +63,35 @@ func TestResolveDownloadsCachesAndReloadsOfficialRelease(t *testing.T) {
 	}
 }
 
+func TestResolveAcceptsAnOfficialArchiveLargerThanThirtyTwoMiB(t *testing.T) {
+	archive := testArchiveBytes(t, map[string][]byte{
+		"supabase-self-hosted-v9.8.7/docker/docker-compose.yml":       []byte("services: {}\n"),
+		"supabase-self-hosted-v9.8.7/docker/.env.example":             []byte("A=B\n"),
+		"supabase-self-hosted-v9.8.7/docker/volumes/db/_supabase.sql": []byte("select 1;\n"),
+		"supabase-self-hosted-v9.8.7/docs/release-notes.bin":          deterministicBytes(33 << 20),
+	})
+	if len(archive) <= 32<<20 {
+		t.Fatalf("archive size = %d, want more than 32 MiB", len(archive))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(archive)
+	}))
+	defer server.Close()
+
+	source, err := New(t.TempDir(), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.archiveBase = server.URL + "/"
+	snapshot, err := source.Resolve(context.Background(), "self-hosted/v9.8.7", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(snapshot.Compose()); got != "services: {}\n" {
+		t.Fatalf("compose = %q", got)
+	}
+}
+
 func TestResolveLatestUsesGreatestOfficialSelfHostedTag(t *testing.T) {
 	archive := testArchive(t, map[string]string{
 		"root/docker/docker-compose.yml":       "services: {}\n",
@@ -96,6 +125,15 @@ func TestResolveLatestUsesGreatestOfficialSelfHostedTag(t *testing.T) {
 
 func testArchive(t *testing.T, files map[string]string) []byte {
 	t.Helper()
+	data := make(map[string][]byte, len(files))
+	for name, content := range files {
+		data[name] = []byte(content)
+	}
+	return testArchiveBytes(t, data)
+}
+
+func testArchiveBytes(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
 	var output bytes.Buffer
 	gz := gzip.NewWriter(&output)
 	writer := tar.NewWriter(gz)
@@ -103,7 +141,7 @@ func testArchive(t *testing.T, files map[string]string) []byte {
 		if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := writer.Write([]byte(content)); err != nil {
+		if _, err := writer.Write(content); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -114,4 +152,16 @@ func testArchive(t *testing.T, files map[string]string) []byte {
 		t.Fatal(err)
 	}
 	return output.Bytes()
+}
+
+func deterministicBytes(size int) []byte {
+	data := make([]byte, size)
+	state := uint32(0x9e3779b9)
+	for index := range data {
+		state ^= state << 13
+		state ^= state >> 17
+		state ^= state << 5
+		data[index] = byte(state)
+	}
+	return data
 }
