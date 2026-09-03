@@ -330,6 +330,33 @@ func TestInsertProgressesWhileMaintenanceIsBetweenBoundedSQLiteSteps(t *testing.
 	}
 }
 
+func TestMaintainWaitingForPolicyTokenHonorsContext(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	store := testStore(t, Options{SizeBytes: func(string) (int64, error) { return 0, nil }})
+	store.sizeBytes = func(string) (int64, error) {
+		close(entered)
+		<-release
+		return 0, nil
+	}
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- store.Maintain(context.Background()) }()
+	<-entered
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if err := store.Maintain(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waiting Maintain error=%v", err)
+	}
+	if time.Since(started) > 250*time.Millisecond {
+		t.Fatal("waiting Maintain ignored context deadline")
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOpenConfiguresIncrementalAutoVacuumAndReopenPreservesIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "function-logs.db")
 	store, err := Open(path, Options{})

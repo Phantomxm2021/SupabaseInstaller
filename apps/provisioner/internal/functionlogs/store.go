@@ -59,7 +59,7 @@ type Store struct {
 	closeErr            error
 	closeCallMu         sync.Mutex
 	lifecycleMu         sync.RWMutex
-	maintenanceMu       sync.Mutex
+	maintenanceToken    chan struct{}
 	closing             bool
 	snapshotMu          sync.RWMutex
 	snapshotHealthy     bool
@@ -105,6 +105,8 @@ func Open(path string, options Options) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	store := &Store{db: db, path: path, now: options.Now, sizeBytes: options.SizeBytes, retention: options.Retention, maxBytes: options.MaxBytes, redactor: options.Redactor}
+	store.maintenanceToken = make(chan struct{}, 1)
+	store.maintenanceToken <- struct{}{}
 	if store.sizeBytes == nil {
 		store.sizeBytes = store.databaseUsageBytes
 	}
@@ -627,8 +629,12 @@ func (s *Store) Query(ctx context.Context, projectID, functionName string, query
 }
 
 func (s *Store) Maintain(ctx context.Context) error {
-	s.maintenanceMu.Lock()
-	defer s.maintenanceMu.Unlock()
+	select {
+	case <-s.maintenanceToken:
+		defer func() { s.maintenanceToken <- struct{}{} }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	if s.maintenanceEntered != nil {
 		s.maintenanceEntered()
 	}
