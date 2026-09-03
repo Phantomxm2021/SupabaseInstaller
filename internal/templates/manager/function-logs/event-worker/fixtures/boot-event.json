@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-09-03T20:51:33.319Z",
+  "event_type": "Boot",
+  "event": {
+    "boot_time": 2563
+  },
+  "metadata": {
+    "service_path": "./examples/contract-log",
+    "execution_id": "e8a9d201-c618-4051-be3c-721a97fee216",
+    "otel_attributes": {
+      "edge_runtime.worker.kind": "user"
+    }
+  }
+}

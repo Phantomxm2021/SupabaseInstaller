@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-09-03T20:51:33.426Z",
+  "event_type": "UncaughtException",
+  "event": {
+    "exception": "event loop error: Error: FUNCTION_THROW_FIXTURE_MESSAGE\n    at file:///var/tmp/sb-compile-edge-runtime/app/examples/contract-throw/index.ts:3:11\n    at callback (ext:deno_web/02_timers.js:58:7)\n    at eventLoopTick (ext:core/01_core.js:210:13)",
+    "cpu_time_used": 1
+  },
+  "metadata": {
+    "service_path": "./examples/contract-throw",
+    "execution_id": "f7cb1a48-200e-4586-9ec2-5baa4250af84",
+    "otel_attributes": {
+      "edge_runtime.worker.kind": "user"
+    }
+  }
+}
