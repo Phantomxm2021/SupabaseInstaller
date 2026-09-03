@@ -251,6 +251,169 @@ func TestMaintainErrorsWhenStillOverCapacityWithNoRows(t *testing.T) {
 	}
 }
 
+func TestConcurrentMaintainSerializesCapacityPolicy(t *testing.T) {
+	store := testStore(t, Options{SnapshotInterval: time.Hour})
+	now := time.Now().UTC()
+	records := make([]contracts.FunctionLogRecord, 512)
+	for i := range records {
+		id := fmt.Sprintf("capacity-%03d", i)
+		records[i] = record(id, "p", "fn", now.Add(time.Duration(i)*time.Nanosecond), contracts.FunctionLogLevelInfo, id)
+	}
+	if err := store.InsertBatch(context.Background(), records); err != nil {
+		t.Fatal(err)
+	}
+	store.maxBytes = 256
+	store.sizeBytes = func(string) (int64, error) {
+		var count int64
+		err := store.db.QueryRow(`SELECT count(*) FROM function_logs`).Scan(&count)
+		return count, err
+	}
+	var active, maximum atomic.Int32
+	store.maintenanceEntered = func() {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			old := maximum.Load()
+			if current <= old || maximum.CompareAndSwap(old, current) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() { <-start; errs <- store.Maintain(context.Background()) }()
+	}
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var remaining int
+	if err := store.db.QueryRow(`SELECT count(*) FROM function_logs`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if maximum.Load() != 1 || remaining != 256 {
+		t.Fatalf("maximum concurrent maintenance=%d remaining=%d", maximum.Load(), remaining)
+	}
+}
+
+func TestInsertProgressesWhileMaintenanceIsBetweenBoundedSQLiteSteps(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	store := testStore(t, Options{SizeBytes: func(string) (int64, error) { return 0, nil }})
+	store.sizeBytes = func(string) (int64, error) {
+		close(entered)
+		<-release
+		return 0, nil
+	}
+	maintainDone := make(chan error, 1)
+	go func() { maintainDone <- store.Maintain(context.Background()) }()
+	<-entered
+	insertDone := make(chan error, 1)
+	go func() {
+		insertDone <- store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("during-maintenance", "p", "fn", time.Now().UTC(), contracts.FunctionLogLevelInfo, "ok")})
+	}()
+	select {
+	case err := <-insertDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("insert did not progress between bounded maintenance steps")
+	}
+	close(release)
+	if err := <-maintainDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenConfiguresIncrementalAutoVacuumAndReopenPreservesIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "function-logs.db")
+	store, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		store, err = Open(path, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mode int
+		if err := store.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+			t.Fatal(err)
+		}
+		if mode != 2 {
+			t.Fatalf("auto_vacuum=%d", mode)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestOpenMigratesLegacyAutoVacuumModeOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "function-logs.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE legacy_marker(value TEXT); INSERT INTO legacy_marker VALUES ('preserved')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var mode int
+	if err := store.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	var marker string
+	if err := store.db.QueryRow(`SELECT value FROM legacy_marker`).Scan(&marker); err != nil {
+		t.Fatal(err)
+	}
+	if mode != 2 || marker != "preserved" {
+		t.Fatalf("mode=%d marker=%q", mode, marker)
+	}
+}
+
+func TestReaderCloseIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	writer, err := Open(filepath.Join(dir, "function-logs.db"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 8)
+	for range 8 {
+		go func() { errs <- reader.Close() }()
+	}
+	for range 8 {
+		if err := <-errs; err != nil {
+			t.Fatalf("repeated concurrent close: %v", err)
+		}
+	}
+}
+
 func TestStorePersistsAcrossReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "logs.db")

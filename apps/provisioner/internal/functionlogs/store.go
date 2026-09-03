@@ -24,6 +24,8 @@ const (
 	defaultRetention        = 7 * 24 * time.Hour
 	defaultMaxBytes         = int64(512 * 1024 * 1024)
 	maintenanceBatch        = 10_000
+	capacityDeleteBatch     = 256
+	incrementalVacuumPages  = 256
 	defaultSnapshotInterval = 5 * time.Second
 )
 
@@ -57,6 +59,7 @@ type Store struct {
 	closeErr            error
 	closeCallMu         sync.Mutex
 	lifecycleMu         sync.RWMutex
+	maintenanceMu       sync.Mutex
 	closing             bool
 	snapshotMu          sync.RWMutex
 	snapshotHealthy     bool
@@ -66,6 +69,7 @@ type Store struct {
 	hooksMu             sync.RWMutex
 	snapshotHooks       snapshotPublishHooks
 	beforeInsertCommit  func()
+	maintenanceEntered  func()
 }
 
 type snapshotCloseRequest struct {
@@ -82,21 +86,6 @@ type snapshotPublishHooks struct {
 func Open(path string, options Options) (*Store, error) {
 	if options.Now == nil {
 		options.Now = time.Now
-	}
-	if options.SizeBytes == nil {
-		options.SizeBytes = func(path string) (int64, error) {
-			info, err := os.Stat(path)
-			if err != nil {
-				return 0, err
-			}
-			size := info.Size()
-			if wal, walErr := os.Stat(path + "-wal"); walErr == nil {
-				size += wal.Size()
-			} else if !errors.Is(walErr, os.ErrNotExist) {
-				return 0, walErr
-			}
-			return size, nil
-		}
 	}
 	if options.Retention <= 0 {
 		options.Retention = defaultRetention
@@ -116,8 +105,15 @@ func Open(path string, options Options) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	store := &Store{db: db, path: path, now: options.Now, sizeBytes: options.SizeBytes, retention: options.Retention, maxBytes: options.MaxBytes, redactor: options.Redactor}
+	if store.sizeBytes == nil {
+		store.sizeBytes = store.databaseUsageBytes
+	}
 	store.snapshotPath = filepath.Join(filepath.Dir(path), "function-logs.read.db")
 	store.snapshotInterval = options.SnapshotInterval
+	if err = configureIncrementalAutoVacuum(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize function log store: %w", err)
+	}
 	if _, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS function_logs (
 		event_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, function_name TEXT NOT NULL,
 		timestamp_ns INTEGER NOT NULL, ingested_at_ns INTEGER NOT NULL, execution_id TEXT NOT NULL,
@@ -154,6 +150,36 @@ func Open(path string, options Options) (*Store, error) {
 	store.publisherDone = make(chan struct{})
 	go store.runSnapshotPublisher()
 	return store, nil
+}
+
+func configureIncrementalAutoVacuum(db *sql.DB) error {
+	var mode, tables int
+	if err := db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		return err
+	}
+	if mode == 2 {
+		return nil
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&tables); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+		return err
+	}
+	if tables > 0 {
+		// Existing databases need this one-time format migration. Subsequent
+		// opens observe mode 2 and never perform a full rewrite.
+		if _, err := db.Exec(`VACUUM`); err != nil {
+			return fmt.Errorf("migrate function log store for incremental maintenance: %w", err)
+		}
+	}
+	if err := db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		return err
+	}
+	if mode != 2 {
+		return errors.New("function log store requires incremental auto-vacuum migration")
+	}
+	return nil
 }
 
 func (s *Store) markSnapshotDirty() {
@@ -402,8 +428,10 @@ func copyOpenFile(source *os.File, destination string) error {
 
 func (s *Store) Close() error {
 	if s.readerFile != nil {
-		dbErr := s.db.Close()
-		return errors.Join(dbErr, s.readerFile.Close(), os.RemoveAll(s.readerTemp))
+		s.dbCloseOnce.Do(func() {
+			s.closeErr = errors.Join(s.db.Close(), s.readerFile.Close(), os.RemoveAll(s.readerTemp))
+		})
+		return s.closeErr
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -599,6 +627,11 @@ func (s *Store) Query(ctx context.Context, projectID, functionName string, query
 }
 
 func (s *Store) Maintain(ctx context.Context) error {
+	s.maintenanceMu.Lock()
+	defer s.maintenanceMu.Unlock()
+	if s.maintenanceEntered != nil {
+		s.maintenanceEntered()
+	}
 	if err := s.beginOperation(); err != nil {
 		return err
 	}
@@ -621,6 +654,12 @@ func (s *Store) Maintain(ctx context.Context) error {
 		}
 	}
 	for {
+		if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(PASSIVE)`); err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`PRAGMA incremental_vacuum(%d)`, incrementalVacuumPages)); err != nil {
+			return err
+		}
 		size, err := s.sizeBytes(s.path)
 		if err != nil {
 			return err
@@ -628,7 +667,7 @@ func (s *Store) Maintain(ctx context.Context) error {
 		if size <= s.maxBytes {
 			return nil
 		}
-		deleted, err := s.deleteBatch(ctx, "1=1")
+		deleted, err := s.deleteBatchLimit(ctx, "1=1", capacityDeleteBatch)
 		if err != nil {
 			return err
 		}
@@ -636,16 +675,30 @@ func (s *Store) Maintain(ctx context.Context) error {
 			return fmt.Errorf("function log store remains over capacity: %d bytes exceeds %d bytes", size, s.maxBytes)
 		}
 		mutated = true
-		if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-			return err
-		}
-		if _, err := s.db.ExecContext(ctx, `VACUUM`); err != nil {
-			return err
-		}
 	}
 }
 
+// databaseUsageBytes measures live database pages rather than physical file
+// length so reusable freelist pages do not cause unnecessary log deletion.
+func (s *Store) databaseUsageBytes(string) (int64, error) {
+	var pageSize, pageCount, freeList int64
+	if err := s.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+		return 0, err
+	}
+	if err := s.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+		return 0, err
+	}
+	if err := s.db.QueryRow(`PRAGMA freelist_count`).Scan(&freeList); err != nil {
+		return 0, err
+	}
+	return (pageCount - freeList) * pageSize, nil
+}
+
 func (s *Store) deleteBatch(ctx context.Context, predicate string, args ...any) (count int64, resultErr error) {
+	return s.deleteBatchLimit(ctx, predicate, maintenanceBatch, args...)
+}
+
+func (s *Store) deleteBatchLimit(ctx context.Context, predicate string, limit int, args ...any) (count int64, resultErr error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -655,7 +708,7 @@ func (s *Store) deleteBatch(ctx context.Context, predicate string, args ...any) 
 			_ = tx.Rollback()
 		}
 	}()
-	statement := fmt.Sprintf(`DELETE FROM function_logs WHERE rowid IN (SELECT rowid FROM function_logs WHERE %s ORDER BY timestamp_ns ASC,event_id ASC LIMIT %d)`, predicate, maintenanceBatch)
+	statement := fmt.Sprintf(`DELETE FROM function_logs WHERE rowid IN (SELECT rowid FROM function_logs WHERE %s ORDER BY timestamp_ns ASC,event_id ASC LIMIT %d)`, predicate, limit)
 	result, err := tx.ExecContext(ctx, statement, args...)
 	if err != nil {
 		return 0, err
