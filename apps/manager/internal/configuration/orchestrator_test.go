@@ -479,6 +479,28 @@ func TestRunPersistsConcreteRuntimeVerificationMismatch(t *testing.T) {
 	}
 }
 
+func TestRunOfficialRuntimeSyncForcesAFullImageRefresh(t *testing.T) {
+	orchestrator, _, _, currentProject, snapshot, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
+	provisioner := &captureReconcileProvisioner{}
+	orchestrator.provisioner = provisioner
+
+	if _, err := orchestrator.RunOfficialRuntimeSync(context.Background(), currentProject, op, snapshot); err != nil {
+		t.Fatalf("RunOfficialRuntimeSync() error = %v", err)
+	}
+	if !provisioner.request.ForceRecreate || !provisioner.request.PullImages {
+		t.Fatalf("runtime sync request = %#v, want force recreate and image pull", provisioner.request)
+	}
+}
+
+type captureReconcileProvisioner struct {
+	request contracts.ReconcileProjectRequest
+}
+
+func (p *captureReconcileProvisioner) Reconcile(_ context.Context, request contracts.ReconcileProjectRequest) (contracts.ReconcileProjectResponse, error) {
+	p.request = request
+	return contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, EnabledServices: enabledServices(request.Configuration)}, nil
+}
+
 func TestRunPersistsConcreteProvisionerErrorWithoutRevisionProtocol(t *testing.T) {
 	orchestrator, _, operations, currentProject, snapshot, _, op := newRecoveryFixture(t, "UPDATE_CONFIG")
 	orchestrator.provisioner = staticErrorProvisioner{err: contracts.ErrStaleConfigRevision}

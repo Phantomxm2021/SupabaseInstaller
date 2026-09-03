@@ -315,6 +315,13 @@ func (r *Runner) Recreate(ctx context.Context, project ProjectRef, services ...s
 	return r.run(ctx, project, args...)
 }
 
+// RecreateRuntime re-applies the complete rendered Compose project, including
+// helper services that do not map to a user-facing configuration toggle.
+// It deliberately has no volume-removal flag.
+func (r *Runner) RecreateRuntime(ctx context.Context, project ProjectRef) error {
+	return r.run(ctx, project, "up", "-d", "--force-recreate", "--remove-orphans")
+}
+
 // Validate validates a candidate Compose model without changing containers.
 func (r *Runner) Validate(ctx context.Context, project ProjectRef) error {
 	return r.run(ctx, project, "config", "--quiet")

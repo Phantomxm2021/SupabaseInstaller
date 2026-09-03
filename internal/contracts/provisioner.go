@@ -53,6 +53,11 @@ type ReconcileProjectRequest struct {
 	Secrets          ProjectSecrets       `json:"secrets"`
 	RuntimeSecrets   map[string]string    `json:"runtimeSecrets,omitempty"`
 	Fence            int64                `json:"-"`
+	// ForceRecreate and PullImages are used only by the explicit official
+	// runtime sync. A normal configuration update continues to recreate only
+	// the services affected by its changed fields.
+	ForceRecreate bool `json:"forceRecreate,omitempty"`
+	PullImages    bool `json:"pullImages,omitempty"`
 }
 
 type ReconcileProjectResponse struct {

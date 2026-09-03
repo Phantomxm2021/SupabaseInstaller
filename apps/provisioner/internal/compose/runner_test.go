@@ -322,6 +322,13 @@ func TestReconcileRunnerUsesFixedComposeArgumentVectors(t *testing.T) {
 	if !reflect.DeepEqual(executor.args, want) {
 		t.Fatalf("Recreate args = %#v, want %#v", executor.args, want)
 	}
+	if err := runner.RecreateRuntime(context.Background(), project); err != nil {
+		t.Fatal(err)
+	}
+	want = []string{"compose", "--file", "/projects/bee/docker-compose.yml", "--project-directory", "/projects/bee", "--project-name", "supabase-manager-bee", "up", "-d", "--force-recreate", "--remove-orphans"}
+	if !reflect.DeepEqual(executor.args, want) {
+		t.Fatalf("RecreateRuntime args = %#v, want %#v", executor.args, want)
+	}
 	if err := runner.RemoveStopped(context.Background(), project, "realtime"); err != nil {
 		t.Fatal(err)
 	}

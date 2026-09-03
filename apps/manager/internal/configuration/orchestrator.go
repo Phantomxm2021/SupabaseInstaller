@@ -861,6 +861,18 @@ func (o *Orchestrator) failRejectedRuntimeRevision(ctx context.Context, queued o
 // implementation remains below only as an isolated compatibility helper for
 // password-rotation recovery; normal Dashboard updates never enter it.
 func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project, queued operation.Operation, _ store.ConfigurationSnapshot) (operation.Operation, error) {
+	return o.run(ctx, currentProject, queued, false)
+}
+
+// RunOfficialRuntimeSync re-applies the complete server configuration through
+// the current official template. It explicitly pulls the template's pinned
+// images and recreates every enabled service; ordinary settings changes stay
+// narrow and do neither.
+func (o *Orchestrator) RunOfficialRuntimeSync(ctx context.Context, currentProject contracts.Project, queued operation.Operation, _ store.ConfigurationSnapshot) (operation.Operation, error) {
+	return o.run(ctx, currentProject, queued, true)
+}
+
+func (o *Orchestrator) run(ctx context.Context, currentProject contracts.Project, queued operation.Operation, officialRuntimeSync bool) (operation.Operation, error) {
 	if o.configs == nil {
 		return queued, errors.New("configuration orchestrator is unavailable")
 	}
@@ -915,6 +927,7 @@ func (o *Orchestrator) Run(ctx context.Context, currentProject contracts.Project
 		OperationID: queued.ID, IdempotencyKey: queued.ID + ":reconcile", ProjectID: currentProject.ID,
 		ProjectName: currentProject.Name, Slug: currentProject.Slug, APIPort: snapshot.Configuration.Network.APIPort,
 		Configuration: snapshot.Configuration, Secrets: secrets, RuntimeSecrets: runtimeSecrets,
+		ForceRecreate: officialRuntimeSync, PullImages: officialRuntimeSync,
 	}
 	if request.APIPort == 0 {
 		request.APIPort, _ = o.store.ReservedPort(ctx, currentProject.ID, string(ports.KindAPI))

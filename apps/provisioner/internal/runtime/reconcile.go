@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -109,6 +110,14 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		if err != nil {
 			return fail(reconcileFailure(err, false))
 		}
+		if request.ForceRecreate && metadata.Revision > 0 && previousConfig.Services.Database && request.Configuration.Services.Database {
+			if previousRefErr != nil {
+				return fail(fmt.Errorf("resolve current runtime for PostgreSQL upgrade check: %w", previousRefErr))
+			}
+			if err := rejectPostgresMajorUpgrade(previousProject.ComposeFile, rendered.Compose); err != nil {
+				return fail(err)
+			}
+		}
 		candidateRef, restore, commit, err := backend.projectFS.StageRuntimeFilesWithRef(request.Slug, projectfs.RuntimeFiles{
 			Compose: []byte(rendered.Compose), Env: []byte(rendered.Env), FunctionsEnv: []byte(rendered.FunctionsEnv), MailerTemplates: rendered.MailerTemplates,
 		})
@@ -169,14 +178,20 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			rollbackServices := append(affectedServices(previousConfig, request.Configuration), disabled...)
 			rollbackServices = intersect(unique(rollbackServices), previousServices)
 			var recoveryErr error
-			if len(previousServices) > 0 && len(rollbackServices) > 0 {
+			if request.ForceRecreate && len(previousServices) > 0 {
+				if err := action(func(actionCtx context.Context) error {
+					return backend.runner.RecreateRuntime(actionCtx, previousProject)
+				}); err != nil {
+					recoveryErr = fmt.Errorf("recreate previous runtime during rollback: %w", err)
+				}
+			} else if len(previousServices) > 0 && len(rollbackServices) > 0 {
 				if err := action(func(actionCtx context.Context) error {
 					return backend.runner.Recreate(actionCtx, previousProject, rollbackServices...)
 				}); err != nil {
 					recoveryErr = fmt.Errorf("recreate previous services during rollback: %w", err)
 				}
 			}
-			if recoveryErr == nil && len(rollbackServices) > 0 {
+			if recoveryErr == nil && (request.ForceRecreate && len(previousServices) > 0 || len(rollbackServices) > 0) {
 				if err := action(func(actionCtx context.Context) error {
 					return backend.waitHealthy(actionCtx, request.Slug, rollbackServices)
 				}); err != nil {
@@ -210,6 +225,12 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "validate_compose")
 		if err := backend.runner.Validate(ctx, candidateProject); err != nil {
 			return fail(rollback(err))
+		}
+		if request.PullImages {
+			slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "pull_images")
+			if err := backend.runner.Pull(ctx, candidateProject); err != nil {
+				return fail(rollback(fmt.Errorf("pull official runtime images: %w", err)))
+			}
 		}
 		if err := writeCandidateCompose(candidateRef.ComposeFile, []byte(rendered.Compose)); err != nil {
 			return fail(rollback(err))
@@ -249,9 +270,13 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				return fail(rollback(err))
 			}
 		} else {
-			affected := intersect(affectedServices(previousConfig, request.Configuration), newServices)
+			affected := servicesToRecreate(previousConfig, request.Configuration, newServices, request.ForceRecreate)
 			slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "recreate_services", "services", affected)
-			if err := backend.runner.Recreate(ctx, currentProject, affected...); err != nil {
+			if request.ForceRecreate {
+				if err := backend.runner.RecreateRuntime(ctx, currentProject); err != nil {
+					return fail(rollback(err))
+				}
+			} else if err := backend.runner.Recreate(ctx, currentProject, affected...); err != nil {
 				return fail(rollback(err))
 			}
 			if err := backend.runner.UpSelected(ctx, currentProject, added...); err != nil {
@@ -285,7 +310,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			}
 			proxyChanged = true
 		}
-		result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: applyRevision, EnabledServices: newServices, RecreatedServices: intersect(affectedServices(previousConfig, request.Configuration), newServices)}
+		result = contracts.ReconcileProjectResponse{OperationID: request.OperationID, ProjectID: request.ProjectID, Revision: applyRevision, EnabledServices: newServices, RecreatedServices: servicesToRecreate(previousConfig, request.Configuration, newServices, request.ForceRecreate)}
 		encoded, _ := json.Marshal(result)
 		metadata.ProjectID, metadata.ProjectName, metadata.Revision = request.ProjectID, request.ProjectName, applyRevision
 		if request.Fence > 0 {
@@ -347,6 +372,38 @@ func routeForProxy(slug string, configuration contracts.ProjectConfiguration, se
 
 func storageLocationChanged(before, after contracts.StorageConfig) bool {
 	return before.Backend != after.Backend || before.Bucket != after.Bucket || before.Region != after.Region || before.Endpoint != after.Endpoint || before.AccountID != after.AccountID || before.LocalPath != after.LocalPath
+}
+
+// rejectPostgresMajorUpgrade keeps a Compose refresh from mounting an existing
+// database directory with a different PostgreSQL major. Supabase documents
+// major migrations as a backup-and-migrate procedure, not a container
+// recreation, so the operation must stop before it pulls or changes Docker.
+func rejectPostgresMajorUpgrade(previousCompose, candidateCompose string) error {
+	previous, err := os.ReadFile(previousCompose)
+	if err != nil {
+		return fmt.Errorf("read current runtime for PostgreSQL upgrade check: %w", err)
+	}
+	previousMajor, previousOK := postgresMajor(string(previous))
+	candidateMajor, candidateOK := postgresMajor(candidateCompose)
+	if !previousOK || !candidateOK || previousMajor == candidateMajor {
+		return nil
+	}
+	return fmt.Errorf("manual PostgreSQL major upgrade required (%d → %d): back up this server and follow Supabase's PostgreSQL upgrade guide before syncing the official runtime", previousMajor, candidateMajor)
+}
+
+func postgresMajor(compose string) (int, bool) {
+	for _, line := range strings.Split(compose, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "image:") || !strings.Contains(line, "supabase/postgres:") {
+			continue
+		}
+		image := strings.TrimSpace(strings.TrimPrefix(line, "image:"))
+		tag := strings.TrimPrefix(image, "supabase/postgres:")
+		major, _, _ := strings.Cut(tag, ".")
+		value, err := strconv.Atoi(major)
+		return value, err == nil && value > 0
+	}
+	return 0, false
 }
 
 func validateRuntimeInput(path string) error {
@@ -671,6 +728,13 @@ func affectedServices(before, after contracts.ProjectConfiguration) []string {
 		}
 	}
 	return result
+}
+
+func servicesToRecreate(before, after contracts.ProjectConfiguration, enabled []string, force bool) []string {
+	if force {
+		return append([]string(nil), enabled...)
+	}
+	return intersect(affectedServices(before, after), enabled)
 }
 
 func enabledServices(config contracts.ProjectConfiguration) []string {

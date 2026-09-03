@@ -27,11 +27,39 @@ it('uses the Supabase-style overview hierarchy while keeping local project data'
   expect(hero).toBeVisible()
   expect(within(hero).getByText('Status')).toBeVisible()
   expect(within(hero).getByText('Compute')).toBeVisible()
+  expect(within(hero).getByRole('button', { name: 'Sync official runtime' })).toBeVisible()
   expect(within(hero).queryByText('Version')).not.toBeInTheDocument()
   expect(within(hero).queryByText('self-hosted/v0.8.0')).not.toBeInTheDocument()
   expect(within(hero).getByText('Primary Database')).toBeVisible()
   expect(within(hero).getByText('6 active services')).toBeVisible()
   expect(screen.getByTestId('overview-services-card')).toBeVisible()
+})
+
+it('requires confirmation before it queues an official runtime sync', async () => {
+  let mutationPath = ''
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input)
+    if (init?.method === 'POST') {
+      mutationPath = path
+      return new Response(JSON.stringify({ projectId: 'bee', operationId: 'runtime-sync-1' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+    }
+    if (path === '/api/operations/runtime-sync-1') return new Response(JSON.stringify({ id: 'runtime-sync-1', projectId: 'bee', type: 'UPDATE_CONFIG', status: 'QUEUED', progress: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({
+      id: 'bee', name: 'Bee', slug: 'bee', domain: 'bee.example.com', siteUrl: 'https://example.com', status: 'RUNNING', health: 'HEALTHY', supabaseVersion: 'self-hosted/v0.8.0', preset: 'LIGHTWEIGHT',
+      services: { database: true, gateway: true, auth: true, rest: true, studio: true, postgresMeta: true },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }))
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/overview']}><Routes><Route path="/projects/:projectId/overview" element={<OverviewPage />} /></Routes></MemoryRouter></QueryClientProvider>)
+
+  await user.click(await screen.findByRole('button', { name: 'Sync official runtime' }))
+  expect(await screen.findByRole('heading', { name: 'Sync the official Supabase runtime?' })).toBeVisible()
+  expect(screen.getByText(/Database and Storage volumes are retained/)).toBeVisible()
+  expect(mutationPath).toBe('')
+
+  await user.click(screen.getByRole('button', { name: 'Sync runtime' }))
+  await waitFor(() => expect(mutationPath).toBe('/api/projects/bee/runtime/sync'))
+  expect(await screen.findByRole('heading', { name: 'Synchronizing Bee' })).toBeVisible()
 })
 
 it('starts a stopped server through the Actions menu', async () => {

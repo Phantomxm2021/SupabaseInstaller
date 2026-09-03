@@ -2071,6 +2071,25 @@ a.auth-template-row:hover {
 .project-overview-fact small a { display: inline-flex; align-items: center; gap: 4px; color: #aeb7b1; }
 .project-overview-fact small a:hover { color: #eef2ef; }
 .project-overview-fact small svg { width: 12px; height: 12px; }
+.project-overview-sync {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 68px;
+  padding: 14px 16px;
+  border: 1px solid #2b302d;
+  border-radius: 7px;
+  background: #141715;
+}
+.project-overview-sync p,
+.project-overview-sync strong,
+.project-overview-sync small { display: block; margin: 0; }
+.project-overview-sync p { color: #a6ada8; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; font-weight: 500; letter-spacing: .09em; line-height: 14px; text-transform: uppercase; }
+.project-overview-sync strong { margin-top: 3px; color: #eef2ef; font-size: 13px; font-weight: 500; line-height: 18px; }
+.project-overview-sync small { margin-top: 2px; color: #8f9792; font-size: 12px; line-height: 17px; }
+.project-overview-sync [data-slot="button"] { flex: none; }
 .project-overview-runtime {
   position: relative;
   display: flex;
@@ -2274,6 +2293,7 @@ a.auth-template-row:hover {
   .project-overview-page { padding: 30px 20px 64px; }
   .project-overview-header { flex-direction: column; margin-bottom: 28px; }
   .project-overview-facts { grid-template-columns: 1fr; gap: 16px; }
+  .project-overview-sync { align-items: flex-start; flex-direction: column; }
   .project-overview-hero { min-height: 0; gap: 24px; }
   .project-overview-runtime { min-height: 210px; }
   .project-settings-workspace { display: block; }

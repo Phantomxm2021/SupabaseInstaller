@@ -66,6 +66,68 @@ func TestReconcileRecreatesOnlyAffectedService(t *testing.T) {
 	}
 }
 
+func TestOfficialRuntimeSyncPullsImagesAndRecreatesEveryEnabledService(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	initial := reconcileRequest(baseConfig(), 0, 1)
+	if _, err := backend.Reconcile(context.Background(), initial); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	sync := reconcileRequest(baseConfig(), 1, 2)
+	sync.ForceRecreate = true
+	sync.PullImages = true
+	result, err := backend.Reconcile(context.Background(), sync)
+	if err != nil {
+		t.Fatalf("official runtime sync: %v", err)
+	}
+	if runner.pulled != 1 {
+		t.Fatalf("pull calls = %d, want 1", runner.pulled)
+	}
+	if runner.recreatedRuntime != 1 {
+		t.Fatalf("full runtime recreates = %d, want 1", runner.recreatedRuntime)
+	}
+	if !equalStrings(result.RecreatedServices, result.EnabledServices) {
+		t.Fatalf("result recreated = %#v, want every enabled service %#v", result.RecreatedServices, result.EnabledServices)
+	}
+}
+
+func TestOfficialRuntimeSyncBlocksPostgresMajorUpgradeBeforePullingOrRecreating(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	current, err := root.CurrentRuntimeFiles("bee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compose, err := os.ReadFile(current.ComposeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(current.ComposeFile, []byte(strings.Replace(string(compose), "supabase/postgres:17.6.1.136", "supabase/postgres:15.8.1.085", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sync := reconcileRequest(baseConfig(), 1, 2)
+	sync.ForceRecreate = true
+	sync.PullImages = true
+	_, err = backend.Reconcile(context.Background(), sync)
+	if err == nil || !strings.Contains(errors.Unwrap(err).Error(), "manual PostgreSQL major upgrade required (15 → 17)") {
+		t.Fatalf("error = %v, want PostgreSQL major-upgrade block", err)
+	}
+	if runner.pulled != 0 || len(runner.recreated) != 0 {
+		t.Fatalf("pull/recreate = %d/%v, want no Docker changes", runner.pulled, runner.recreated)
+	}
+}
+
 func TestReconcileRejectsNonEmptyStorageLocationChangeBeforePublish(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
@@ -1160,6 +1222,8 @@ func TestReconcileMetadataWriteAndRuntimeRollbackFailureReportsChanged(t *testin
 }
 
 type fakeReconcileRunner struct {
+	pulled            int
+	recreatedRuntime  int
 	storageObjects    int64
 	storageCountCalls int
 	storageCountError error
@@ -1179,6 +1243,11 @@ type fakeReconcileRunner struct {
 	calls             []string
 	onUpDatabase      func() error
 	bootstrapError    error
+}
+
+func (r *fakeReconcileRunner) Pull(context.Context, compose.ProjectRef) error {
+	r.pulled++
+	return nil
 }
 
 type recordingProxy struct {
@@ -1274,6 +1343,10 @@ func (r *fakeReconcileRunner) UpSelected(_ context.Context, _ compose.ProjectRef
 }
 func (r *fakeReconcileRunner) Recreate(_ context.Context, _ compose.ProjectRef, services ...string) error {
 	r.recreated = append(r.recreated, services...)
+	return r.recreateError
+}
+func (r *fakeReconcileRunner) RecreateRuntime(context.Context, compose.ProjectRef) error {
+	r.recreatedRuntime++
 	return r.recreateError
 }
 func (r *fakeReconcileRunner) RemoveStopped(_ context.Context, project compose.ProjectRef, services ...string) error {

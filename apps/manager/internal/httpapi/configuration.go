@@ -41,6 +41,7 @@ func RegisterConfigurationRoutes(mux *http.ServeMux, options ConfigurationOption
 	}
 	register("GET /api/projects/{id}/configuration", h.get)
 	register("PATCH /api/projects/{id}/configuration/{section}", h.patch)
+	register("POST /api/projects/{id}/runtime/sync", h.syncOfficialRuntime)
 	register("PATCH /api/projects/{id}/configuration/network/tls", h.patchNetworkTLS)
 	register("PATCH /api/projects/{id}/configuration/oauth/{provider}", h.patchOAuth)
 	register("POST /api/projects/{id}/secrets/{kind}/reveal", h.reveal)
@@ -51,6 +52,14 @@ func RegisterConfigurationRoutes(mux *http.ServeMux, options ConfigurationOption
 }
 
 type configurationHandlers struct{ options ConfigurationOptions }
+
+// syncOfficialRuntime reapplies the project's persisted configuration through
+// the currently bundled official Supabase Docker template. It is intentionally
+// separate from ordinary settings changes so an administrator explicitly
+// chooses when a deployed host is recreated after a Manager template update.
+func (h configurationHandlers) syncOfficialRuntime(w http.ResponseWriter, r *http.Request) {
+	h.queueOfficialRuntimeSync(w, r)
+}
 
 func (h configurationHandlers) get(w http.ResponseWriter, r *http.Request) {
 	if h.options.Orchestrator == nil {
@@ -344,6 +353,14 @@ func decodeRaw(raw []byte, target any) error {
 }
 
 func (h configurationHandlers) queue(w http.ResponseWriter, r *http.Request, patch contracts.ConfigurationPatch) {
+	h.queueConfigurationReconcile(w, r, patch, false)
+}
+
+func (h configurationHandlers) queueOfficialRuntimeSync(w http.ResponseWriter, r *http.Request) {
+	h.queueConfigurationReconcile(w, r, contracts.ConfigurationPatch{}, true)
+}
+
+func (h configurationHandlers) queueConfigurationReconcile(w http.ResponseWriter, r *http.Request, patch contracts.ConfigurationPatch, officialRuntimeSync bool) {
 	if h.options.Orchestrator == nil {
 		writeError(w, http.StatusServiceUnavailable, "CONFIGURATION_UNAVAILABLE", "Server configuration is unavailable")
 		return
@@ -362,7 +379,11 @@ func (h configurationHandlers) queue(w http.ResponseWriter, r *http.Request, pat
 		}
 		p, e := h.options.Projects.Get(ctx, r.PathValue("id"))
 		if e == nil {
-			_, _ = h.options.Orchestrator.Run(ctx, p, queued, snapshot)
+			if officialRuntimeSync {
+				_, _ = h.options.Orchestrator.RunOfficialRuntimeSync(ctx, p, queued, snapshot)
+			} else {
+				_, _ = h.options.Orchestrator.Run(ctx, p, queued, snapshot)
+			}
 		} else {
 			h.options.Orchestrator.Release(r.PathValue("id"))
 		}

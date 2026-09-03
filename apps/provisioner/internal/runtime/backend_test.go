@@ -157,6 +157,8 @@ func (p *recordingLifecycleProxy) Remove(_ context.Context, slug string) error {
 	return nil
 }
 
+func (runner *recordingRunner) Pull(context.Context, compose.ProjectRef) error { return nil }
+
 func (runner *recordingRunner) UpDatabase(context.Context, compose.ProjectRef) error {
 	runner.calls = append(runner.calls, "db")
 	return runner.upDatabaseErr
@@ -193,6 +195,10 @@ func (runner *recordingRunner) UpSelected(_ context.Context, _ compose.ProjectRe
 }
 func (runner *recordingRunner) Recreate(_ context.Context, _ compose.ProjectRef, services ...string) error {
 	runner.calls = append(runner.calls, "recreate:"+strings.Join(services, "|"))
+	return nil
+}
+func (runner *recordingRunner) RecreateRuntime(context.Context, compose.ProjectRef) error {
+	runner.calls = append(runner.calls, "recreate-runtime")
 	return nil
 }
 func (runner *recordingRunner) RemoveStopped(_ context.Context, _ compose.ProjectRef, services ...string) error {

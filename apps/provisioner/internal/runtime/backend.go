@@ -15,6 +15,7 @@ import (
 )
 
 type LifecycleRunner interface {
+	Pull(ctx context.Context, project compose.ProjectRef) error
 	UpDatabase(ctx context.Context, project compose.ProjectRef) error
 	StorageObjectCount(ctx context.Context, project compose.ProjectRef) (int64, error)
 	VerifyDatabaseBootstrap(ctx context.Context, project compose.ProjectRef) error
@@ -27,6 +28,7 @@ type LifecycleRunner interface {
 	Validate(ctx context.Context, project compose.ProjectRef) error
 	UpSelected(ctx context.Context, project compose.ProjectRef, services ...string) error
 	Recreate(ctx context.Context, project compose.ProjectRef, services ...string) error
+	RecreateRuntime(ctx context.Context, project compose.ProjectRef) error
 	RemoveStopped(ctx context.Context, project compose.ProjectRef, services ...string) error
 }
 
