@@ -502,5 +502,9 @@ export const functionsSchema = z
   );
 export const databaseSchema = projectConfigurationSchema.shape.database;
 export const poolerSchema = projectConfigurationSchema.shape.pooler;
-export const networkSchema = projectConfigurationSchema.shape.network;
+// Legacy Caddy snapshots remain readable in settings so operators can switch
+// them to external mode; the create-project aggregate still rejects Caddy.
+export const networkSchema = projectConfigurationSchema.shape.network.extend({
+  httpsMode: z.enum(["external", "caddy"]),
+});
 export { secretAction };

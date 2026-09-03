@@ -52,10 +52,11 @@ export function BasicStep({
   }
   const siteURL = form.watch('configuration.general.siteUrl')
   const slug = form.watch('slug')
+  const authSiteURL = form.watch('configuration.general.authSiteUrl')
   useEffect(() => {
     const domain = projectDomainFromBase(slug, siteURL)
-    if (domain) form.setValue('configuration.general.authSiteUrl', `https://${domain}`, { shouldDirty: false })
-  }, [form, slug, siteURL])
+    if (domain && !authSiteURL?.trim()) form.setValue('configuration.general.authSiteUrl', `https://${domain}`, { shouldDirty: false })
+  }, [form, slug, siteURL, authSiteURL])
   const nameError = error('name')
   const slugError = error('slug')
   const studioPasswordError = error('configuration.general.studioPassword')

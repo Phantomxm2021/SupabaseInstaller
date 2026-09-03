@@ -88,6 +88,24 @@ it('moves through four steps with directional motion and focuses the next headin
   expect(screen.getByText('Step 1 of 4 · Server details')).toBeVisible()
 })
 
+it('preserves an explicit Auth site URL when navigating back to Basic', async () => {
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)
+  await user.type(screen.getByLabelText('Server name'), 'Production API')
+  await user.type(screen.getByLabelText('Site URL hostname'), 'example.com')
+  await waitForIdentityAvailability()
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  const authURL = screen.getByLabelText('Auth site URL')
+  await user.clear(authURL)
+  await user.type(authURL, 'https://app.example.com')
+  await user.click(screen.getByRole('button', { name: 'Back' }))
+  await user.click(screen.getByRole('button', { name: 'Back' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  expect(screen.getByLabelText('Auth site URL')).toHaveValue('https://app.example.com')
+})
+
 it('groups services under a persistent preset navigation', async () => {
   const user = userEvent.setup()
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}><MemoryRouter><NewProjectPage /></MemoryRouter></QueryClientProvider>)

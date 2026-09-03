@@ -230,7 +230,8 @@ export interface PoolerConfig {
 }
 export interface NetworkConfig {
   gateway: "envoy" | "kong";
-  httpsMode: "external";
+  /** Legacy snapshots may still report caddy until explicitly migrated. */
+  httpsMode: "external" | "caddy";
   managedTls?: {
     certificateName: string;
     certificateFile: string;
@@ -315,7 +316,8 @@ export interface RedactedDatabaseConfig {
 }
 export interface RedactedNetworkConfig {
   gateway: "envoy" | "kong";
-  httpsMode: "external";
+  /** Legacy snapshots may still report caddy until explicitly migrated. */
+  httpsMode: "external" | "caddy";
   managedTls?: {
     certificateName: string;
     certificateFile: string;

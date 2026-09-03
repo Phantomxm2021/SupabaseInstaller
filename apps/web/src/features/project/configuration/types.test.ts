@@ -50,6 +50,13 @@ describe('configuration projection normalization', () => {
     expect(config.pooler.internalDbPoolSize).toBe(5)
   })
 
+  it('reads legacy Caddy snapshots so Network UI can offer external migration', () => {
+    const legacy = omittedConfiguration()
+    legacy.network.httpsMode = 'caddy'
+    const config = normalizeRedactedConfiguration(legacy)
+    expect(config.network.httpsMode).toBe('caddy')
+  })
+
   it('labels rendered configuration changes as recreate', () => {
     expect(sectionImpact('smtp', {})).toBe('recreate')
     expect(sectionImpact('oauth', {})).toBe('recreate')

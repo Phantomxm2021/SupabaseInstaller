@@ -106,6 +106,7 @@ const minStorageUploadFileSizeLimit int64 = 1 * 1024 * 1024
 const maxStorageUploadFileSizeLimit int64 = 5 * 1024 * 1024 * 1024
 
 var envNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+var sharedBuffersPattern = regexp.MustCompile(`^[1-9][0-9]*(?:B|kB|MB|GB|TB|KiB|MiB|GiB|TiB)$`)
 var r2AccountIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 var reservedFunctionVariables = map[string]struct{}{
@@ -603,6 +604,9 @@ func validateDatabase(database contracts.DatabaseConfig, validation *ValidationE
 	if database.MaxConnections < 1 || database.MaxConnections > 100000 {
 		validation.add("database.maxConnections", "must be between 1 and 100000")
 	}
+	if database.SharedBuffers != "" && !sharedBuffersPattern.MatchString(database.SharedBuffers) {
+		validation.add("database.sharedBuffers", "must be a positive integer followed by B, kB, MB, GB, TB, KiB, MiB, GiB, or TiB")
+	}
 	if database.DirectPortNumber != 0 {
 		validatePort(database.DirectPortNumber, "database.directPortNumber", validation)
 	}
@@ -637,7 +641,7 @@ func validateDatabaseConnectionBudget(cfg contracts.ProjectConfiguration, valida
 		required += cfg.Pooler.PoolSize + cfg.Pooler.InternalDBPoolSize
 	}
 	if required >= cfg.Database.MaxConnections {
-		validation.add("database.maxConnections", "must exceed reserved service connection budget")
+		validation.add("database.maxConnections", fmt.Sprintf("must exceed reserved service connection budget: fixed reserve is %d connections; requires %d connections", fixedDatabaseConnectionReserve, required))
 	}
 }
 

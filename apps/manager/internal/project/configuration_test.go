@@ -142,6 +142,29 @@ func TestConfigurationRejectsNewCaddyValue(t *testing.T) {
 	}
 }
 
+func TestConfigurationAuthoritativelyValidatesSharedBuffersAndReportsBudget(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Database.SharedBuffers = "128"
+	cfg.Database.MaxConnections = 40
+	cfg.Services.Realtime = true
+	cfg.Services.Supavisor = true
+	cfg.Realtime.DatabasePoolSize = 20
+	cfg.Pooler.PoolSize = 15
+	cfg.Pooler.InternalDBPoolSize = 5
+
+	var validation *ValidationError
+	if err := ValidateConfiguration(cfg); !errors.As(err, &validation) {
+		t.Fatalf("ValidateConfiguration() error = %v, want validation error", err)
+	}
+	if validation.Fields["database.sharedBuffers"] == "" {
+		t.Fatalf("missing shared buffer validation: %#v", validation.Fields)
+	}
+	message := validation.Fields["database.maxConnections"]
+	if !strings.Contains(message, "fixed reserve is 10 connections") || !strings.Contains(message, "requires 50 connections") {
+		t.Fatalf("budget error = %q, want fixed reserve and required connection count", message)
+	}
+}
+
 func TestAuthRateLimitsAndMFAValidation(t *testing.T) {
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
 	cfg.Auth.RateLimits.EmailSent = -1

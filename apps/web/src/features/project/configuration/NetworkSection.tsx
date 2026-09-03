@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Alert } from "@/components/ui/alert";
 import type { NetworkConfig } from "../../../api/types";
 import { networkSchema } from "./schema";
 import {
@@ -150,6 +151,7 @@ export function NetworkSection({
                 </SelectContent>
               </Select>
               {httpsError && <p id="network-https-mode-error" className="text-sm text-destructive">{httpsError}</p>}
+              {network.httpsMode === "caddy" && <Alert className="mt-2">This project uses legacy Caddy. Configure an external reverse proxy first, then select External reverse proxy and save to migrate safely.</Alert>}
             </div>
             <ReadOnlyField label="API port" value={String(network.apiPort || "Manager allocated")} />
             <ReadOnlyField label="Studio port" value={String(network.studioPort || "Manager allocated")} />
@@ -157,7 +159,7 @@ export function NetworkSection({
             <ReadOnlyField label="Pooler port" value={String(network.poolerPort || "Manager allocated")} />
           </div>
         </SectionCard>
-        <SectionSaveButton label="Gateway & Network" disabled={!form.formState.isDirty} />
+        <SectionSaveButton label="Gateway & Network" disabled={!form.formState.isDirty || network.httpsMode !== "external"} />
       </form>
 
       <SectionCard
