@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -105,8 +105,11 @@ func ParseEdgeRuntimeEvent(raw []byte) (EdgeRuntimeEvent, error) {
 	if err != nil {
 		return EdgeRuntimeEvent{}, incompatibleEvent("invalid timestamp")
 	}
-	functionName := filepath.Base(filepath.Clean(envelope.Metadata.ServicePath))
-	if envelope.Metadata.ServicePath == "" || ValidateFunctionName(functionName) != nil {
+	const servicePathPrefix = "./examples/"
+	functionName := strings.TrimPrefix(envelope.Metadata.ServicePath, servicePathPrefix)
+	if !strings.HasPrefix(envelope.Metadata.ServicePath, servicePathPrefix) ||
+		functionName == "" || strings.ContainsAny(functionName, `/\\`) ||
+		ValidateFunctionName(functionName) != nil {
 		return EdgeRuntimeEvent{}, incompatibleEvent("invalid metadata.service_path")
 	}
 	if envelope.Metadata.ExecutionID == "" {
@@ -168,6 +171,16 @@ func ValidateFunctionLogQuery(query FunctionLogQuery) error {
 	if query.Before != "" && query.After != "" {
 		return fmt.Errorf("before and after are mutually exclusive")
 	}
+	if query.Before != "" {
+		if _, err := DecodeFunctionLogCursor(query.Before); err != nil {
+			return fmt.Errorf("invalid before cursor: %w", err)
+		}
+	}
+	if query.After != "" {
+		if _, err := DecodeFunctionLogCursor(query.After); err != nil {
+			return fmt.Errorf("invalid after cursor: %w", err)
+		}
+	}
 	if query.Level != "" && query.Level != string(FunctionLogLevelDebug) && query.Level != string(FunctionLogLevelInfo) && query.Level != string(FunctionLogLevelWarn) && query.Level != string(FunctionLogLevelError) {
 		return fmt.Errorf("invalid level")
 	}
@@ -205,12 +218,39 @@ func DecodeFunctionLogCursor(encoded string) (FunctionLogCursor, error) {
 		return FunctionLogCursor{}, fmt.Errorf("decode cursor: %w", err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var cursor FunctionLogCursor
-	if err := decoder.Decode(&cursor); err != nil {
-		return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON: %w", err)
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON: expected object")
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	seen := make(map[string]bool, 2)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON key: %w", err)
+		}
+		key, ok := keyToken.(string)
+		if !ok || seen[key] {
+			return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON: invalid or duplicate field")
+		}
+		seen[key] = true
+		switch key {
+		case "timestamp":
+			err = decoder.Decode(&cursor.Timestamp)
+		case "id":
+			err = decoder.Decode(&cursor.ID)
+		default:
+			return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON: unknown field %q", key)
+		}
+		if err != nil {
+			return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON field %q: %w", key, err)
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') {
+		return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON: incomplete object")
+	}
+	if _, err := decoder.Token(); err != io.EOF {
 		return FunctionLogCursor{}, fmt.Errorf("decode cursor JSON: trailing data")
 	}
 	if cursor.Timestamp.IsZero() || cursor.ID == "" {

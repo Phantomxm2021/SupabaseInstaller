@@ -1,7 +1,9 @@
 package contracts
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -14,13 +16,13 @@ import (
 
 func TestParseEdgeRuntimeEventFixtures(t *testing.T) {
 	tests := []struct {
-		file, functionName, executionID, eventType, message string
-		level                                               FunctionLogLevel
-		timestamp                                           time.Time
+		file, functionName, executionID, eventType, message, eventID string
+		level                                                        FunctionLogLevel
+		timestamp                                                    time.Time
 	}{
-		{"boot-event.json", "contract-log", "e8a9d201-c618-4051-be3c-721a97fee216", "Boot", "", FunctionLogLevelInfo, time.Date(2026, 9, 3, 20, 51, 33, 319000000, time.UTC)},
-		{"log-event.json", "contract-log", "e8a9d201-c618-4051-be3c-721a97fee216", "Log", "FUNCTION_LOG_FIXTURE_MESSAGE\n", FunctionLogLevelInfo, time.Date(2026, 9, 3, 20, 51, 33, 326000000, time.UTC)},
-		{"uncaught-exception.json", "contract-throw", "f7cb1a48-200e-4586-9ec2-5baa4250af84", "UncaughtException", "event loop error: Error: FUNCTION_THROW_FIXTURE_MESSAGE\n    at file:///var/tmp/sb-compile-edge-runtime/app/examples/contract-throw/index.ts:3:11\n    at callback (ext:deno_web/02_timers.js:58:7)\n    at eventLoopTick (ext:core/01_core.js:210:13)", FunctionLogLevelError, time.Date(2026, 9, 3, 20, 51, 33, 426000000, time.UTC)},
+		{"boot-event.json", "contract-log", "e8a9d201-c618-4051-be3c-721a97fee216", "Boot", "", "8d7390899131ea89ae39fbf4ac5f577a66ec3fe919c748bef63e51ec04a6b86d", FunctionLogLevelInfo, time.Date(2026, 9, 3, 20, 51, 33, 319000000, time.UTC)},
+		{"log-event.json", "contract-log", "e8a9d201-c618-4051-be3c-721a97fee216", "Log", "FUNCTION_LOG_FIXTURE_MESSAGE\n", "b21ef14e03afeafac0e5295527887d83d44a8f4f6b48ad6125845a82fea0850f", FunctionLogLevelInfo, time.Date(2026, 9, 3, 20, 51, 33, 326000000, time.UTC)},
+		{"uncaught-exception.json", "contract-throw", "f7cb1a48-200e-4586-9ec2-5baa4250af84", "UncaughtException", "event loop error: Error: FUNCTION_THROW_FIXTURE_MESSAGE\n    at file:///var/tmp/sb-compile-edge-runtime/app/examples/contract-throw/index.ts:3:11\n    at callback (ext:deno_web/02_timers.js:58:7)\n    at eventLoopTick (ext:core/01_core.js:210:13)", "863deab288b9bc0f09416df4d02a15d20ce0bdaeb5495eb49fb81b4912699e8c", FunctionLogLevelError, time.Date(2026, 9, 3, 20, 51, 33, 426000000, time.UTC)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
@@ -38,6 +40,13 @@ func TestParseEdgeRuntimeEventFixtures(t *testing.T) {
 			if len(got.EventID) != 64 || strings.ToLower(got.EventID) != got.EventID {
 				t.Fatalf("EventID = %q", got.EventID)
 			}
+			hash := sha256.Sum256(raw)
+			if rawHash := hex.EncodeToString(hash[:]); rawHash != tt.eventID || got.EventID != tt.eventID {
+				t.Fatalf("raw hash = %q, EventID = %q, want %q", rawHash, got.EventID, tt.eventID)
+			}
+			if got.EventID == got.ExecutionID {
+				t.Fatal("EventID must not reuse ExecutionID")
+			}
 		})
 	}
 }
@@ -50,6 +59,11 @@ func TestParseEdgeRuntimeEventRejectsIncompatiblePayloads(t *testing.T) {
 		"missing execution identifier": strings.Replace(base, `"execution_id":"exec"`, `"execution_id":""`, 1),
 		"unknown event type":           strings.Replace(base, `"event_type":"Log"`, `"event_type":"Shutdown"`, 1),
 		"invalid event level":          strings.Replace(base, `"level":"Info"`, `"level":"Notice"`, 1),
+		"absolute service path":        strings.Replace(base, "./examples/good-name", "/tmp/api", 1),
+		"alternate prefix":             strings.Replace(base, "./examples/good-name", "./other/api", 1),
+		"dot segments":                 strings.Replace(base, "./examples/good-name", "./examples/victim/../api", 1),
+		"nested service path":          strings.Replace(base, "./examples/good-name", "./examples/nested/api", 1),
+		"backslash service path":       strings.Replace(base, "./examples/good-name", `.\\examples\\api`, 1),
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -74,7 +88,10 @@ func TestValidateFunctionLogQuery(t *testing.T) {
 	for name, query := range map[string]FunctionLogQuery{
 		"limit zero": {}, "limit too large": {Limit: 201}, "both cursors": {Limit: 10, Before: "a", After: "b"},
 		"search too long": {Limit: 10, Search: strings.Repeat("界", 86)}, "invalid level": {Limit: 10, Level: "notice"},
-		"invalid utf8": {Limit: 10, Search: string([]byte{0xff})},
+		"invalid utf8":            {Limit: 10, Search: string([]byte{0xff})},
+		"malformed before cursor": {Limit: 10, Before: "bad"},
+		"malformed after cursor":  {Limit: 10, After: "bad"},
+		"invalid cursor payload":  {Limit: 10, Before: base64.RawURLEncoding.EncodeToString([]byte(`{}`))},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateFunctionLogQuery(query); err == nil {
@@ -115,6 +132,8 @@ func TestFunctionLogCursorRejectsMalformedValues(t *testing.T) {
 		"eyJ0aW1lc3RhbXAiOiIyMDI2LTA5LTAzVDIwOjUxOjMzWiIsImlkIjoieCIsImV4dHJhIjp0cnVlfQ",
 		base64.RawURLEncoding.EncodeToString([]byte(validJSON + `{`)),
 		base64.RawURLEncoding.EncodeToString([]byte(validJSON + `{}`)),
+		base64.RawURLEncoding.EncodeToString([]byte(`{"timestamp":"2026-09-03T20:51:33Z","timestamp":"2026-09-04T20:51:33Z","id":"x"}`)),
+		base64.RawURLEncoding.EncodeToString([]byte(`{"timestamp":"2026-09-03T20:51:33Z","id":"x","id":"y"}`)),
 	} {
 		if _, err := DecodeFunctionLogCursor(cursor); err == nil {
 			t.Errorf("DecodeFunctionLogCursor(%q) succeeded", cursor)
