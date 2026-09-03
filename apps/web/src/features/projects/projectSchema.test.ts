@@ -1,6 +1,26 @@
 import { applyPreset, defaultConfiguration, normalizeCreateConfiguration, projectConfigurationSchema, projectSchema, redactedSecretSchema, updateSecretSchema, type ProjectConfigurationForm } from './projectSchema'
 import { toUpdateSecretInput } from '../../api/types'
 
+it('defaults a new project to official JWT expiry', () => {
+  expect(defaultConfiguration('LIGHTWEIGHT').auth.jwtExpiry).toBe(3600)
+})
+
+it.each([0, 604801])('rejects out-of-contract JWT expiry %s', (jwtExpiry) => {
+  const project = validProject()
+  project.configuration.auth.jwtExpiry = jwtExpiry
+  expect(projectConfigurationSchema.safeParse(project.configuration).success).toBe(false)
+})
+
+it('accepts auth site URL and validates shared buffers and internal pool size', () => {
+  const project = validProject()
+  project.configuration.general.authSiteUrl = 'https://app.example.com'
+  project.configuration.database.sharedBuffers = '256MB'
+  project.configuration.pooler.internalDbPoolSize = 5
+  expect(projectSchema.safeParse(project).success).toBe(true)
+  project.configuration.database.sharedBuffers = 'not-a-memory-size'
+  expect(projectSchema.safeParse(project).success).toBe(false)
+})
+
 function validProject() {
   return { name: 'Bee', slug: 'bee', preset: 'LIGHTWEIGHT' as const, configuration: { ...defaultConfiguration('LIGHTWEIGHT'), general: { domain: 'bee.example.com', siteUrl: 'https://example.com', supabaseVersion: 'self-hosted/v0.8.0' } } }
 }

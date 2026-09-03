@@ -68,6 +68,7 @@ const url = (message = "Enter an http or https URL") =>
       return false;
     }
   }, message);
+const sharedBuffers = z.string().refine((value) => value === '' || /^[1-9][0-9]*(?:B|kB|MB|GB|TB|KiB|MiB|GiB|TiB)$/.test(value), 'Shared buffers must be a positive integer followed by a supported memory unit');
 export const validDomain = (value: string) => {
   if (!value || /[\/ ]/.test(value) || value.includes("://")) return false;
   let host = value;
@@ -435,7 +436,7 @@ const mailer = z.object({
 const auth = z
   .object({
     enabled: z.boolean(),
-    jwtExpiry: z.number().int().min(0).max(31536000),
+    jwtExpiry: z.number().int().min(1).max(604800),
     disableSignup: z.boolean(),
     email: z.object({
       enabled: z.boolean(),
@@ -663,6 +664,7 @@ const baseConfiguration = z.object({
   general: z.object({
     domain: z.string(),
     siteUrl: z.string(),
+    authSiteUrl: z.string().default(""),
     supabaseVersion: z.literal(SUPABASE_VERSION),
     studioUsername: z.string().trim().min(1, "Studio username is required").default("supabase"),
     studioPasswordSet: z.boolean().default(false),
@@ -682,13 +684,14 @@ const baseConfiguration = z.object({
     directPort: z.boolean(),
     directPortNumber: port,
     maxConnections: z.number().int().min(1).max(100000),
-    sharedBuffers: z.string(),
+    sharedBuffers,
     extensions: z.array(z.string()),
   }),
   pooler: z.object({
     transactionPort: port,
     sessionPort: port,
     poolSize: z.number().int().min(1).max(100000),
+    internalDbPoolSize: z.number().int().min(1).max(100000),
     maxClientConnections: z.number().int().min(1).max(100000),
   }),
   network: z.object({
@@ -844,6 +847,8 @@ export const projectSchema = z
         path: ["configuration", "general", "siteUrl"],
         message: "Enter an http or https URL",
       });
+    if (value.configuration.general.authSiteUrl && !url().safeParse(value.configuration.general.authSiteUrl).success)
+      context.addIssue({ code: "custom", path: ["configuration", "general", "authSiteUrl"], message: "Enter an http or https URL" });
   });
 export function applyPreset(preset: Preset): Services {
   const value = { ...lightweightServices };
@@ -894,11 +899,11 @@ export function defaultConfiguration(
   const selected = applyPreset(preset);
   return {
     revision: 0,
-    general: { domain: "", siteUrl: "", supabaseVersion: SUPABASE_VERSION, studioUsername: "supabase", studioPasswordSet: false, studioPassword: emptySecret() },
+    general: { domain: "", siteUrl: "", authSiteUrl: "", supabaseVersion: SUPABASE_VERSION, studioUsername: "supabase", studioPasswordSet: false, studioPassword: emptySecret() },
     services: selected,
     auth: {
       enabled: selected.auth,
-      jwtExpiry: 0,
+      jwtExpiry: 3600,
       disableSignup: false,
       email: {
         enabled: true,
@@ -984,6 +989,7 @@ export function defaultConfiguration(
       transactionPort: 0,
       sessionPort: 0,
       poolSize: 20,
+      internalDbPoolSize: 5,
       maxClientConnections: 100,
     },
     network: {

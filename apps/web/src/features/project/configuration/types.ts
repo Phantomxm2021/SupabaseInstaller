@@ -4,6 +4,12 @@ import type { Services } from '../../../api/types'
 export const CONFIGURATION_SECTIONS = ['general', 'services', 'storage', 'realtime', 'functions', 'database', 'pooler', 'network', 'secrets'] as const
 export type ConfigurationSection = typeof CONFIGURATION_SECTIONS[number]
 
+/** Hardened public controls shared by the general and pooler forms. */
+export type HardenedConfigurationControls = {
+  authSiteUrl: string
+  internalDbPoolSize: number
+}
+
 export type ConfigurationSnapshot = {
   projectId: string
   revision: number
