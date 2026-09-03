@@ -54,6 +54,47 @@ func TestInsertBatchIsAtomicAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestSchemaHasExactLookupIndex(t *testing.T) {
+	store := testStore(t, Options{})
+	var sqlText string
+	if err := store.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'function_logs_lookup'`).Scan(&sqlText); err != nil {
+		t.Fatal(err)
+	}
+	normalized := strings.Join(strings.Fields(sqlText), " ")
+	want := "CREATE INDEX function_logs_lookup ON function_logs(project_id, function_name, timestamp_ns DESC, event_id DESC)"
+	if normalized != want {
+		t.Fatalf("index SQL = %q, want %q", normalized, want)
+	}
+}
+
+func TestInsertBatchRejectsMalformedRecords(t *testing.T) {
+	now := time.Unix(120, 0).UTC()
+	valid := record("id", "project", "fn", now, contracts.FunctionLogLevelInfo, "")
+	tests := map[string]func(*contracts.FunctionLogRecord){
+		"missing event ID":      func(r *contracts.FunctionLogRecord) { r.ID = "" },
+		"missing project ID":    func(r *contracts.FunctionLogRecord) { r.ProjectID = "" },
+		"missing function name": func(r *contracts.FunctionLogRecord) { r.FunctionName = "" },
+		"invalid function name": func(r *contracts.FunctionLogRecord) { r.FunctionName = "bad/name" },
+		"missing timestamp":     func(r *contracts.FunctionLogRecord) { r.Timestamp = time.Time{} },
+		"missing ingested at":   func(r *contracts.FunctionLogRecord) { r.IngestedAt = time.Time{} },
+		"missing execution ID":  func(r *contracts.FunctionLogRecord) { r.ExecutionID = "" },
+		"missing event type":    func(r *contracts.FunctionLogRecord) { r.EventType = "" },
+		"unknown event type":    func(r *contracts.FunctionLogRecord) { r.EventType = "Shutdown" },
+		"missing level":         func(r *contracts.FunctionLogRecord) { r.Level = "" },
+		"unsupported log level": func(r *contracts.FunctionLogRecord) { r.Level = "fatal" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			store := testStore(t, Options{})
+			candidate := valid
+			mutate(&candidate)
+			if err := store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{candidate}); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
 func TestInsertBatchSanitizesBeforePersistence(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

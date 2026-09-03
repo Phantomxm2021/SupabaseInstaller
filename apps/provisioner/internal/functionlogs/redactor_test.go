@@ -12,7 +12,7 @@ func TestLoadRedactorUsesAllowListedProjectAndAllFunctionSecrets(t *testing.T) {
 	dir := t.TempDir()
 	project := filepath.Join(dir, ".env")
 	functions := filepath.Join(dir, ".env.functions")
-	projectText := "POSTGRES_PASSWORD=db-sentinel\nJWT_SECRET=jwt-sentinel\nSERVICE_ROLE_KEY=role-sentinel\nDASHBOARD_PASSWORD=dash-sentinel\nSMTP_PASSWORD=smtp-sentinel\nAWS_SECRET_ACCESS_KEY=storage-sentinel\nGOOGLE_CLIENT_SECRET=oauth-sentinel\nPUBLIC_VALUE=must-remain\n"
+	projectText := "POSTGRES_PASSWORD=db-sentinel\nJWT_SECRET=jwt-sentinel\nSERVICE_ROLE_KEY=role-sentinel\nDASHBOARD_PASSWORD=dash-sentinel\nSMTP_PASS=smtp-sentinel\nAWS_SECRET_ACCESS_KEY=storage-sentinel\nGOOGLE_SECRET=oauth-sentinel\nANON_KEY=anon-sentinel\nPUBLIC_TOKEN_LABEL=public-token-label\nDATABASE_DISPLAY_NAME=database-display\nSECRETARY_NAME=secretary\nMONKEY_API_KEY_HINT=monkey-hint\nPUBLIC_VALUE=must-remain\n"
 	if err := os.WriteFile(project, []byte(projectText), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -27,13 +27,18 @@ func TestLoadRedactorUsesAllowListedProjectAndAllFunctionSecrets(t *testing.T) {
 	if truncated {
 		t.Fatal("unexpected truncation")
 	}
-	for _, sentinel := range []string{"auth-sentinel", "key-sentinel", "db-sentinel", "jwt-sentinel", "role-sentinel", "dash-sentinel", "smtp-sentinel", "storage-sentinel", "oauth-sentinel", "function-sentinel"} {
+	for _, sentinel := range []string{"auth-sentinel", "key-sentinel", "db-sentinel", "jwt-sentinel", "role-sentinel", "dash-sentinel", "smtp-sentinel", "storage-sentinel", "oauth-sentinel", "anon-sentinel", "function-sentinel"} {
 		if strings.Contains(message, sentinel) {
 			t.Fatalf("secret %q remained in %q", sentinel, message)
 		}
 	}
 	if !strings.Contains(message, "must-remain") {
 		t.Fatalf("non-secret project value was redacted: %q", message)
+	}
+	for _, nonSecret := range []string{"public-token-label", "database-display", "secretary", "monkey-hint"} {
+		if !strings.Contains(message, nonSecret) {
+			t.Fatalf("unrelated project value %q was loaded as a secret: %q", nonSecret, message)
+		}
 	}
 	if strings.ContainsAny(message, "\x00\n\r") {
 		t.Fatalf("control characters remained: %q", message)

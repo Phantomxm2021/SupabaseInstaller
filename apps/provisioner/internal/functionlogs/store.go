@@ -77,7 +77,8 @@ func Open(path string, options Options) (*Store, error) {
 		event_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, function_name TEXT NOT NULL,
 		timestamp_ns INTEGER NOT NULL, ingested_at_ns INTEGER NOT NULL, execution_id TEXT NOT NULL,
 		level TEXT NOT NULL, event_type TEXT NOT NULL, message TEXT NOT NULL, truncated INTEGER NOT NULL
-	); CREATE INDEX IF NOT EXISTS function_logs_project_function_time ON function_logs(project_id, function_name, timestamp_ns DESC, event_id DESC);`); err != nil {
+	); DROP INDEX IF EXISTS function_logs_project_function_time;
+	CREATE INDEX IF NOT EXISTS function_logs_lookup ON function_logs(project_id, function_name, timestamp_ns DESC, event_id DESC);`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize function log store: %w", err)
 	}
@@ -101,6 +102,11 @@ func validateRecord(record contracts.FunctionLogRecord) error {
 	case contracts.FunctionLogLevelDebug, contracts.FunctionLogLevelInfo, contracts.FunctionLogLevelWarn, contracts.FunctionLogLevelError:
 	default:
 		return errors.New("invalid function log level")
+	}
+	switch record.EventType {
+	case "Boot", "Log", "UncaughtException":
+	default:
+		return errors.New("invalid function log event type")
 	}
 	if record.Timestamp.IsZero() || record.IngestedAt.IsZero() {
 		return errors.New("timestamp and ingested timestamp are required")

@@ -15,7 +15,19 @@ import (
 const maxMessageBytes = 10 * 1024
 
 var (
-	projectSecretName  = regexp.MustCompile(`(?i)(authorization|api[_-]?key|jwt|database|postgres|password|secret|service[_-]?role|dashboard|oauth|client[_-]?secret|smtp|storage|access[_-]?key|private[_-]?key|token|vault)`)
+	projectSecretNames = exactNameSet(
+		"AUTHORIZATION",
+		"POSTGRES_PASSWORD", "JWT_SECRET", "ANON_KEY", "SERVICE_ROLE_KEY",
+		"SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SECRET_KEY", "ANON_KEY_ASYMMETRIC", "SERVICE_ROLE_KEY_ASYMMETRIC", "JWT_KEYS", "JWT_JWKS",
+		"DASHBOARD_USERNAME", "DASHBOARD_PASSWORD", "SECRET_KEY_BASE", "VAULT_ENC_KEY", "PG_META_CRYPTO_KEY", "REALTIME_DB_ENC_KEY",
+		"OPENAI_API_KEY", "SMTP_USER", "SMTP_PASS", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "PHONE_SECRET",
+		"LOGFLARE_PUBLIC_ACCESS_TOKEN", "LOGFLARE_PRIVATE_ACCESS_TOKEN", "S3_PROTOCOL_ACCESS_KEY_ID", "S3_PROTOCOL_ACCESS_KEY_SECRET",
+		"MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD",
+		"APPLE_SECRET", "AZURE_SECRET", "BITBUCKET_SECRET", "DISCORD_SECRET", "FACEBOOK_SECRET", "FIGMA_SECRET",
+		"GITHUB_SECRET", "GITLAB_SECRET", "GOOGLE_SECRET", "KAKAO_SECRET", "KEYCLOAK_SECRET", "LINKEDIN_OIDC_SECRET",
+		"NOTION_SECRET", "SLACK_OIDC_SECRET", "SNAPCHAT_SECRET", "SPOTIFY_SECRET", "TWITCH_SECRET", "TWITTER_SECRET",
+		"WORKOS_SECRET", "ZOOM_SECRET",
+	)
 	messageCredentials = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)(["']?\b(?:api[_-]?key|apikey|password|passwd|pwd|secret|token|access[_-]?key(?:[_-]?id)?|secret[_-]?key|private[_-]?key|client[_-]?secret|jwt[_-]?secret|service[_-]?role[_-]?key|supabase[_-]?secret[_-]?key|postgres[_-]?password|smtp[_-]?password|aws[_-]?secret[_-]?access[_-]?key|vault[_-]?enc[_-]?key|secret[_-]?key[_-]?base)\b["']?\s*(?:=|:)\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)`),
 		regexp.MustCompile(`(?i)(\bauthorization\s*:\s*[^\s,;]+\s+)[^\s,;]+`),
@@ -26,7 +38,7 @@ var (
 type Redactor struct{ known []string }
 
 func LoadRedactor(projectEnvPath, functionsEnvPath string) (*Redactor, error) {
-	known, err := readDotenvValues(projectEnvPath, func(name string) bool { return projectSecretName.MatchString(name) })
+	known, err := readDotenvValues(projectEnvPath, func(name string) bool { return projectSecretNames[name] })
 	if err != nil {
 		return nil, err
 	}
@@ -37,6 +49,14 @@ func LoadRedactor(projectEnvPath, functionsEnvPath string) (*Redactor, error) {
 	known = append(known, functionValues...)
 	sort.SliceStable(known, func(i, j int) bool { return len(known[i]) > len(known[j]) })
 	return &Redactor{known: known}, nil
+}
+
+func exactNameSet(names ...string) map[string]bool {
+	set := make(map[string]bool, len(names))
+	for _, name := range names {
+		set[name] = true
+	}
+	return set
 }
 
 func readDotenvValues(path string, include func(string) bool) ([]string, error) {
