@@ -1,0 +1,233 @@
+package functionlogs
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"supabase-manager/internal/contracts"
+)
+
+type collectorStore struct {
+	mu          sync.Mutex
+	records     []contracts.FunctionLogRecord
+	insertErr   error
+	maintainErr error
+	maintained  chan struct{}
+}
+
+func (s *collectorStore) InsertBatch(_ context.Context, records []contracts.FunctionLogRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.records = append(s.records, records...)
+	return s.insertErr
+}
+
+func (s *collectorStore) Maintain(context.Context) error {
+	if s.maintained != nil {
+		select {
+		case s.maintained <- struct{}{}:
+		default:
+		}
+	}
+	return s.maintainErr
+}
+
+func newCollectorTest(t *testing.T, store *collectorStore, logOutput *bytes.Buffer, interval time.Duration) (*Collector, http.Handler) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "hello"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewCollector(CollectorOptions{
+		ProjectID: "project", Store: store, Redactor: &Redactor{}, FunctionsRoot: root,
+		Logger: slog.New(slog.NewTextHandler(logOutput, nil)), Now: func() time.Time { return time.Unix(200, 0).UTC() },
+		MaintenanceInterval: interval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = collector.Close() })
+	return collector, NewCollectorHandler(collector)
+}
+
+func validBatch() contracts.FunctionLogBatch {
+	return contracts.FunctionLogBatch{Version: 1, ProjectID: "project", Events: []contracts.EdgeRuntimeEvent{{
+		Version: 1, EventID: "event-1", FunctionName: "hello", ExecutionID: "exec-1", EventType: "Log",
+		Message: "hello", Timestamp: time.Unix(100, 0).UTC(), Level: contracts.FunctionLogLevelInfo,
+	}}}
+}
+
+func requestBatch(t *testing.T, handler http.Handler, batch any, contentType string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/events", bytes.NewReader(body))
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	return response
+}
+
+func TestCollectorAcceptsValidAndDuplicateBatches(t *testing.T) {
+	store, logs := &collectorStore{}, &bytes.Buffer{}
+	collector, handler := newCollectorTest(t, store, logs, time.Hour)
+	for range 2 {
+		if got := requestBatch(t, handler, validBatch(), "application/json").Code; got != http.StatusNoContent {
+			t.Fatalf("status = %d", got)
+		}
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.records) != 2 || store.records[0].IngestedAt != time.Unix(200, 0).UTC() {
+		t.Fatalf("records = %+v", store.records)
+	}
+	if health := collector.Health(); health.Status != "healthy" || health.Dropped != 0 || health.Rejected != 0 {
+		t.Fatalf("health = %+v", health)
+	}
+}
+
+func TestCollectorRejectsBadRequestsAndCountsEvents(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(*contracts.FunctionLogBatch)
+		contentType string
+		want        int
+		rejected    uint64
+		status      string
+	}{
+		{"content type", func(*contracts.FunctionLogBatch) {}, "text/plain", 400, 1, "healthy"},
+		{"batch version", func(b *contracts.FunctionLogBatch) { b.Version = 2 }, "application/json", 422, 1, "incompatible"},
+		{"project", func(b *contracts.FunctionLogBatch) { b.ProjectID = "other" }, "application/json", 400, 1, "healthy"},
+		{"no events", func(b *contracts.FunctionLogBatch) { b.Events = nil }, "application/json", 400, 1, "healthy"},
+		{"event version", func(b *contracts.FunctionLogBatch) { b.Events[0].Version = 2 }, "application/json", 422, 1, "incompatible"},
+		{"event id", func(b *contracts.FunctionLogBatch) { b.Events[0].EventID = "" }, "application/json", 400, 1, "healthy"},
+		{"execution id", func(b *contracts.FunctionLogBatch) { b.Events[0].ExecutionID = "" }, "application/json", 400, 1, "healthy"},
+		{"timestamp", func(b *contracts.FunctionLogBatch) { b.Events[0].Timestamp = time.Time{} }, "application/json", 400, 1, "healthy"},
+		{"level", func(b *contracts.FunctionLogBatch) { b.Events[0].Level = "fatal" }, "application/json", 400, 1, "healthy"},
+		{"event type", func(b *contracts.FunctionLogBatch) { b.Events[0].EventType = "Exit" }, "application/json", 400, 1, "healthy"},
+		{"invalid function", func(b *contracts.FunctionLogBatch) { b.Events[0].FunctionName = "../hello" }, "application/json", 400, 1, "healthy"},
+		{"unknown function", func(b *contracts.FunctionLogBatch) { b.Events[0].FunctionName = "missing" }, "application/json", 400, 1, "healthy"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			collector, handler := newCollectorTest(t, &collectorStore{}, &bytes.Buffer{}, time.Hour)
+			batch := validBatch()
+			test.mutate(&batch)
+			if got := requestBatch(t, handler, batch, test.contentType).Code; got != test.want {
+				t.Fatalf("status = %d, want %d", got, test.want)
+			}
+			health := collector.Health()
+			if health.Rejected != test.rejected || health.Status != test.status {
+				t.Fatalf("health = %+v", health)
+			}
+		})
+	}
+}
+
+func TestCollectorRejectsMalformedUnknownTrailingOversizedAndTooMany(t *testing.T) {
+	collector, handler := newCollectorTest(t, &collectorStore{}, &bytes.Buffer{}, time.Hour)
+	for _, body := range []string{"{", `{"version":1,"projectId":"project","events":[],"extra":true}`, `{"version":1,"projectId":"project","events":[]} {}`} {
+		req := httptest.NewRequest(http.MethodPost, "/internal/v1/events", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != 400 {
+			t.Fatalf("body %q status = %d", body, response.Code)
+		}
+	}
+	tooMany := validBatch()
+	tooMany.Events = make([]contracts.EdgeRuntimeEvent, 101)
+	if got := requestBatch(t, handler, tooMany, "application/json").Code; got != 400 {
+		t.Fatalf("too many status = %d", got)
+	}
+	big := `{"version":1,"projectId":"project","events":[],"padding":"` + strings.Repeat("x", 1<<20) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/events", strings.NewReader(big))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize status = %d", response.Code)
+	}
+	if collector.Health().Rejected != 105 {
+		t.Fatalf("health = %+v", collector.Health())
+	}
+}
+
+func TestCollectorStorageFailureIsSafeAndLive(t *testing.T) {
+	secret := "collector-secret"
+	store, output := &collectorStore{insertErr: errors.New("/private/secret/path " + secret)}, &bytes.Buffer{}
+	collector, handler := newCollectorTest(t, store, output, time.Hour)
+	batch := validBatch()
+	batch.Events[0].Message = "payload " + secret
+	if got := requestBatch(t, handler, batch, "application/json").Code; got != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", got)
+	}
+	health := collector.Health()
+	if health.Status != "storage_error" || health.Dropped != 1 || strings.Contains(health.Detail, secret) || strings.Contains(health.Detail, "/private") {
+		t.Fatalf("health = %+v", health)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health/live", nil))
+	if response.Code != 200 {
+		t.Fatalf("live status = %d", response.Code)
+	}
+	logged := output.String()
+	if strings.Contains(logged, secret) || strings.Contains(logged, batch.Events[0].Message) || strings.Contains(logged, "event-1") {
+		t.Fatalf("unsafe logs: %s", logged)
+	}
+}
+
+func TestCollectorConstructionRejectsUnsafeFunctionsRoots(t *testing.T) {
+	if _, err := NewCollector(CollectorOptions{ProjectID: "", Store: &collectorStore{}, Redactor: &Redactor{}, FunctionsRoot: t.TempDir()}); err == nil {
+		t.Fatal("expected project validation")
+	}
+	root := t.TempDir()
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: &collectorStore{}, Redactor: &Redactor{}, FunctionsRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	batch := validBatch()
+	batch.Events[0].FunctionName = "linked"
+	if got := requestBatch(t, NewCollectorHandler(collector), batch, "application/json").Code; got != 400 {
+		t.Fatalf("symlink status = %d", got)
+	}
+}
+
+func TestCollectorRunsAndStopsPeriodicMaintenance(t *testing.T) {
+	maintained := make(chan struct{}, 2)
+	store := &collectorStore{maintained: maintained}
+	collector, _ := newCollectorTest(t, store, &bytes.Buffer{}, 5*time.Millisecond)
+	select {
+	case <-maintained:
+	case <-time.After(time.Second):
+		t.Fatal("maintenance did not run")
+	}
+	if err := collector.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-maintained:
+		t.Fatal("maintenance ran after close")
+	case <-time.After(20 * time.Millisecond):
+	}
+}
