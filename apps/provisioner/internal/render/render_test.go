@@ -909,7 +909,6 @@ func TestRenderRealtimeDatabaseAndPoolerTuning(t *testing.T) {
 
 func TestRenderKeepsSupavisorInternalPoolIndependent(t *testing.T) {
 	cfg := testConfiguration()
-	cfg.Pooler.InternalDBPoolSize = 5
 	cfg.Services.Supavisor = true
 	out, err := Project(Input{Slug: "pool-default", APIPort: 18001, Configuration: cfg})
 	if err != nil {
@@ -929,12 +928,12 @@ func TestRenderKeepsSupavisorInternalPoolIndependent(t *testing.T) {
 }
 
 func TestValidSharedBuffers(t *testing.T) {
-	for _, value := range []string{"256MB", "1GiB"} {
+	for _, value := range []string{"1B", "1kB", "256MB", "1GB", "1TB", "1KiB", "1MiB", "1GiB", "1TiB"} {
 		if !validSharedBuffers(value) {
 			t.Errorf("validSharedBuffers(%q) = false", value)
 		}
 	}
-	for _, value := range []string{"0MB", "128", "-1MB", "10XB", "256MB; touch /tmp/pwned", "$(id)"} {
+	for _, value := range []string{"0MB", "128", "-1MB", "10XB", "256MB; touch /tmp/pwned", "$(id)", " 256MB", "256MB "} {
 		if validSharedBuffers(value) {
 			t.Errorf("validSharedBuffers(%q) = true", value)
 		}

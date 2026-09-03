@@ -35,10 +35,10 @@ var phoneSecretEnv = map[string][]string{
 	"textlocal":   {"GOTRUE_SMS_TEXTLOCAL_API_KEY"},
 }
 
-var sharedBuffersPattern = regexp.MustCompile(`^[1-9][0-9]*(?:MB|MiB|GB|GiB)$`)
+var sharedBuffersPattern = regexp.MustCompile(`^[1-9][0-9]*(?:B|kB|MB|GB|TB|KiB|MiB|GiB|TiB)$`)
 
 func validSharedBuffers(value string) bool {
-	return sharedBuffersPattern.MatchString(strings.TrimSpace(value))
+	return sharedBuffersPattern.MatchString(value)
 }
 
 const defaultStorageUploadFileSizeLimit int64 = 50 * 1024 * 1024
@@ -59,6 +59,10 @@ func effectiveJWTExpiry(value int) int {
 
 func renderEnvironment(input Input) (string, string, error) {
 	cfg := input.Configuration
+	internalDBPoolSize := cfg.Pooler.InternalDBPoolSize
+	if internalDBPoolSize == 0 {
+		internalDBPoolSize = 5
+	}
 	storageFileSizeLimit := cfg.Storage.UploadFileSizeLimit
 	if storageFileSizeLimit == 0 {
 		storageFileSizeLimit = defaultStorageUploadFileSizeLimit
@@ -131,7 +135,7 @@ func renderEnvironment(input Input) (string, string, error) {
 		"REGION": storageRegion(cfg.Storage), "S3_PROTOCOL_ENABLED": boolString(cfg.Storage.S3CompatibleAPI), "FUNCTIONS_VERIFY_JWT": boolString(cfg.Functions.DefaultJWTVerification),
 		"POOLER_PROXY_PORT_TRANSACTION": strconv.Itoa(cfg.Pooler.TransactionPort),
 		"POOLER_DEFAULT_POOL_SIZE":      strconv.Itoa(cfg.Pooler.PoolSize), "POOLER_MAX_CLIENT_CONN": strconv.Itoa(cfg.Pooler.MaxClientConnections),
-		"POOLER_POOL_MODE": "transaction", "POOLER_DB_POOL_SIZE": strconv.Itoa(cfg.Pooler.InternalDBPoolSize), "POOLER_TENANT_ID": input.Secrets.PoolerTenantID,
+		"POOLER_POOL_MODE": "transaction", "POOLER_DB_POOL_SIZE": strconv.Itoa(internalDBPoolSize), "POOLER_TENANT_ID": input.Secrets.PoolerTenantID,
 		"POSTGRES_MAX_CONNECTIONS": strconv.Itoa(cfg.Database.MaxConnections), "POSTGRES_SHARED_BUFFERS": cfg.Database.SharedBuffers,
 		"REALTIME_MAX_CONNECTIONS": strconv.Itoa(cfg.Realtime.MaxConnections),
 		"REALTIME_DB_POOL_SIZE":    strconv.Itoa(cfg.Realtime.DatabasePoolSize), "REALTIME_LOG_LEVEL": string(cfg.Realtime.LogLevel),
