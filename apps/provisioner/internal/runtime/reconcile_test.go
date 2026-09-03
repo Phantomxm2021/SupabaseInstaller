@@ -93,6 +93,10 @@ func TestOfficialRuntimeSyncPullsImagesAndRecreatesEveryEnabledService(t *testin
 	if !equalStrings(result.RecreatedServices, result.EnabledServices) {
 		t.Fatalf("result recreated = %#v, want every enabled service %#v", result.RecreatedServices, result.EnabledServices)
 	}
+	metadata, err := root.Metadata("bee")
+	if err != nil || metadata.TemplateRef != "self-hosted/v0.8.0" || len(metadata.TemplateSHA256) != 64 {
+		t.Fatalf("applied template metadata = %#v, %v", metadata, err)
+	}
 }
 
 func TestOfficialRuntimeSyncBlocksPostgresMajorUpgradeBeforePullingOrRecreating(t *testing.T) {
@@ -706,7 +710,11 @@ func TestInitialRetryRemovesPartialDatabaseBeforeBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, commit, err := root.StageRuntimeFiles("bee", projectfs.RuntimeFiles{Compose: []byte("previous"), Env: []byte("previous"), FunctionsEnv: []byte("previous")})
+	templateSnapshot, err := fixtureTemplateSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commit, err := root.StageRuntimeFiles("bee", projectfs.RuntimeFiles{Compose: []byte("previous"), Env: []byte("previous"), FunctionsEnv: []byte("previous"), TemplateFiles: templateSnapshot.Files})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -955,7 +963,7 @@ func TestRealComposeParserValidatesRevisionZeroFunctionsCandidateWithoutCurrent(
 	}
 	cfg := baseConfig()
 	cfg.Revision = 1
-	out, err := render.Project(render.Input{ProjectID: "project-1", Slug: "bee", APIPort: 18001, Configuration: cfg, Secrets: contracts.ProjectSecrets{DatabasePassword: "db-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}, RuntimeSecrets: map[string]string{"storage.secretAccessKey": "storage-secret"}})
+	out, err := render.Project(fixtureRenderInput(t, render.Input{ProjectID: "project-1", Slug: "bee", APIPort: 18001, Configuration: cfg, Secrets: contracts.ProjectSecrets{DatabasePassword: "db-password", JWTSecret: "jwt-secret", AnonKey: "anon-key", ServiceRoleKey: "service-key", DashboardPassword: "dashboard-password", SecretKeyBase: "secret-key-base", VaultEncryptionKey: "vault-key"}, RuntimeSecrets: map[string]string{"storage.secretAccessKey": "storage-secret"}}))
 	if err != nil {
 		t.Fatal(err)
 	}

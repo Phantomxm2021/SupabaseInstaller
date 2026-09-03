@@ -16,6 +16,13 @@ type ValidationError struct {
 	Fields map[string]string
 }
 
+// Existing servers may retain the released v0 self-hosted template they were
+// created with. New servers use self-hosted/latest and users cannot select a
+// release arbitrarily.
+var selfHostedReleasePattern = regexp.MustCompile(`^self-hosted/v0\.[0-9]+\.[0-9]+$`)
+
+func selfHostedReleaseVersion(value string) bool { return selfHostedReleasePattern.MatchString(value) }
+
 func (e *ValidationError) Error() string {
 	if e == nil || len(e.Fields) == 0 {
 		return "configuration is invalid"
@@ -44,7 +51,7 @@ func (e *ValidationError) add(field, message string) {
 // DefaultConfiguration returns a complete safe configuration for a preset.
 func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguration {
 	return contracts.ProjectConfiguration{
-		General:  contracts.GeneralConfig{SupabaseVersion: "self-hosted/v0.8.0", StudioUsername: "supabase"},
+		General:  contracts.GeneralConfig{SupabaseVersion: "self-hosted/latest", StudioUsername: "supabase"},
 		Services: ApplyPreset(preset),
 		Auth: contracts.AuthConfig{
 			Enabled:       true,
@@ -132,8 +139,8 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 	if strings.TrimSpace(cfg.General.AuthSiteURL) != "" && !validAbsoluteHTTPURL(cfg.General.AuthSiteURL) {
 		validation.add("general.authSiteUrl", "must be an absolute http or https URL")
 	}
-	if cfg.General.SupabaseVersion != "self-hosted/v0.8.0" {
-		validation.add("general.supabaseVersion", "must be self-hosted/v0.8.0")
+	if cfg.General.SupabaseVersion != "self-hosted/latest" && !selfHostedReleaseVersion(cfg.General.SupabaseVersion) {
+		validation.add("general.supabaseVersion", "must be self-hosted/latest or a legacy self-hosted release")
 	}
 	validateServicesConfiguration(cfg.Services, validation)
 	if cfg.Services.Auth != cfg.Auth.Enabled {

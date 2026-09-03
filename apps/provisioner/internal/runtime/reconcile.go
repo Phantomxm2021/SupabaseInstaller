@@ -22,6 +22,8 @@ import (
 	"supabase-manager/apps/provisioner/internal/render"
 	"supabase-manager/internal/contracts"
 	"supabase-manager/internal/diagnostic"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Reconcile renders and atomically applies one complete project configuration.
@@ -102,10 +104,29 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 				return fail(fmt.Errorf("Storage contains objects: count=%d", count))
 			}
 		}
-		slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "render")
+		// A regular configuration update uses the exact snapshot that created the
+		// current server. Only an explicit runtime sync resolves official latest.
+		requestedTemplate := metadata.TemplateRef
+		if request.ForceRecreate || requestedTemplate == "" {
+			requestedTemplate = "self-hosted/latest"
+		}
+		snapshot, templateErr := backend.templates.Resolve(ctx, requestedTemplate, request.ForceRecreate)
+		if templateErr != nil {
+			return fail(fmt.Errorf("resolve official Supabase template: %w", templateErr))
+		}
+		composeTemplate, templateErr := render.LoadOfficialCompose(request.Configuration, snapshot.Files)
+		if templateErr != nil {
+			return fail(templateErr)
+		}
+		composeBytes, templateErr := yaml.Marshal(composeTemplate)
+		if templateErr != nil {
+			return fail(fmt.Errorf("encode official Supabase template: %w", templateErr))
+		}
+		slog.Info("runtime reconciliation stage", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "stage", "render", "template_ref", snapshot.Ref, "template_sha256", snapshot.SHA256)
 		rendered, err := render.Project(render.Input{
 			ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.APIPort,
 			Configuration: request.Configuration, Secrets: request.Secrets, RuntimeSecrets: request.RuntimeSecrets,
+			TemplateCompose: composeBytes, TemplateEnv: snapshot.EnvExample(), TemplateFiles: snapshot.Files,
 		})
 		if err != nil {
 			return fail(reconcileFailure(err, false))
@@ -120,6 +141,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		}
 		candidateRef, restore, commit, err := backend.projectFS.StageRuntimeFilesWithRef(request.Slug, projectfs.RuntimeFiles{
 			Compose: []byte(rendered.Compose), Env: []byte(rendered.Env), FunctionsEnv: []byte(rendered.FunctionsEnv), MailerTemplates: rendered.MailerTemplates,
+			TemplateRef: snapshot.Ref, TemplateSHA256: snapshot.SHA256, TemplateFiles: snapshot.Files,
 		})
 		if err != nil {
 			return fail(reconcileFailure(err, false))
@@ -319,6 +341,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 		metadata.Configuration = request.Configuration
 		metadata.Configuration.Revision = applyRevision
 		metadata.EnabledServices = append([]string(nil), newServices...)
+		metadata.TemplateRef, metadata.TemplateSHA256 = snapshot.Ref, snapshot.SHA256
 		metadata.Idempotency[request.IdempotencyKey] = encoded
 		runtimeRollback = func() error {
 			err := rollback(fmt.Errorf("metadata publication failed"))

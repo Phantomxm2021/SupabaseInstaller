@@ -98,7 +98,7 @@ func (backend *Backend) rollbackDatabasePasswordLocked(ctx context.Context, requ
 	} else if request.Configuration.General.SupabaseVersion != "" {
 		oldSecrets := request.Secrets
 		oldSecrets.DatabasePassword = request.NewPassword
-		rendered, renderErr := render.Project(render.Input{ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.Configuration.Network.APIPort, Configuration: request.Configuration, Secrets: oldSecrets, RuntimeSecrets: request.RuntimeSecrets})
+		rendered, renderErr := backend.renderStoredTemplate(request.Slug, render.Input{ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.Configuration.Network.APIPort, Configuration: request.Configuration, Secrets: oldSecrets, RuntimeSecrets: request.RuntimeSecrets})
 		if renderErr != nil {
 			return fmt.Errorf("render rollback runtime: %w", renderErr)
 		}
@@ -244,7 +244,7 @@ func (backend *Backend) RotateDatabasePassword(ctx context.Context, request cont
 		}
 		restoreRuntime := func() error { return nil }
 		if request.Configuration.General.SupabaseVersion != "" {
-			rendered, renderErr := render.Project(render.Input{ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.Configuration.Network.APIPort, Configuration: request.Configuration, Secrets: request.Secrets, RuntimeSecrets: request.RuntimeSecrets})
+			rendered, renderErr := backend.renderStoredTemplate(request.Slug, render.Input{ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.Configuration.Network.APIPort, Configuration: request.Configuration, Secrets: request.Secrets, RuntimeSecrets: request.RuntimeSecrets})
 			if renderErr != nil {
 				return &contracts.ReconcileFailure{Cause: fmt.Errorf("render rotation runtime: %w", renderErr), RollbackSucceeded: false}
 			}

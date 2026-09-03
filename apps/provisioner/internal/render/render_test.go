@@ -188,6 +188,28 @@ services:
     image: supabase/logflare:1.22.4
 `
 
+func init() {
+	testTemplateCompose = []byte(testCompose)
+	testTemplateFiles = map[string][]byte{}
+	root := filepath.Join("..", "..", "..", "..", "internal", "templates", "self-hosted-v0.8.0")
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		testTemplateFiles[filepath.ToSlash(relative)] = data
+		return nil
+	})
+	testTemplateEnv = testTemplateFiles[".env.example"]
+}
+
 func testConfiguration() contracts.ProjectConfiguration {
 	return contracts.ProjectConfiguration{
 		Revision:  1,

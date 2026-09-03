@@ -41,7 +41,7 @@ func ValidateDraft(draft Draft) error {
 		}
 	}
 	if cfg.General.SupabaseVersion == "" || strings.EqualFold(cfg.General.SupabaseVersion, "latest") || strings.EqualFold(cfg.General.SupabaseVersion, "master") {
-		errs = append(errs, FieldError{Field: "configuration.general.supabaseVersion", Message: "must be a pinned supported version"})
+		errs = append(errs, FieldError{Field: "configuration.general.supabaseVersion", Message: "must use the managed official template channel"})
 	}
 	if errConfiguration := ValidateConfiguration(cfg); errConfiguration != nil {
 		errs = append(errs, errConfiguration)

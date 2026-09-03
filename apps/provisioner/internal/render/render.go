@@ -8,7 +8,6 @@ import (
 
 	provisionersecrets "supabase-manager/apps/provisioner/internal/secrets"
 	"supabase-manager/internal/contracts"
-	"supabase-manager/internal/templates"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,6 +22,8 @@ type Input struct {
 	Secrets         provisionersecrets.ProjectSecrets
 	RuntimeSecrets  map[string]string
 	TemplateCompose []byte
+	TemplateEnv     []byte
+	TemplateFiles   map[string][]byte
 }
 
 type OutputFiles struct {
@@ -34,6 +35,12 @@ type OutputFiles struct {
 	EnabledComposeServices []string
 }
 
+// testTemplateCompose is intentionally unset in production. Unit tests may
+// inject a small fixture without reintroducing a compiled runtime template.
+var testTemplateCompose []byte
+var testTemplateEnv []byte
+var testTemplateFiles map[string][]byte
+
 func Project(input Input) (OutputFiles, error) {
 	if input.APIPort == 0 {
 		input.APIPort = input.Configuration.Network.APIPort
@@ -43,9 +50,6 @@ func Project(input Input) (OutputFiles, error) {
 	}
 	if input.Slug == "" || input.APIPort < 1 || input.APIPort > 65535 {
 		return OutputFiles{}, fmt.Errorf("slug and valid API port are required")
-	}
-	if input.Configuration.General.SupabaseVersion != "self-hosted/v0.8.0" {
-		return OutputFiles{}, fmt.Errorf("general.supabaseVersion: unsupported pinned version %q", input.Configuration.General.SupabaseVersion)
 	}
 	if input.Configuration.General.Domain == "" || input.Configuration.General.SiteURL == "" {
 		return OutputFiles{}, fmt.Errorf("domain and site URL are required")
@@ -101,12 +105,23 @@ func Project(input Input) (OutputFiles, error) {
 	}
 	var compose map[string]any
 	if len(input.TemplateCompose) == 0 {
-		var err error
-		compose, err = loadOfficialCompose(input.Configuration)
-		if err != nil {
-			return OutputFiles{}, err
+		input.TemplateCompose = testTemplateCompose
+		input.TemplateEnv = testTemplateEnv
+		if len(testTemplateFiles) > 0 {
+			compose, err := LoadOfficialCompose(input.Configuration, testTemplateFiles)
+			if err != nil {
+				return OutputFiles{}, err
+			}
+			input.TemplateCompose, err = yaml.Marshal(compose)
+			if err != nil {
+				return OutputFiles{}, err
+			}
 		}
-	} else if err := yaml.NewDecoder(bytes.NewReader(input.TemplateCompose)).Decode(&compose); err != nil {
+	}
+	if len(input.TemplateCompose) == 0 {
+		return OutputFiles{}, fmt.Errorf("official Supabase Compose template is required")
+	}
+	if err := yaml.NewDecoder(bytes.NewReader(input.TemplateCompose)).Decode(&compose); err != nil {
 		return OutputFiles{}, fmt.Errorf("decode pinned Compose: %w", err)
 	}
 	services, ok := compose["services"].(map[string]any)
@@ -271,12 +286,11 @@ func validateSelectedServices(config contracts.ProjectConfiguration, available m
 	return nil
 }
 
-func loadOfficialCompose(config contracts.ProjectConfiguration) (map[string]any, error) {
-	root := templates.Files()
+func LoadOfficialCompose(config contracts.ProjectConfiguration, files map[string][]byte) (map[string]any, error) {
 	read := func(name string) (map[string]any, error) {
-		data, err := root.ReadFile("self-hosted-v0.8.0/" + name)
-		if err != nil {
-			return nil, fmt.Errorf("read pinned Compose overlay %s: %w", name, err)
+		data := files[name]
+		if len(data) == 0 {
+			return nil, fmt.Errorf("official Compose template is missing overlay %s", name)
 		}
 		var value map[string]any
 		if err := yaml.Unmarshal(data, &value); err != nil {
@@ -289,7 +303,7 @@ func loadOfficialCompose(config contracts.ProjectConfiguration) (map[string]any,
 		return nil, err
 	}
 	if config.Database.Version != "17" {
-		return nil, fmt.Errorf("database.version: PostgreSQL 17 is the only supported pinned runtime")
+		return nil, fmt.Errorf("database.version: PostgreSQL 17 is the only supported official runtime")
 	}
 	// PostgreSQL 17 is the only pinned database runtime. Keep its explicit
 	// official overlay so generated Compose stays canonical with the upstream

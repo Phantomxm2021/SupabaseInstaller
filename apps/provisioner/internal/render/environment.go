@@ -10,7 +10,6 @@ import (
 
 	"supabase-manager/internal/authkeys"
 	"supabase-manager/internal/contracts"
-	"supabase-manager/internal/templates"
 )
 
 const (
@@ -236,7 +235,7 @@ func renderEnvironment(input Input) (string, string, error) {
 		return "", "", err
 	}
 
-	env := renderDotEnv(string(templates.EnvExample()), values)
+	env := renderDotEnv(string(input.TemplateEnv), values)
 	functionValues := map[string]string{}
 	for _, variable := range cfg.Functions.Variables {
 		if !validEnvName(variable.Name) || isReservedRuntimeKey(variable.Name) {

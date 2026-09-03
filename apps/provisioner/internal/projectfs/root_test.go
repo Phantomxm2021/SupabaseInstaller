@@ -9,6 +9,26 @@ import (
 	"testing"
 )
 
+func init() {
+	testTemplateFiles = map[string][]byte{}
+	root := filepath.Join("..", "..", "..", "..", "internal", "templates", "self-hosted-v0.8.0")
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		testTemplateFiles[filepath.ToSlash(relative)] = data
+		return nil
+	})
+}
+
 func TestProjectPathRejectsTraversalAndAbsoluteInput(t *testing.T) {
 	root, err := New(t.TempDir())
 	if err != nil {
@@ -32,6 +52,44 @@ func TestProjectPathReturnsContainedDirectory(t *testing.T) {
 	}
 	if path != base+"/bee-2" {
 		t.Fatalf("ProjectPath() = %q, want %q", path, base+"/bee-2")
+	}
+}
+
+func TestOfficialTemplateUpdateReplacesOnlyUnmodifiedManagedFiles(t *testing.T) {
+	destination := t.TempDir()
+	initial := map[string][]byte{
+		"docker-compose.yml": []byte("services: {}\n"), ".env.example": []byte("A=B\n"),
+		"volumes/db/_supabase.sql": []byte("select 1;\n"), "volumes/api/config.yml": []byte("version: one\n"),
+	}
+	if err := copyOfficialTemplate(destination, initial); err != nil {
+		t.Fatal(err)
+	}
+	updated := map[string][]byte{}
+	for name, value := range initial {
+		updated[name] = value
+	}
+	updated["volumes/db/_supabase.sql"] = []byte("select 2;\n")
+	updated["volumes/api/config.yml"] = []byte("version: two\n")
+	if err := copyOfficialTemplate(destination, updated); err != nil {
+		t.Fatal(err)
+	}
+	apiPath := filepath.Join(destination, "volumes", "api", "config.yml")
+	if got, _ := os.ReadFile(apiPath); string(got) != "version: two\n" {
+		t.Fatalf("managed update = %q", got)
+	}
+	dbPath := filepath.Join(destination, "volumes", "db", "_supabase.sql")
+	if got, _ := os.ReadFile(dbPath); string(got) != "select 1;\n" {
+		t.Fatalf("database bootstrap was overwritten: %q", got)
+	}
+	if err := os.WriteFile(apiPath, []byte("operator override\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	updated["volumes/api/config.yml"] = []byte("version: three\n")
+	if err := copyOfficialTemplate(destination, updated); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(apiPath); string(got) != "operator override\n" {
+		t.Fatalf("operator file was overwritten: %q", got)
 	}
 }
 

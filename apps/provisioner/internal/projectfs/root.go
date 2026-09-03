@@ -1,6 +1,7 @@
 package projectfs
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	"supabase-manager/internal/contracts"
-	"supabase-manager/internal/templates"
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -29,6 +29,8 @@ type Metadata struct {
 	Idempotency     map[string]json.RawMessage     `json:"idempotency"`
 	Configuration   contracts.ProjectConfiguration `json:"configuration,omitempty"`
 	EnabledServices []string                       `json:"enabledServices,omitempty"`
+	TemplateRef     string                         `json:"templateRef,omitempty"`
+	TemplateSHA256  string                         `json:"templateSha256,omitempty"`
 	// Fence is the Manager lease generation which owns the published runtime.
 	// A zero value is retained for metadata written by pre-fencing versions.
 	Fence    int64            `json:"fence,omitempty"`
@@ -88,7 +90,17 @@ type RuntimeFiles struct {
 	Env             []byte
 	FunctionsEnv    []byte
 	MailerTemplates map[string][]byte
+	// TemplateFiles is the verified official docker directory, keyed by a
+	// slash-separated path relative to docker/. It is stored with the project
+	// as an immutable rollback/bootstrap snapshot, never compiled into Manager.
+	TemplateRef    string
+	TemplateSHA256 string
+	TemplateFiles  map[string][]byte
 }
+
+// testTemplateFiles is populated only by projectfs tests. Production code must
+// supply the verified snapshot downloaded from Supabase.
+var testTemplateFiles map[string][]byte
 
 // legacyRuntimeNames are the only runtime artifacts ever written by older
 // Manager versions at the project root. All other root entries belong to the
@@ -110,6 +122,42 @@ func (r *Root) RuntimePath(slug string) (string, error) {
 	return r.ProjectPath(slug)
 }
 
+// OfficialTemplateFiles returns the immutable official template snapshot that
+// was applied to this server. It never reads a caller-selected path.
+func (r *Root) OfficialTemplateFiles(slug string) (map[string][]byte, error) {
+	projectPath, err := r.ProjectPath(slug)
+	if err != nil {
+		return nil, err
+	}
+	root := filepath.Join(projectPath, ".manager-template", "files")
+	files := map[string][]byte{}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil || !safeTemplatePath(filepath.ToSlash(relative)) {
+			return errors.New("official template snapshot contains an unsafe path")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(relative)] = data
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(files["docker-compose.yml"]) == 0 || len(files[".env.example"]) == 0 {
+		return nil, errors.New("official template snapshot is incomplete")
+	}
+	return files, nil
+}
+
 // ResetInitialDatabase replaces the complete database bootstrap directory for
 // an installation that has not yet published a runtime revision. PostgreSQL
 // executes its official initialization exactly once, and its mounted SQL files
@@ -127,7 +175,7 @@ func (r *Root) ResetInitialDatabase(slug string) error {
 	dbDirectory := filepath.Join(projectPath, "volumes", "db")
 	dbInfo, err := os.Lstat(dbDirectory)
 	if errors.Is(err, os.ErrNotExist) {
-		return copyEmbeddedDatabaseTemplate(projectPath)
+		return copyOfficialDatabaseTemplate(projectPath)
 	} else if err != nil {
 		return fmt.Errorf("inspect initial database bootstrap directory: %w", err)
 	} else if dbInfo.Mode()&os.ModeSymlink != 0 || !dbInfo.IsDir() {
@@ -136,7 +184,7 @@ func (r *Root) ResetInitialDatabase(slug string) error {
 	if err := os.RemoveAll(dbDirectory); err != nil {
 		return fmt.Errorf("reset initial database bootstrap: %w", err)
 	}
-	if err := copyEmbeddedDatabaseTemplate(projectPath); err != nil {
+	if err := copyOfficialDatabaseTemplate(projectPath); err != nil {
 		return err
 	}
 	if err := syncDirectory(dbDirectory); err != nil {
@@ -263,7 +311,7 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 		if err != nil {
 			return RuntimeRef{}, nil, nil, fmt.Errorf("create server staging directory: %w", err)
 		}
-		if err := copyEmbeddedTemplate(staging); err != nil {
+		if err := copyOfficialTemplate(staging, files.TemplateFiles); err != nil {
 			_ = os.RemoveAll(staging)
 			return RuntimeRef{}, nil, nil, err
 		}
@@ -287,7 +335,7 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 			if !owned {
 				return RuntimeRef{}, nil, nil, errors.New("server template is incomplete and contains existing user data")
 			}
-			if err := copyEmbeddedTemplate(projectPath); err != nil {
+			if err := copyOfficialTemplate(projectPath, files.TemplateFiles); err != nil {
 				return RuntimeRef{}, nil, nil, fmt.Errorf("hydrate incomplete server template: %w", err)
 			}
 		} else if markerErr != nil {
@@ -554,97 +602,112 @@ func cleanupAbandonedLegacyQuarantines(projectPath string) error {
 	return nil
 }
 
-func copyEmbeddedTemplate(destination string) error {
-	templateFS := templates.Files()
-	const sourceRoot = "self-hosted-v0.8.0"
-	return fs.WalkDir(templateFS, sourceRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+func copyOfficialTemplate(destination string, files map[string][]byte) error {
+	if len(files) == 0 {
+		files = testTemplateFiles
+	}
+	if len(files) == 0 {
+		// StageRuntimeFiles is also used by narrowly scoped recovery tests and
+		// legacy migration tooling. Reconciliation always supplies a snapshot;
+		// a caller without one may stage runtime files but cannot reset/bootstrap
+		// a database until a normal official-template reconcile occurs.
+		return nil
+	}
+	for relative, data := range files {
+		if !safeTemplatePath(relative) {
+			return fmt.Errorf("unsafe official template path %q", relative)
+		}
+		cachePath := filepath.Join(destination, ".manager-template", "files", filepath.FromSlash(relative))
+		previous, previousErr := os.ReadFile(cachePath)
+		if previousErr != nil && !errors.Is(previousErr, os.ErrNotExist) {
+			return fmt.Errorf("read previous official template file %s: %w", relative, previousErr)
+		}
+		if relative != "docker-compose.yml" && relative != ".env.example" && !strings.HasPrefix(relative, ".") {
+			target := filepath.Join(destination, filepath.FromSlash(relative))
+			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+				return err
+			}
+			current, currentErr := os.ReadFile(target)
+			writeTarget := errors.Is(currentErr, os.ErrNotExist)
+			if currentErr != nil && !errors.Is(currentErr, os.ErrNotExist) {
+				return fmt.Errorf("read managed template file %s: %w", relative, currentErr)
+			}
+			// Database bootstrap is consumed exactly once. Never change it after
+			// it exists. For other files, an exact match with the prior official
+			// snapshot proves Manager owns it and makes a safe update possible.
+			if strings.HasPrefix(relative, "volumes/db/") && currentErr == nil {
+				writeTarget = false
+			} else if currentErr == nil && previousErr == nil && bytes.Equal(current, previous) {
+				writeTarget = true
+			}
+			if writeTarget {
+				mode := os.FileMode(0o600)
+				if strings.HasPrefix(relative, "volumes/db/") {
+					mode = 0o644
+				}
+				if strings.HasSuffix(relative, ".sh") || strings.HasSuffix(relative, "entrypoint.sh") {
+					mode = 0o700
+				}
+				if err := os.WriteFile(target, data, mode); err != nil {
+					return fmt.Errorf("write official template file %s: %w", relative, err)
+				}
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(cachePath), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(cachePath, data, 0o600); err != nil {
+			return fmt.Errorf("cache official template file %s: %w", relative, err)
+		}
+	}
+	return nil
+}
+
+func copyOfficialDatabaseTemplate(destination string) error {
+	root := filepath.Join(destination, ".manager-template", "files", "volumes", "db")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("official database bootstrap snapshot is unavailable")
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		_ = entry
+	}
+	return copyTemplateTree(root, filepath.Join(destination, "volumes", "db"))
+}
+
+func copyTemplateTree(source, destination string) error {
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		relative := strings.TrimPrefix(path, sourceRoot)
-		relative = strings.TrimPrefix(relative, "/")
-		if relative == "" {
-			return nil
+		relative, err := filepath.Rel(source, path)
+		if err != nil || (relative != "." && !safeTemplatePath(filepath.ToSlash(relative))) {
+			return errors.New("unsafe official database snapshot path")
 		}
-		switch relative {
-		case "docker-compose.yml", ".env", ".env.functions":
-			return nil
-		}
-		target := filepath.Join(destination, filepath.FromSlash(relative))
 		if entry.IsDir() {
-			return os.MkdirAll(target, 0o700)
+			return os.MkdirAll(filepath.Join(destination, relative), 0o755)
 		}
-		data, err := templateFS.ReadFile(path)
+		data, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("read embedded template file %s: %w", path, err)
+			return err
 		}
-		info, err := entry.Info()
-		if err != nil {
-			return fmt.Errorf("read embedded template mode %s: %w", path, err)
+		target := filepath.Join(destination, relative)
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
 		}
-		// PostgreSQL runs the mounted bootstrap SQL as its own container user,
-		// not as the provisioner account.  Keep Manager-owned env/runtime files
-		// private, but make the official database assets world-readable so a
-		// first bootstrap cannot fail with "permission denied".
-		mode := fs.FileMode(0o600)
-		if strings.HasPrefix(relative, "volumes/db/") {
-			mode = 0o644
-		}
-		if info.Mode()&0o111 != 0 {
-			mode = 0o700
-		}
-		if _, err := os.Stat(target); err == nil {
-			// Existing project/user files are authoritative. Hydration may fill a
-			// missing template asset but must never overwrite user content.
-			return nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("inspect existing template file %s: %w", relative, err)
-		}
-		if err := os.WriteFile(target, data, mode); err != nil {
-			return fmt.Errorf("write template file %s: %w", relative, err)
-		}
-		return nil
+		return writeAtomic(filepath.Dir(target), filepath.Base(target), data, 0o644)
 	})
 }
 
-// copyEmbeddedDatabaseTemplate restores only the pinned database bootstrap
-// assets. The directory has already been removed by ResetInitialDatabase, so
-// no old project file can shadow a current migration or role definition.
-func copyEmbeddedDatabaseTemplate(destination string) error {
-	templateFS := templates.Files()
-	const sourceRoot = "self-hosted-v0.8.0/volumes/db"
-	return fs.WalkDir(templateFS, sourceRoot, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		relative := strings.TrimPrefix(path, sourceRoot)
-		relative = strings.TrimPrefix(relative, "/")
-		targetRoot := filepath.Join(destination, "volumes", "db")
-		if relative == "" {
-			return os.MkdirAll(targetRoot, 0o755)
-		}
-		target := filepath.Join(targetRoot, filepath.FromSlash(relative))
-		if entry.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		data, err := templateFS.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read embedded database bootstrap file %s: %w", path, err)
-		}
-		// These assets are bind-mounted into the official PostgreSQL image,
-		// whose migration process runs as its postgres user rather than the
-		// provisioner user that writes this project directory. They are static
-		// bootstrap SQL (JWT values are resolved from the container environment),
-		// so they must be readable by that user. Runtime .env files remain 0600.
-		mode := fs.FileMode(0o644)
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return fmt.Errorf("create database bootstrap directory %s: %w", relative, err)
-		}
-		if err := writeAtomic(filepath.Dir(target), filepath.Base(target), data, mode); err != nil {
-			return fmt.Errorf("write database bootstrap file %s: %w", relative, err)
-		}
-		return nil
-	})
+func safeTemplatePath(path string) bool {
+	path = filepath.ToSlash(filepath.Clean(path))
+	return path != "." && !filepath.IsAbs(path) && !strings.HasPrefix(path, "../") && !strings.Contains(path, "/../")
 }
 
 func switchRuntimePointer(runtimeRoot, current, target string) error {

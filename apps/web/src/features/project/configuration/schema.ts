@@ -24,7 +24,7 @@ export const generalSchema = z.object({
   domain: z.string().default(""),
   siteUrl: httpURL,
   authSiteUrl: httpURL.or(z.literal('')),
-  supabaseVersion: z.literal(SUPABASE_VERSION),
+  supabaseVersion: z.union([z.literal(SUPABASE_VERSION), z.string().regex(/^self-hosted\/v0\.\d+\.\d+$/)]),
   studioUsername: z.string().trim().min(1, "Studio username is required").default("supabase"),
   studioPasswordSet: z.boolean().default(false),
   studioPassword: secretAction.default({ action: "" }),

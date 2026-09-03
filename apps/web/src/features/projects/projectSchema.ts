@@ -7,7 +7,7 @@ import type {
 } from "../../api/types";
 
 export const PRESETS = ["LIGHTWEIGHT", "STANDARD", "FULL", "CUSTOM"] as const;
-export const SUPABASE_VERSION = "self-hosted/v0.8.0";
+export const SUPABASE_VERSION = "self-hosted/latest";
 export const OAUTH_PROVIDERS = [
   "apple",
   "azure",
@@ -665,7 +665,9 @@ const baseConfiguration = z.object({
     domain: z.string(),
     siteUrl: z.string(),
     authSiteUrl: z.string().default(""),
-    supabaseVersion: z.literal(SUPABASE_VERSION),
+    // New servers follow the official channel; accept an installed v0 release
+    // so legacy projects can still be edited and upgraded through Actions.
+    supabaseVersion: z.union([z.literal(SUPABASE_VERSION), z.string().regex(/^self-hosted\/v0\.\d+\.\d+$/)]),
     studioUsername: z.string().trim().min(1, "Studio username is required").default("supabase"),
     studioPasswordSet: z.boolean().default(false),
     studioPassword: secret.default({ action: "" }),

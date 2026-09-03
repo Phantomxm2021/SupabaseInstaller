@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
+	"supabase-manager/apps/provisioner/internal/officialtemplate"
 	"supabase-manager/apps/provisioner/internal/projectfs"
 	"supabase-manager/apps/provisioner/internal/proxy"
 	"supabase-manager/internal/contracts"
@@ -36,6 +38,14 @@ type HealthInspector interface {
 	Project(ctx context.Context, project health.ProjectRef) (health.Report, error)
 }
 
+type templateSource interface {
+	Resolve(context.Context, string, bool) (officialtemplate.Snapshot, error)
+}
+
+// testTemplateSourceFactory is nil in production. Runtime package tests inject
+// a local fixture through it, so tests never make a network call.
+var testTemplateSourceFactory func(*projectfs.Root) templateSource
+
 type Backend struct {
 	projectFS                   *projectfs.Root
 	runner                      LifecycleRunner
@@ -43,6 +53,7 @@ type Backend struct {
 	proxy                       proxy.Client
 	acceptanceInspectorFailOnce atomic.Bool
 	functions                   *FunctionService
+	templates                   templateSource
 }
 
 const (
@@ -55,7 +66,17 @@ func NewBackend(projectFS *projectfs.Root, runner LifecycleRunner, inspector Hea
 	if len(proxyClients) > 0 && proxyClients[0] != nil {
 		proxyClient = proxyClients[0]
 	}
-	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector, proxy: proxyClient, functions: NewFunctionService(projectFS, runner)}
+	var templates templateSource
+	if testTemplateSourceFactory != nil {
+		templates = testTemplateSourceFactory(projectFS)
+	} else {
+		var err error
+		templates, err = officialtemplate.New(filepath.Join(projectFS.BasePath(), ".manager-template-cache"), nil)
+		if err != nil {
+			panic(err)
+		}
+	}
+	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector, proxy: proxyClient, functions: NewFunctionService(projectFS, runner), templates: templates}
 }
 
 // DeployFunction is the only runtime entry point used by the Provisioner HTTP
