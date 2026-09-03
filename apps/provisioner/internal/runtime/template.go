@@ -9,6 +9,9 @@ import (
 )
 
 func (backend *Backend) renderStoredTemplate(slug string, input render.Input) (render.OutputFiles, error) {
+	if input.ProvisionerImageRef == "" {
+		input.ProvisionerImageRef = backend.provisionerImageRef
+	}
 	files, err := backend.projectFS.OfficialTemplateFiles(slug)
 	if err != nil {
 		return render.OutputFiles{}, fmt.Errorf("load official template snapshot: %w", err)

@@ -71,5 +71,6 @@ func fixtureRenderInput(t *testing.T, input render.Input) render.Input {
 		t.Fatal(err)
 	}
 	input.TemplateEnv, input.TemplateFiles = snapshot.EnvExample(), snapshot.Files
+	input.ProvisionerImageRef = "supabase-provisioner:test"
 	return input
 }

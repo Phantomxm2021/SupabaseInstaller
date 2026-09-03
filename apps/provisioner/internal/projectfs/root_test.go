@@ -1,6 +1,7 @@
 package projectfs
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,45 @@ import (
 	"sync"
 	"testing"
 )
+
+func TestStageRuntimeFilesPublishesManagerOwnedEventWorkerAndPersistentLogDirectory(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commit, err := root.StageRuntimeFiles("event-assets", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := root.ProjectPath("event-assets")
+	worker := filepath.Join(project, ".manager-runtime", "function-logs", "event-worker", "index.ts")
+	data, err := os.ReadFile(worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("new globalThis.EventManager()")) {
+		t.Fatalf("event worker does not use pinned runtime API: %s", data)
+	}
+	databaseDir := filepath.Join(project, ".manager-runtime", "function-logs")
+	if info, err := os.Stat(databaseDir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("database directory = %v, %v", info, err)
+	}
+	firstWorker := string(data)
+	_, commit, err = root.StageRuntimeFiles("event-assets", RuntimeFiles{Compose: []byte("compose-2"), Env: []byte("env-2"), FunctionsEnv: []byte("functions-2")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(worker)
+	if err != nil || string(data) != firstWorker {
+		t.Fatalf("stable worker changed across generation swap: %v", err)
+	}
+}
 
 func init() {
 	testTemplateFiles = map[string][]byte{}

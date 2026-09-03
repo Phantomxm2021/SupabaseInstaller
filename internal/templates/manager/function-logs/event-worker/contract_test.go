@@ -1,6 +1,7 @@
 package eventworker
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -9,6 +10,23 @@ import (
 
 	"supabase-manager/internal/contracts"
 )
+
+func TestAdapterUsesPinnedAPIAndBoundedDelivery(t *testing.T) {
+	source := Source()
+	for _, required := range [][]byte{
+		[]byte("new globalThis.EventManager()"),
+		[]byte("MAX_QUEUE = 1000"),
+		[]byte("MAX_BATCH = 100"),
+		[]byte("FLUSH_INTERVAL_MS = 250"),
+		[]byte("FETCH_TIMEOUT_MS = 500"),
+		[]byte("http://function-log-collector:8081/internal/v1/events"),
+		[]byte("crypto.subtle.digest(\"SHA-256\""),
+	} {
+		if !bytes.Contains(source, required) {
+			t.Errorf("adapter missing %q", required)
+		}
+	}
+}
 
 // These values pin the Edge Runtime compatibility contract verified by running
 // the image and capturing its event-worker callback payloads.

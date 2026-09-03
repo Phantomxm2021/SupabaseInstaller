@@ -1,9 +1,15 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	_ = os.Setenv("PROVISIONER_IMAGE_REF", "supabase-provisioner:test")
+	os.Exit(m.Run())
+}
 
 func TestLoadDefaultsToPrivateAddressAndProjectRoot(t *testing.T) {
 	t.Setenv("MANAGER_TOKEN", strings.Repeat("a", 32))
@@ -19,6 +25,21 @@ func TestLoadDefaultsToPrivateAddressAndProjectRoot(t *testing.T) {
 	}
 	if cfg.ProjectRoot != "/opt/supabase-manager/projects" {
 		t.Fatalf("ProjectRoot = %q, want default project root", cfg.ProjectRoot)
+	}
+	if cfg.ProvisionerImageRef != "supabase-provisioner:test" {
+		t.Fatalf("ProvisionerImageRef = %q", cfg.ProvisionerImageRef)
+	}
+}
+
+func TestLoadRequiresConcreteProvisionerImageReference(t *testing.T) {
+	t.Setenv("MANAGER_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("PROVISIONER_IMAGE_REF", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PROVISIONER_IMAGE_REF") {
+		t.Fatalf("Load() error = %v, want image reference validation", err)
+	}
+	t.Setenv("PROVISIONER_IMAGE_REF", "supabase-provisioner:${MANAGER_IMAGE_TAG}")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PROVISIONER_IMAGE_REF") {
+		t.Fatalf("Load() error = %v, want interpolation rejection", err)
 	}
 }
 

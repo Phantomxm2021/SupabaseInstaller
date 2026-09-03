@@ -127,6 +127,7 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			ProjectID: request.ProjectID, ProjectName: request.ProjectName, Slug: request.Slug, APIPort: request.APIPort,
 			Configuration: request.Configuration, Secrets: request.Secrets, RuntimeSecrets: request.RuntimeSecrets,
 			TemplateCompose: composeBytes, TemplateEnv: snapshot.EnvExample(), TemplateFiles: snapshot.Files,
+			ProvisionerImageRef: backend.provisionerImageRef,
 		})
 		if err != nil {
 			return fail(reconcileFailure(err, false))
@@ -199,6 +200,9 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			}
 			rollbackServices := append(affectedServices(previousConfig, request.Configuration), disabled...)
 			rollbackServices = intersect(unique(rollbackServices), previousServices)
+			if previousConfig.Services.Functions && contains(previousServices, "function-log-collector") && !contains(rollbackServices, "function-log-collector") {
+				rollbackServices = append(rollbackServices, "function-log-collector")
+			}
 			var recoveryErr error
 			if request.ForceRecreate && len(previousServices) > 0 {
 				if err := action(func(actionCtx context.Context) error {
@@ -760,7 +764,20 @@ func servicesToRecreate(before, after contracts.ProjectConfiguration, enabled []
 	if force {
 		return append([]string(nil), enabled...)
 	}
-	return intersect(affectedServices(before, after), enabled)
+	result := intersect(affectedServices(before, after), enabled)
+	if after.Services.Functions && contains(enabled, "function-log-collector") && !contains(result, "function-log-collector") {
+		result = append(result, "function-log-collector")
+	}
+	return result
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func enabledServices(config contracts.ProjectConfiguration) []string {

@@ -51,6 +51,7 @@ func main() {
 		certificateStager = managedProxy
 	}
 	backend := provisionerruntime.NewBackend(root, compose.NewRunner(compose.OSExecutor{}), health.NewInspector(dockerSource), proxyClient)
+	backend.SetProvisionerImageRef(cfg.ProvisionerImageRef)
 	if cfg.AcceptanceInspectorFailOnce {
 		backend.EnableAcceptanceInspectorFailure()
 	}

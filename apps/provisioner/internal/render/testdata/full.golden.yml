@@ -77,7 +77,6 @@ services:
             GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
             GOTRUE_DB_DRIVER: postgres
             GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP}
-            GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: ${MANUAL_LINKING_ENABLED}
             GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: ${ENABLE_ANONYMOUS_USERS}
             GOTRUE_EXTERNAL_EMAIL_ENABLED: ${ENABLE_EMAIL_SIGNUP}
             GOTRUE_EXTERNAL_PHONE_ENABLED: ${ENABLE_PHONE_SIGNUP}
@@ -85,15 +84,9 @@ services:
             GOTRUE_JWT_AUD: authenticated
             GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
             GOTRUE_JWT_EXP: ${JWT_EXPIRY}
-            GOTRUE_JWT_KEYS: ${JWT_KEYS:-[]}
             GOTRUE_JWT_ISSUER: ${API_EXTERNAL_URL}
+            GOTRUE_JWT_KEYS: ${JWT_KEYS:-[]}
             GOTRUE_JWT_SECRET: ${JWT_SECRET}
-            GOTRUE_RATE_LIMIT_ANONYMOUS_USERS: ${RATE_LIMIT_ANONYMOUS_USERS}
-            GOTRUE_RATE_LIMIT_EMAIL_SENT: ${RATE_LIMIT_EMAIL_SENT}
-            GOTRUE_RATE_LIMIT_OTP: ${RATE_LIMIT_OTP}
-            GOTRUE_RATE_LIMIT_SMS_SENT: ${RATE_LIMIT_SMS_SENT}
-            GOTRUE_RATE_LIMIT_TOKEN_REFRESH: ${RATE_LIMIT_TOKEN_REFRESH}
-            GOTRUE_RATE_LIMIT_VERIFY: ${RATE_LIMIT_VERIFY}
             GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM}
             GOTRUE_MAILER_NOTIFICATIONS_EMAIL_CHANGED_ENABLED: ${MAILER_NOTIFICATIONS_EMAIL_CHANGED_ENABLED}
             GOTRUE_MAILER_NOTIFICATIONS_IDENTITY_LINKED_ENABLED: ${MAILER_NOTIFICATIONS_IDENTITY_LINKED_ENABLED}
@@ -131,6 +124,10 @@ services:
             GOTRUE_MAILER_TEMPLATES_PHONE_CHANGED_NOTIFICATION: ${MAILER_TEMPLATE_PHONE_CHANGED_NOTIFICATION}
             GOTRUE_MAILER_TEMPLATES_REAUTHENTICATION: ${MAILER_TEMPLATE_REAUTHENTICATION}
             GOTRUE_MAILER_TEMPLATES_RECOVERY: ${MAILER_TEMPLATE_RECOVERY}
+            GOTRUE_MAILER_URLPATHS_CONFIRMATION: ${MAILER_URLPATHS_CONFIRMATION}
+            GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: ${MAILER_URLPATHS_EMAIL_CHANGE}
+            GOTRUE_MAILER_URLPATHS_INVITE: ${MAILER_URLPATHS_INVITE}
+            GOTRUE_MAILER_URLPATHS_RECOVERY: ${MAILER_URLPATHS_RECOVERY}
             GOTRUE_MFA_MAX_ENROLLED_FACTORS: ${MFA_MAX_ENROLLED_FACTORS}
             GOTRUE_MFA_PHONE_ENROLL_ENABLED: ${MFA_PHONE_ENROLL_ENABLED}
             GOTRUE_MFA_PHONE_OTP_LENGTH: ${MFA_PHONE_OTP_LENGTH}
@@ -140,12 +137,15 @@ services:
             GOTRUE_PASSWORD_HIBP_ENABLED: ${PREVENT_LEAKED_PASSWORDS}
             GOTRUE_PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH}
             GOTRUE_PASSWORD_REQUIRED_CHARACTERS: ${PASSWORD_REQUIRED_CHARACTERS}
+            GOTRUE_RATE_LIMIT_ANONYMOUS_USERS: ${RATE_LIMIT_ANONYMOUS_USERS}
+            GOTRUE_RATE_LIMIT_EMAIL_SENT: ${RATE_LIMIT_EMAIL_SENT}
+            GOTRUE_RATE_LIMIT_OTP: ${RATE_LIMIT_OTP}
+            GOTRUE_RATE_LIMIT_SMS_SENT: ${RATE_LIMIT_SMS_SENT}
+            GOTRUE_RATE_LIMIT_TOKEN_REFRESH: ${RATE_LIMIT_TOKEN_REFRESH}
+            GOTRUE_RATE_LIMIT_VERIFY: ${RATE_LIMIT_VERIFY}
+            GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: ${MANUAL_LINKING_ENABLED}
             GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD: ${REQUIRE_CURRENT_PASSWORD}
             GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: ${SECURE_PASSWORD_CHANGE_ENABLED}
-            GOTRUE_MAILER_URLPATHS_CONFIRMATION: ${MAILER_URLPATHS_CONFIRMATION}
-            GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: ${MAILER_URLPATHS_EMAIL_CHANGE}
-            GOTRUE_MAILER_URLPATHS_INVITE: ${MAILER_URLPATHS_INVITE}
-            GOTRUE_MAILER_URLPATHS_RECOVERY: ${MAILER_URLPATHS_RECOVERY}
             GOTRUE_SITE_URL: ${SITE_URL}
             GOTRUE_SMS_AUTOCONFIRM: ${ENABLE_PHONE_AUTOCONFIRM}
             GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL}
@@ -207,26 +207,57 @@ services:
             - ./volumes/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:Z
             - ./volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:Z
             - db-config:/etc/postgresql-custom
+    function-log-collector:
+        environment:
+            FUNCTION_LOG_DATABASE_PATH: /var/lib/function-logs/function-logs.db
+            FUNCTION_LOG_FUNCTIONS_ENV: /srv/runtime/.env.functions
+            FUNCTION_LOG_FUNCTIONS_ROOT: /srv/functions
+            FUNCTION_LOG_LISTEN_ADDR: 0.0.0.0:8081
+            FUNCTION_LOG_PROJECT_ENV: /srv/runtime/.env
+            FUNCTION_LOG_PROJECT_ID: test-full
+            PROVISIONER_MODE: function-log-collector
+        healthcheck:
+            interval: 5s
+            retries: 20
+            start_period: 2s
+            test:
+                - CMD
+                - wget
+                - -q
+                - --spider
+                - http://127.0.0.1:8081/health/live
+            timeout: 3s
+        image: supabase-provisioner:test
+        restart: unless-stopped
+        volumes:
+            - ./.manager-runtime/function-logs:/var/lib/function-logs
+            - ./volumes/functions:/srv/functions:ro
+            - ./.manager-runtime/current:/srv/runtime:ro
     functions:
         command:
             - start
             - --main-service
             - /home/deno/functions/main
+            - --event-worker
+            - /opt/supabase-manager/event-worker
         depends_on:
             api-gw:
+                condition: service_healthy
+            function-log-collector:
                 condition: service_healthy
         env_file:
             - ./.manager-runtime/current/.env.functions
         environment:
+            FUNCTION_LOG_PROJECT_ID: test-full
             JWT_SECRET: ${JWT_SECRET}
             SUPABASE_ANON_KEY: ${ANON_KEY}
             SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+            SUPABASE_JWKS: ${JWT_JWKS:-{"keys":[]}}
             SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL}
             SUPABASE_PUBLISHABLE_KEYS: '{"default":"${SUPABASE_PUBLISHABLE_KEY:-}"}'
             SUPABASE_SECRET_KEYS: '{"default":"${SUPABASE_SECRET_KEY:-}"}'
             SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
             SUPABASE_URL: http://api-gw:8000
-            SUPABASE_JWKS: ${JWT_JWKS:-{"keys":[]}}
             VERIFY_JWT: ${FUNCTIONS_VERIFY_JWT}
         healthcheck:
             interval: 5s
@@ -240,6 +271,7 @@ services:
         volumes:
             - ./volumes/functions:/home/deno/functions:z
             - deno-cache:/root/.cache/deno
+            - ./.manager-runtime/function-logs/event-worker:/opt/supabase-manager/event-worker:ro
     imgproxy:
         environment:
             IMGPROXY_AUTO_WEBP: ${IMGPROXY_AUTO_WEBP}
@@ -278,8 +310,8 @@ services:
             db:
                 condition: service_healthy
         environment:
-            API_JWT_SECRET: ${JWT_SECRET}
             API_JWT_JWKS: ${JWT_JWKS:-{"keys":[]}}
+            API_JWT_SECRET: ${JWT_SECRET}
             APP_NAME: realtime
             DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
             DB_ENC_KEY: ${REALTIME_DB_ENC_KEY}
@@ -349,7 +381,6 @@ services:
         environment:
             ANON_KEY: ${ANON_KEY}
             AUTH_JWT_SECRET: ${JWT_SECRET}
-            JWT_JWKS: ${JWT_JWKS:-{"keys":[]}}
             AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
             AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
             DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
@@ -361,6 +392,7 @@ services:
             GLOBAL_S3_FORCE_PATH_STYLE: ${GLOBAL_S3_FORCE_PATH_STYLE}
             GLOBAL_S3_PROTOCOL: ${GLOBAL_S3_PROTOCOL}
             IMGPROXY_URL: http://imgproxy:5001
+            JWT_JWKS: ${JWT_JWKS:-{"keys":[]}}
             POSTGREST_URL: http://rest:3000
             REGION: ${REGION}
             REQUEST_ALLOW_X_FORWARDED_PATH: "true"

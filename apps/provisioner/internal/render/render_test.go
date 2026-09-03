@@ -402,6 +402,101 @@ func TestRenderFunctionsWiresPrivateEnvFile(t *testing.T) {
 	}
 }
 
+func TestRenderFunctionsWiresPrivateEventCollector(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Functions = true
+	out, err := Project(Input{ProjectID: "project-123", Slug: "functions", APIPort: 18001, Configuration: cfg, ProvisionerImageRef: "registry.example/provisioner:release-42"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Services map[string]map[string]any `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(out.Compose), &document); err != nil {
+		t.Fatal(err)
+	}
+	collector := document.Services["function-log-collector"]
+	if collector == nil {
+		t.Fatal("function-log-collector is missing")
+	}
+	if collector["image"] != "registry.example/provisioner:release-42" {
+		t.Fatalf("collector image = %#v", collector["image"])
+	}
+	if _, exists := collector["ports"]; exists {
+		t.Fatal("collector must not publish a host port")
+	}
+	wantFragments := []string{
+		"PROVISIONER_MODE: function-log-collector",
+		"FUNCTION_LOG_PROJECT_ID: project-123",
+		"FUNCTION_LOG_DATABASE_PATH: /var/lib/function-logs/function-logs.db",
+		"FUNCTION_LOG_FUNCTIONS_ROOT: /srv/functions",
+		"FUNCTION_LOG_PROJECT_ENV: /srv/runtime/.env",
+		"FUNCTION_LOG_FUNCTIONS_ENV: /srv/runtime/.env.functions",
+		"FUNCTION_LOG_LISTEN_ADDR: 0.0.0.0:8081",
+		"./.manager-runtime/function-logs:/var/lib/function-logs",
+		"./volumes/functions:/srv/functions:ro",
+		"./.manager-runtime/current:/srv/runtime:ro",
+		"./.manager-runtime/function-logs/event-worker:/opt/supabase-manager/event-worker:ro",
+		"--event-worker",
+		"/opt/supabase-manager/event-worker",
+		"http://127.0.0.1:8081/health/live",
+	}
+	for _, fragment := range wantFragments {
+		if !strings.Contains(out.Compose, fragment) {
+			t.Errorf("rendered Compose missing %q", fragment)
+		}
+	}
+	functions := document.Services["functions"]
+	if strings.Contains(out.Compose, "FUNCTION_LOG_COLLECTOR") || strings.Contains(out.FunctionsEnv, "FUNCTION_LOG_") {
+		t.Fatal("collector-only configuration leaked into user Functions environment")
+	}
+	if !strings.Contains(toYAML(t, functions["depends_on"]), "function-log-collector") {
+		t.Fatal("functions does not depend on collector")
+	}
+	if !containsString(out.EnabledComposeServices, "function-log-collector") {
+		t.Fatal("collector missing from enabled lifecycle services")
+	}
+}
+
+func TestRenderWithoutFunctionsOmitsEventCollector(t *testing.T) {
+	cfg := testConfiguration()
+	out, err := Project(Input{ProjectID: "project-123", Slug: "no-functions", APIPort: 18001, Configuration: cfg, ProvisionerImageRef: "registry.example/provisioner:release-42"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.Compose, "function-log-collector") || strings.Contains(out.Compose, "--event-worker") {
+		t.Fatal("functions-disabled output contains event collection wiring")
+	}
+}
+
+func TestRenderFunctionsRequiresConcreteProvisionerImage(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Functions = true
+	for _, image := range []string{"supabase-provisioner:${MANAGER_IMAGE_TAG}"} {
+		if _, err := Project(Input{ProjectID: "project-123", Slug: "functions", APIPort: 18001, Configuration: cfg, ProvisionerImageRef: image}); err == nil || !strings.Contains(err.Error(), "provisioner image") {
+			t.Fatalf("Project(image=%q) error = %v", image, err)
+		}
+	}
+}
+
+func toYAML(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := yaml.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRenderRequiresMarkedRuntimeSecrets(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", PasswordSet: true}

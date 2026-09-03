@@ -54,6 +54,14 @@ type Backend struct {
 	acceptanceInspectorFailOnce atomic.Bool
 	functions                   *FunctionService
 	templates                   templateSource
+	provisionerImageRef         string
+}
+
+// SetProvisionerImageRef supplies the exact image running this process for
+// project-local collector services. It is deployment configuration, not a
+// user-controlled project value.
+func (backend *Backend) SetProvisionerImageRef(image string) {
+	backend.provisionerImageRef = image
 }
 
 const (
@@ -76,7 +84,11 @@ func NewBackend(projectFS *projectfs.Root, runner LifecycleRunner, inspector Hea
 			panic(err)
 		}
 	}
-	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector, proxy: proxyClient, functions: NewFunctionService(projectFS, runner), templates: templates}
+	backend := &Backend{projectFS: projectFS, runner: runner, inspector: inspector, proxy: proxyClient, functions: NewFunctionService(projectFS, runner), templates: templates}
+	if testTemplateSourceFactory != nil {
+		backend.provisionerImageRef = "supabase-provisioner:test"
+	}
+	return backend
 }
 
 // DeployFunction is the only runtime entry point used by the Provisioner HTTP

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"supabase-manager/internal/contracts"
+	eventworker "supabase-manager/internal/templates/manager/function-logs/event-worker"
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -350,6 +351,16 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 	runtimeRoot := filepath.Join(projectPath, ".manager-runtime")
 	if err := os.MkdirAll(filepath.Join(runtimeRoot, "generations"), 0o700); err != nil {
 		return RuntimeRef{}, nil, nil, fmt.Errorf("create runtime generations: %w", err)
+	}
+	functionLogsRoot := filepath.Join(runtimeRoot, "function-logs")
+	if err := os.MkdirAll(filepath.Join(functionLogsRoot, "event-worker"), 0o700); err != nil {
+		return RuntimeRef{}, nil, nil, fmt.Errorf("create function log runtime directory: %w", err)
+	}
+	if err := os.Chmod(functionLogsRoot, 0o700); err != nil {
+		return RuntimeRef{}, nil, nil, fmt.Errorf("secure function log database directory: %w", err)
+	}
+	if err := writeAtomic(filepath.Join(functionLogsRoot, "event-worker"), "index.ts", eventworker.Source(), 0o600); err != nil {
+		return RuntimeRef{}, nil, nil, fmt.Errorf("publish function log event worker: %w", err)
 	}
 	current := filepath.Join(runtimeRoot, "current")
 	candidateDir, err := os.MkdirTemp(runtimeRoot, ".candidate-")
