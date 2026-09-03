@@ -34,6 +34,46 @@ func TestDefaultConfiguration(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigurationUsesOfficialJWTExpiry(t *testing.T) {
+	if got := DefaultConfiguration(contracts.PresetLightweight).Auth.JWTExpiry; got != 3600 {
+		t.Fatalf("JWTExpiry = %d, want 3600", got)
+	}
+}
+
+func TestAuthSiteURLValidationAndStoredJWTCompatibility(t *testing.T) {
+	payload, err := json.Marshal(contracts.GeneralConfig{AuthSiteURL: "https://app.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"authSiteUrl":"https://app.example.com"`) {
+		t.Fatalf("general config JSON omitted authSiteUrl: %s", payload)
+	}
+
+	for _, expiry := range []int{0, 604801} {
+		cfg := DefaultConfiguration(contracts.PresetLightweight)
+		cfg.Auth.JWTExpiry = expiry
+		var validation *ValidationError
+		if err := ValidateConfiguration(cfg); !errors.As(err, &validation) || validation.Fields["auth.jwtExpiry"] == "" {
+			t.Fatalf("ValidateConfiguration(jwtExpiry=%d) = %v, want auth.jwtExpiry error", expiry, err)
+		}
+	}
+
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.JWTExpiry = 0
+	if err := ValidateStoredConfiguration(cfg); err != nil {
+		t.Fatalf("ValidateStoredConfiguration(jwtExpiry=0) = %v, want nil", err)
+	}
+
+	for _, value := range []string{"not-a-url", "ftp://app.example.com", "https://"} {
+		cfg := DefaultConfiguration(contracts.PresetLightweight)
+		cfg.General.AuthSiteURL = value
+		var validation *ValidationError
+		if err := ValidateConfiguration(cfg); !errors.As(err, &validation) || validation.Fields["general.authSiteUrl"] == "" {
+			t.Fatalf("ValidateConfiguration(authSiteUrl=%q) = %v, want authSiteUrl error", value, err)
+		}
+	}
+}
+
 func TestFunctionsConfigurationDoesNotExposeDirectory(t *testing.T) {
 	payload, err := json.Marshal(DefaultConfiguration(contracts.PresetLightweight).Functions)
 	if err != nil {

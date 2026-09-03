@@ -48,6 +48,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		Services: ApplyPreset(preset),
 		Auth: contracts.AuthConfig{
 			Enabled:       true,
+			JWTExpiry:     3600,
 			Email:         contracts.EmailAuthConfig{Enabled: true, AllowSignup: true, MinimumPasswordLength: 6, EmailOTPExpiration: 3600, EmailOTPLength: 8},
 			ManualLinking: false,
 			SMTP:          contracts.SMTPConfig{Port: 587},
@@ -124,6 +125,9 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 	if strings.TrimSpace(cfg.General.SiteURL) != "" && !validAbsoluteHTTPURL(cfg.General.SiteURL) {
 		validation.add("general.siteUrl", "must be an absolute http or https URL")
 	}
+	if strings.TrimSpace(cfg.General.AuthSiteURL) != "" && !validAbsoluteHTTPURL(cfg.General.AuthSiteURL) {
+		validation.add("general.authSiteUrl", "must be an absolute http or https URL")
+	}
 	if cfg.General.SupabaseVersion != "self-hosted/v0.8.0" {
 		validation.add("general.supabaseVersion", "must be self-hosted/v0.8.0")
 	}
@@ -155,6 +159,9 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 // configured secret has an empty action by design; command validation remains
 // strict at PreparePatch/Save boundaries.
 func ValidateStoredConfiguration(cfg contracts.ProjectConfiguration) error {
+	if cfg.Auth.JWTExpiry == 0 {
+		cfg.Auth.JWTExpiry = 3600
+	}
 	if cfg.General.StudioPasswordSet && cfg.General.StudioPassword.Action == "" {
 		cfg.General.StudioPassword.Action = "retain"
 	}
@@ -221,8 +228,8 @@ func validateServicesConfiguration(services contracts.Services, validation *Vali
 }
 
 func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
-	if auth.JWTExpiry < 0 || auth.JWTExpiry > 31536000 {
-		validation.add("auth.jwtExpiry", "must be between 0 and 31536000 seconds")
+	if auth.JWTExpiry < 1 || auth.JWTExpiry > 604800 {
+		validation.add("auth.jwtExpiry", "must be between 1 and 604800 seconds")
 	}
 	if auth.DisableSignup != !auth.Email.AllowSignup {
 		validation.add("auth.disableSignup", "must equal the inverse of auth.email.allowSignup")

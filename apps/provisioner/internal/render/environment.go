@@ -36,6 +36,20 @@ var phoneSecretEnv = map[string][]string{
 
 const defaultStorageUploadFileSizeLimit int64 = 50 * 1024 * 1024
 
+func effectiveAuthSiteURL(general contracts.GeneralConfig) string {
+	if strings.TrimSpace(general.AuthSiteURL) != "" {
+		return general.AuthSiteURL
+	}
+	return "https://" + general.Domain
+}
+
+func effectiveJWTExpiry(value int) int {
+	if value == 0 {
+		return 3600
+	}
+	return value
+}
+
 func renderEnvironment(input Input) (string, string, error) {
 	cfg := input.Configuration
 	storageFileSizeLimit := cfg.Storage.UploadFileSizeLimit
@@ -59,6 +73,7 @@ func renderEnvironment(input Input) (string, string, error) {
 		return "", "", fmt.Errorf("invalid asymmetric auth key bundle")
 	}
 	domain := cfg.General.Domain
+	authSiteURL := effectiveAuthSiteURL(cfg.General)
 	values := map[string]string{
 		"ANON_KEY": input.Secrets.AnonKey, "API_EXTERNAL_URL": "https://" + domain + "/auth/v1",
 		"SUPABASE_PUBLISHABLE_KEY": input.Secrets.SupabasePublishableKey, "SUPABASE_SECRET_KEY": input.Secrets.SupabaseSecretKey,
@@ -68,12 +83,12 @@ func renderEnvironment(input Input) (string, string, error) {
 		"STUDIO_DEFAULT_PROJECT": firstNonempty(input.ProjectName, "Default Server"),
 		"DASHBOARD_PASSWORD":     input.Secrets.DashboardPassword, "JWT_SECRET": input.Secrets.JWTSecret,
 		"POSTGRES_PASSWORD": input.Secrets.DatabasePassword, "SECRET_KEY_BASE": input.Secrets.SecretKeyBase,
-		"SERVICE_ROLE_KEY": input.Secrets.ServiceRoleKey, "SITE_URL": "https://" + domain,
+		"SERVICE_ROLE_KEY": input.Secrets.ServiceRoleKey, "SITE_URL": authSiteURL,
 		"SUPABASE_PUBLIC_URL": "https://" + domain, "VAULT_ENC_KEY": input.Secrets.VaultEncryptionKey,
 		"PG_META_CRYPTO_KEY":  input.Secrets.SecretKeyBase,
 		"REALTIME_DB_ENC_KEY": firstNonempty(input.RuntimeSecrets["realtime.dbEncryptionKey"], input.Secrets.RealtimeDBEncryptionKey), "OPENAI_API_KEY": "",
 		"ADDITIONAL_REDIRECT_URLS": strings.Join(cfg.Auth.RedirectURLs, ","),
-		"JWT_EXPIRY":               strconv.Itoa(cfg.Auth.JWTExpiry), "DISABLE_SIGNUP": boolString(cfg.Auth.DisableSignup),
+		"JWT_EXPIRY":               strconv.Itoa(effectiveJWTExpiry(cfg.Auth.JWTExpiry)), "DISABLE_SIGNUP": boolString(cfg.Auth.DisableSignup),
 		"ENABLE_EMAIL_SIGNUP":      boolString(cfg.Auth.Email.Enabled),
 		"ENABLE_EMAIL_AUTOCONFIRM": boolString(!cfg.Auth.Email.ConfirmEmail),
 		"ENABLE_ANONYMOUS_USERS":   boolString(cfg.Auth.AnonymousSignIn),

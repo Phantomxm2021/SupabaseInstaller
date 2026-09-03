@@ -233,6 +233,40 @@ func TestRenderUsesDerivedProjectDomainForSiteURL(t *testing.T) {
 	}
 }
 
+func TestRenderUsesExplicitAuthSiteURL(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.General.Domain = "bee.beegame.studio"
+	cfg.General.AuthSiteURL = "https://app.example.com"
+	cfg.Auth.JWTExpiry = 0
+
+	out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, TemplateCompose: []byte(testCompose)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "SITE_URL=https://app.example.com") {
+		t.Fatalf("runtime SITE_URL does not use explicit auth site URL:\n%s", out.Env)
+	}
+	if !strings.Contains(out.Env, "JWT_EXPIRY=3600") {
+		t.Fatalf("runtime JWT expiry did not use compatibility default:\n%s", out.Env)
+	}
+	if !strings.Contains(out.Env, "API_EXTERNAL_URL=https://bee.beegame.studio/auth/v1") {
+		t.Fatalf("runtime API_EXTERNAL_URL must use project domain:\n%s", out.Env)
+	}
+}
+
+func TestRenderUsesDomainFallbackForEmptyAuthSiteURL(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.General.Domain = "bee.beegame.studio"
+
+	out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, TemplateCompose: []byte(testCompose)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "SITE_URL=https://bee.beegame.studio") {
+		t.Fatalf("runtime SITE_URL does not use domain fallback:\n%s", out.Env)
+	}
+}
+
 func TestRenderMailerTemplatesAndNotifications(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Auth.Mailer.Templates.Confirmation = contracts.EmailTemplateConfig{

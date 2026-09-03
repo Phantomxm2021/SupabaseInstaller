@@ -38,6 +38,7 @@ type SecretInput struct {
 type GeneralConfig struct {
 	Domain            string      `json:"domain"`
 	SiteURL           string      `json:"siteUrl"`
+	AuthSiteURL       string      `json:"authSiteUrl"`
 	SupabaseVersion   string      `json:"supabaseVersion"`
 	StudioUsername    string      `json:"studioUsername"`
 	StudioPasswordSet bool        `json:"studioPasswordSet"`
