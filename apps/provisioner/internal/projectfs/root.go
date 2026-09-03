@@ -124,6 +124,16 @@ func (r *Root) RuntimePath(slug string) (string, error) {
 	return r.ProjectPath(slug)
 }
 
+// FunctionLogDatabasePath derives the private collector database location from
+// a validated managed-project slug. It never accepts a caller-owned path.
+func (r *Root) FunctionLogDatabasePath(slug string) (string, error) {
+	projectPath, err := r.ProjectPath(slug)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(projectPath, ".manager-runtime", "function-logs", "function-logs.db"), nil
+}
+
 // OfficialTemplateFiles returns the immutable official template snapshot that
 // was applied to this server. It never reads a caller-selected path.
 func (r *Root) OfficialTemplateFiles(slug string) (map[string][]byte, error) {

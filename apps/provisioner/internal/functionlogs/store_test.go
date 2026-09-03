@@ -2,6 +2,7 @@ package functionlogs
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,6 +272,49 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 	}
 	if len(page.Logs) != 1 || page.Logs[0].ID != "persisted" {
 		t.Fatalf("reopened logs = %+v", page.Logs)
+	}
+}
+
+func TestOpenReaderQueriesWithoutCreatingOrMutatingDatabase(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "logs.db")
+	if _, err := OpenReader(path, time.Now); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("OpenReader(missing) error = %v, want not exist", err)
+	}
+	writer, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.InsertBatch(ctx, []contracts.FunctionLogRecord{record("one", "p", "fn", time.Now().UTC(), contracts.FunctionLogLevelInfo, "hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenReader(path, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := reader.Query(ctx, "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Logs) != 1 || page.Logs[0].Message != "hello" {
+		t.Fatalf("page = %#v", page)
+	}
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("database mtime changed: %v -> %v", before.ModTime(), after.ModTime())
 	}
 }
 

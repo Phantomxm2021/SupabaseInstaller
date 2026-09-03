@@ -88,9 +88,20 @@ func TestRunPersistsClientErrorUnchanged(t *testing.T) {
 	}
 }
 
+func TestFunctionLogsRemainAvailableWhenFunctionsDisabled(t *testing.T) {
+	fake := &serviceProvisionerFake{logs: contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{{ID: "old"}}}}
+	service := NewService(nil, nil, nil, fake, time.Now)
+	p := contracts.Project{Slug: "bee", Services: contracts.Services{Functions: false}}
+	page, err := service.FunctionLogs(context.Background(), p, "demo", contracts.FunctionLogQuery{Limit: 10})
+	if err != nil || len(page.Logs) != 1 || page.Health.Status != "disabled" || fake.name != "demo" {
+		t.Fatalf("page/error/name = %#v/%v/%q", page, err, fake.name)
+	}
+}
+
 type serviceProvisionerFake struct {
 	name string
 	err  error
+	logs contracts.FunctionLogPage
 }
 
 func (f *serviceProvisionerFake) DeployFunction(_ context.Context, _ string, name, _ string, _ io.Reader) (contracts.FunctionDeploymentResult, error) {
@@ -99,6 +110,10 @@ func (f *serviceProvisionerFake) DeployFunction(_ context.Context, _ string, nam
 }
 func (f *serviceProvisionerFake) ListFunctions(context.Context, string) ([]contracts.FunctionSummary, error) {
 	return nil, nil
+}
+func (f *serviceProvisionerFake) FunctionLogs(_ context.Context, _ string, name string, _ contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
+	f.name = name
+	return f.logs, f.err
 }
 func (f *serviceProvisionerFake) RollbackFunction(context.Context, string, string, string) (contracts.FunctionDeploymentResult, error) {
 	return contracts.FunctionDeploymentResult{}, f.err

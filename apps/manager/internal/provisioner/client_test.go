@@ -37,6 +37,20 @@ func TestClientDeployFunctionStreamsArchiveToTypedProvisionerRoute(t *testing.T)
 	}
 }
 
+func TestClientFunctionLogsEncodesPathQueryAndAuthenticates(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.EscapedPath() != "/internal/v1/projects/%E8%9C%82/functions/demo/logs" || request.URL.Query().Get("search") != "a&b /?" || request.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("request = %s?%s headers=%v", request.URL.EscapedPath(), request.URL.RawQuery, request.Header)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"logs":[],"health":{"status":"offline"}}`)), Header: make(http.Header)}, nil
+	})}
+	client := NewClient("http://provisioner:9090", "token", httpClient)
+	page, err := client.FunctionLogs(context.Background(), "蜂", "demo", contracts.FunctionLogQuery{Limit: 17, Search: "a&b /?", Level: "warn"})
+	if err != nil || page.Health.Status != "offline" {
+		t.Fatalf("page/error = %#v/%v", page, err)
+	}
+}
+
 func TestClientDeployFunctionPreservesAllowListedProvisionerDiagnostic(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{

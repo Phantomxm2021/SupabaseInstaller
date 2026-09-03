@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -68,7 +69,7 @@ func runCollectorProcess() error {
 	}
 	defer store.Close()
 	collector, err := functionlogs.NewCollector(functionlogs.CollectorOptions{
-		ProjectID: config.ProjectID, Store: store, Redactor: redactor, FunctionsRoot: config.FunctionsRoot, Logger: slog.Default(),
+		ProjectID: config.ProjectID, Store: store, Redactor: redactor, FunctionsRoot: config.FunctionsRoot, Logger: slog.Default(), HealthPath: filepath.Join(filepath.Dir(config.DatabasePath), "health.json"),
 	})
 	if err != nil {
 		return err

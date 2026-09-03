@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -86,6 +87,32 @@ func Open(path string, options Options) (*Store, error) {
 		return nil, fmt.Errorf("maintain function log store: %w", err)
 	}
 	return store, nil
+}
+
+// OpenReader opens an existing SQLite log database without running schema or
+// retention work. mode=ro also prevents accidental writes at the driver layer.
+func OpenReader(path string, now func() time.Time) (*Store, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("function log database is not a regular file")
+	}
+	if now == nil {
+		now = time.Now
+	}
+	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return &Store{db: db, path: path, now: now}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

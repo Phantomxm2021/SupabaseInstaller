@@ -60,6 +60,9 @@ type FunctionLogPage struct {
 	ServerTime  time.Time           `json:"serverTime"`
 }
 
+var ErrFunctionNotFound = errors.New("function not found")
+var ErrFunctionLogsUnavailable = errors.New("function logs unavailable")
+
 type EdgeRuntimeEvent struct {
 	Version      int              `json:"version"`
 	EventID      string           `json:"eventId"`

@@ -43,6 +43,7 @@ type CollectorOptions struct {
 	Logger              *slog.Logger
 	Now                 func() time.Time
 	MaintenanceInterval time.Duration
+	HealthPath          string
 }
 
 type Collector struct {
@@ -54,6 +55,7 @@ type Collector struct {
 	rootIdentity   os.FileInfo
 	logger         *slog.Logger
 	now            func() time.Time
+	healthPath     string
 
 	healthMu sync.RWMutex
 	health   contracts.FunctionLogHealth
@@ -91,11 +93,16 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 	}
 	c := &Collector{
 		projectID: options.ProjectID, store: options.Store, redactor: redactor, configuredRoot: configuredRoot, canonicalRoot: canonicalRoot, rootIdentity: rootIdentity,
-		logger: options.Logger, now: options.Now, health: contracts.FunctionLogHealth{Status: "healthy"},
+		logger: options.Logger, now: options.Now, healthPath: options.HealthPath, health: contracts.FunctionLogHealth{Status: "healthy"},
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
+	_ = c.persistHealth()
 	go c.maintain(options.MaintenanceInterval)
 	return c, nil
+}
+
+func (c *Collector) persistHealth() error {
+	return WriteHealthSnapshot(c.healthPath, c.Health(), c.now())
 }
 
 func validateFunctionsRoot(path string) (string, string, os.FileInfo, error) {
@@ -132,22 +139,24 @@ func (c *Collector) reject(count uint64, incompatible bool) {
 		count = 1
 	}
 	c.healthMu.Lock()
-	defer c.healthMu.Unlock()
 	c.health.Rejected = saturatingAdd(c.health.Rejected, count)
 	if incompatible {
 		c.health.Status = "incompatible"
 		c.health.Detail = "unsupported event contract version"
 	}
+	c.healthMu.Unlock()
+	_ = c.persistHealth()
 }
 
 func (c *Collector) storageFailure(count uint64, maintenance bool) {
 	c.healthMu.Lock()
-	defer c.healthMu.Unlock()
 	if !maintenance {
 		c.health.Dropped = saturatingAdd(c.health.Dropped, count)
 	}
 	c.health.Status = "storage_error"
 	c.health.Detail = "function log storage unavailable"
+	c.healthMu.Unlock()
+	_ = c.persistHealth()
 }
 
 func (c *Collector) functionExists(name string) bool {
@@ -185,6 +194,8 @@ func (c *Collector) maintain(interval time.Duration) {
 	defer close(c.done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	heartbeat := time.NewTicker(10 * time.Second)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-ticker.C:
@@ -195,6 +206,8 @@ func (c *Collector) maintain(interval time.Duration) {
 				c.storageFailure(1, true)
 				c.logger.Error("function log maintenance failed")
 			}
+		case <-heartbeat.C:
+			_ = c.persistHealth()
 		case <-c.stop:
 			return
 		}

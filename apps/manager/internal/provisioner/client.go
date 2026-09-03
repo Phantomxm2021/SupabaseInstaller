@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +25,7 @@ type Client struct {
 type FunctionsClient interface {
 	DeployFunction(context.Context, string, string, string, io.Reader) (contracts.FunctionDeploymentResult, error)
 	ListFunctions(context.Context, string) ([]contracts.FunctionSummary, error)
+	FunctionLogs(context.Context, string, string, contracts.FunctionLogQuery) (contracts.FunctionLogPage, error)
 	RollbackFunction(context.Context, string, string, string) (contracts.FunctionDeploymentResult, error)
 	DeleteFunction(context.Context, string, string, string) (contracts.FunctionDeploymentResult, error)
 }
@@ -150,6 +153,58 @@ func (c *Client) ListFunctions(ctx context.Context, slug string) ([]contracts.Fu
 		return nil, err
 	}
 	return output.Functions, nil
+}
+
+func (c *Client) FunctionLogs(ctx context.Context, slug, name string, query contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
+	if slug == "" {
+		return contracts.FunctionLogPage{}, errors.New("project slug is required")
+	}
+	if err := contracts.ValidateFunctionName(name); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	if err := contracts.ValidateFunctionLogQuery(query); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	values := url.Values{}
+	values.Set("limit", strconv.Itoa(query.Limit))
+	if query.Before != "" {
+		values.Set("before", query.Before)
+	}
+	if query.After != "" {
+		values.Set("after", query.After)
+	}
+	if query.Level != "" {
+		values.Set("level", query.Level)
+	}
+	if query.Search != "" {
+		values.Set("search", query.Search)
+	}
+	endpoint := c.baseURL + "/internal/v1/projects/" + url.PathEscape(slug) + "/functions/" + url.PathEscape(name) + "/logs?" + values.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	response, err := c.http.Do(request)
+	if err != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("query function logs: %w", err)
+	}
+	defer response.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil {
+		return contracts.FunctionLogPage{}, errors.New("read function logs response")
+	}
+	if len(payload) > 1<<20 {
+		return contracts.FunctionLogPage{}, errors.New("function logs response is too large")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return contracts.FunctionLogPage{}, clientErrorForPayload(request.URL.Path, response.StatusCode, payload)
+	}
+	var page contracts.FunctionLogPage
+	if err := json.Unmarshal(payload, &page); err != nil {
+		return contracts.FunctionLogPage{}, errors.New("decode function logs response")
+	}
+	return page, nil
 }
 
 func (c *Client) RollbackFunction(ctx context.Context, slug, name, operationID string) (contracts.FunctionDeploymentResult, error) {

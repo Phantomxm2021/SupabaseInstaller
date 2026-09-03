@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
 
 	"supabase-manager/apps/provisioner/internal/compose"
+	"supabase-manager/apps/provisioner/internal/functionlogs"
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/officialtemplate"
 	"supabase-manager/apps/provisioner/internal/projectfs"
@@ -126,6 +128,60 @@ func (backend *Backend) ListFunctions(ctx context.Context, request contracts.Fun
 		return nil, fmt.Errorf("server slug is required")
 	}
 	return backend.projectFS.ListFunctions(request.Slug)
+}
+
+func (backend *Backend) FunctionLogs(ctx context.Context, slug, name string, query contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
+	if _, err := backend.projectFS.ProjectPath(slug); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	if err := contracts.ValidateFunctionName(name); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	if err := contracts.ValidateFunctionLogQuery(query); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	items, err := backend.projectFS.ListFunctions(slug)
+	if err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	found := false
+	for _, item := range items {
+		if item.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return contracts.FunctionLogPage{}, contracts.ErrFunctionNotFound
+	}
+	metadata, err := backend.projectFS.Metadata(slug)
+	if err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	if metadata.ProjectID == "" {
+		return contracts.FunctionLogPage{}, errors.New("project metadata identity is missing")
+	}
+	path, err := backend.projectFS.FunctionLogDatabasePath(slug)
+	if err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	reader, err := functionlogs.OpenReader(path, time.Now)
+	if errors.Is(err, os.ErrNotExist) {
+		return contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}, Health: contracts.FunctionLogHealth{Status: "not_installed"}, ServerTime: time.Now().UTC()}, nil
+	}
+	if err != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: open database", contracts.ErrFunctionLogsUnavailable)
+	}
+	defer reader.Close()
+	page, err := reader.Query(ctx, metadata.ProjectID, name, query)
+	if err != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: query database", contracts.ErrFunctionLogsUnavailable)
+	}
+	page.Health, err = functionlogs.ReadHealthSnapshot(filepath.Join(filepath.Dir(path), "health.json"), time.Now())
+	if err != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: read health", contracts.ErrFunctionLogsUnavailable)
+	}
+	return page, nil
 }
 
 func (backend *Backend) RollbackFunction(ctx context.Context, request contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
