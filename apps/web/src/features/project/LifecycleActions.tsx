@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
-import { ChevronDown, Pause, Play, RotateCw, Trash2 } from 'lucide-react'
+import { ChevronDown, Pause, Play, RefreshCw, RotateCw, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../api/client'
 import type { Project } from '../../api/types'
@@ -63,14 +63,14 @@ export function LifecycleActions({ project, onSyncOfficialRuntime }: { project: 
           <DropdownMenuTrigger render={<Button type="button" variant="secondary" aria-label="Actions" />}>
             Actions <ChevronDown className="size-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={8}>
+          <DropdownMenuContent className="project-actions-menu" align="end" sideOffset={8}>
             {project.status === 'FAILED' && <DropdownMenuItem disabled={retry.isPending} onClick={() => retry.mutate()}><RotateCw /> {retry.isPending ? 'Retrying Project…' : 'Retry Project'}</DropdownMenuItem>}
             {project.status === 'STOPPED' && <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('start')}><Play /> {lifecycle.isPending ? 'Starting Project…' : 'Start Project'}</DropdownMenuItem>}
             {['RUNNING', 'DEGRADED'].includes(project.status) && <>
               <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('stop')}><Pause /> {lifecycle.isPending ? 'Stopping Project…' : 'Stop Project'}</DropdownMenuItem>
               <DropdownMenuItem disabled={lifecycle.isPending} onClick={() => lifecycle.mutate('restart')}><RotateCw /> {lifecycle.isPending ? 'Restarting Project…' : 'Restart Project'}</DropdownMenuItem>
             </>}
-            {onSyncOfficialRuntime && <DropdownMenuItem onClick={onSyncOfficialRuntime}><RotateCw /> Sync official runtime</DropdownMenuItem>}
+            {onSyncOfficialRuntime && <DropdownMenuItem onClick={onSyncOfficialRuntime}><RefreshCw /> Update Supabase runtime</DropdownMenuItem>}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}><Trash2 /> Delete Project</DropdownMenuItem>
           </DropdownMenuContent>
