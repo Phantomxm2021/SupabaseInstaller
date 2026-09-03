@@ -264,7 +264,7 @@ func TestCollectorStorageFailureIsSafeAndLive(t *testing.T) {
 		t.Fatalf("status = %d", got)
 	}
 	health := collector.Health()
-	if health.Status != "storage_error" || health.Dropped != 1 || strings.Contains(health.Detail, secret) || strings.Contains(health.Detail, "/private") {
+	if health.Status != "dropped" || health.Dropped != 1 || strings.Contains(health.Detail, secret) || strings.Contains(health.Detail, "/private") {
 		t.Fatalf("health = %+v", health)
 	}
 	response := httptest.NewRecorder()

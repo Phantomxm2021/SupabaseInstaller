@@ -152,8 +152,12 @@ func (c *Collector) storageFailure(count uint64, maintenance bool) {
 	c.healthMu.Lock()
 	if !maintenance {
 		c.health.Dropped = saturatingAdd(c.health.Dropped, count)
+		if c.health.Status != "incompatible" && c.health.Status != "storage_error" {
+			c.health.Status = "dropped"
+		}
+	} else {
+		c.health.Status = "storage_error"
 	}
-	c.health.Status = "storage_error"
 	c.health.Detail = "function log storage unavailable"
 	c.healthMu.Unlock()
 	_ = c.persistHealth()

@@ -25,6 +25,12 @@ func WriteHealthSnapshot(path string, health contracts.FunctionLogHealth, now ti
 		return nil
 	}
 	health.Detail = ""
+	if health.Dropped > 0 && health.Status == "healthy" {
+		health.Status = "dropped"
+	}
+	if !validHealthStatus(health.Status) {
+		return errors.New("invalid health status")
+	}
 	raw, err := json.Marshal(healthSnapshot{Version: 1, UpdatedAt: now.UTC(), Health: health})
 	if err != nil {
 		return err
@@ -64,17 +70,32 @@ func ReadHealthSnapshot(path string, now time.Time) (contracts.FunctionLogHealth
 	defer file.Close()
 	raw, err := io.ReadAll(io.LimitReader(file, 4097))
 	if err != nil || len(raw) > 4096 || rejectDuplicateJSONKeys(raw) != nil {
-		return contracts.FunctionLogHealth{}, errors.New("invalid health snapshot")
+		return contracts.FunctionLogHealth{Status: "incompatible"}, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	var snapshot healthSnapshot
 	if decoder.Decode(&snapshot) != nil || decoder.Decode(&struct{}{}) != io.EOF || snapshot.Version != 1 || snapshot.UpdatedAt.IsZero() {
-		return contracts.FunctionLogHealth{}, errors.New("invalid health snapshot")
+		return contracts.FunctionLogHealth{Status: "incompatible"}, nil
+	}
+	if !validHealthStatus(snapshot.Health.Status) {
+		return contracts.FunctionLogHealth{Status: "incompatible"}, nil
+	}
+	if snapshot.Health.Dropped > 0 && snapshot.Health.Status == "healthy" {
+		snapshot.Health.Status = "dropped"
 	}
 	if now.Sub(snapshot.UpdatedAt) > HealthStaleAfter {
 		snapshot.Health.Status = "offline"
 	}
 	snapshot.Health.Detail = ""
 	return snapshot.Health, nil
+}
+
+func validHealthStatus(status string) bool {
+	switch status {
+	case "healthy", "dropped", "offline", "incompatible", "disabled", "not_installed", "storage_error":
+		return true
+	default:
+		return false
+	}
 }
