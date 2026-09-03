@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +33,12 @@ var phoneSecretEnv = map[string][]string{
 	"twilio":      {"GOTRUE_SMS_TWILIO_AUTH_TOKEN", "GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN"},
 	"messagebird": {"GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY"},
 	"textlocal":   {"GOTRUE_SMS_TEXTLOCAL_API_KEY"},
+}
+
+var sharedBuffersPattern = regexp.MustCompile(`^[1-9][0-9]*(?:MB|MiB|GB|GiB)$`)
+
+func validSharedBuffers(value string) bool {
+	return sharedBuffersPattern.MatchString(strings.TrimSpace(value))
 }
 
 const defaultStorageUploadFileSizeLimit int64 = 50 * 1024 * 1024
@@ -124,7 +131,7 @@ func renderEnvironment(input Input) (string, string, error) {
 		"REGION": storageRegion(cfg.Storage), "S3_PROTOCOL_ENABLED": boolString(cfg.Storage.S3CompatibleAPI), "FUNCTIONS_VERIFY_JWT": boolString(cfg.Functions.DefaultJWTVerification),
 		"POOLER_PROXY_PORT_TRANSACTION": strconv.Itoa(cfg.Pooler.TransactionPort),
 		"POOLER_DEFAULT_POOL_SIZE":      strconv.Itoa(cfg.Pooler.PoolSize), "POOLER_MAX_CLIENT_CONN": strconv.Itoa(cfg.Pooler.MaxClientConnections),
-		"POOLER_POOL_MODE": "transaction", "POOLER_DB_POOL_SIZE": strconv.Itoa(cfg.Pooler.PoolSize), "POOLER_TENANT_ID": input.Secrets.PoolerTenantID,
+		"POOLER_POOL_MODE": "transaction", "POOLER_DB_POOL_SIZE": strconv.Itoa(cfg.Pooler.InternalDBPoolSize), "POOLER_TENANT_ID": input.Secrets.PoolerTenantID,
 		"POSTGRES_MAX_CONNECTIONS": strconv.Itoa(cfg.Database.MaxConnections), "POSTGRES_SHARED_BUFFERS": cfg.Database.SharedBuffers,
 		"REALTIME_MAX_CONNECTIONS": strconv.Itoa(cfg.Realtime.MaxConnections),
 		"REALTIME_DB_POOL_SIZE":    strconv.Itoa(cfg.Realtime.DatabasePoolSize), "REALTIME_LOG_LEVEL": string(cfg.Realtime.LogLevel),
@@ -601,7 +608,7 @@ func injectServiceConfiguration(services map[string]any, input Input) error {
 		if input.Configuration.Database.MaxConnections > 0 {
 			command = append(command, "-c", "max_connections="+strconv.Itoa(input.Configuration.Database.MaxConnections))
 		}
-		if strings.TrimSpace(input.Configuration.Database.SharedBuffers) != "" {
+		if validSharedBuffers(input.Configuration.Database.SharedBuffers) {
 			command = append(command, "-c", "shared_buffers="+input.Configuration.Database.SharedBuffers)
 		}
 		services["db"].(map[string]any)["command"] = command

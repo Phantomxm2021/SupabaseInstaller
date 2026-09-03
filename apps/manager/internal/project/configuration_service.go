@@ -118,6 +118,9 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	if patch.Network != nil {
 		cfg.Network = *patch.Network
 	}
+	if cfg.Pooler.InternalDBPoolSize == 0 {
+		cfg.Pooler.InternalDBPoolSize = 5
+	}
 	if err := requireExplicitSecretActionsForPatch(patch); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}

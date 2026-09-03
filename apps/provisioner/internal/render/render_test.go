@@ -907,6 +907,40 @@ func TestRenderRealtimeDatabaseAndPoolerTuning(t *testing.T) {
 	}
 }
 
+func TestRenderKeepsSupavisorInternalPoolIndependent(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Pooler.InternalDBPoolSize = 5
+	cfg.Services.Supavisor = true
+	out, err := Project(Input{Slug: "pool-default", APIPort: 18001, Configuration: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "POOLER_DEFAULT_POOL_SIZE=20\n") || !strings.Contains(out.Env, "POOLER_DB_POOL_SIZE=5\n") {
+		t.Fatalf("default pool mapping missing: %s", out.Env)
+	}
+	cfg.Pooler.InternalDBPoolSize = 9
+	out, err = Project(Input{Slug: "pool-custom", APIPort: 18001, Configuration: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "POOLER_DEFAULT_POOL_SIZE=20\n") || !strings.Contains(out.Env, "POOLER_DB_POOL_SIZE=9\n") {
+		t.Fatalf("independent pool mapping missing: %s", out.Env)
+	}
+}
+
+func TestValidSharedBuffers(t *testing.T) {
+	for _, value := range []string{"256MB", "1GiB"} {
+		if !validSharedBuffers(value) {
+			t.Errorf("validSharedBuffers(%q) = false", value)
+		}
+	}
+	for _, value := range []string{"0MB", "128", "-1MB", "10XB", "256MB; touch /tmp/pwned", "$(id)"} {
+		if validSharedBuffers(value) {
+			t.Errorf("validSharedBuffers(%q) = true", value)
+		}
+	}
+}
+
 func TestRenderServiceSelection(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

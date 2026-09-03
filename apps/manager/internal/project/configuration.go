@@ -60,7 +60,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true},
 		Database:  contracts.DatabaseConfig{Version: "17", MaxConnections: 100},
-		Pooler:    contracts.PoolerConfig{PoolSize: 20, MaxClientConnections: 100},
+		Pooler:    contracts.PoolerConfig{PoolSize: 20, InternalDBPoolSize: 5, MaxClientConnections: 100},
 		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},
 	}
 }
@@ -118,6 +118,9 @@ func ValidateConfiguration(cfg contracts.ProjectConfiguration) error {
 }
 
 func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy, allowOmittedUploadLimit bool) error {
+	if cfg.Pooler.InternalDBPoolSize == 0 {
+		cfg.Pooler.InternalDBPoolSize = 5
+	}
 	validation := &ValidationError{Fields: make(map[string]string)}
 	if strings.TrimSpace(cfg.General.Domain) != "" && !validDomain(cfg.General.Domain) {
 		validation.add("general.domain", "must be a hostname without a scheme or path")
@@ -141,6 +144,7 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 	validateFunctions(cfg.Functions, validation)
 	validateDatabase(cfg.Database, validation)
 	validatePooler(cfg.Pooler, validation)
+	validateDatabaseConnectionBudget(cfg, validation)
 	validateNetwork(cfg.Network, validation)
 	if cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy && !allowLegacyCaddy {
 		validation.add("network.httpsMode", "Caddy HTTPS is not supported for new configurations")
@@ -614,8 +618,26 @@ func validatePooler(pooler contracts.PoolerConfig, validation *ValidationError) 
 	if pooler.PoolSize < 1 || pooler.PoolSize > 100000 {
 		validation.add("pooler.poolSize", "must be between 1 and 100000")
 	}
+	if pooler.InternalDBPoolSize < 1 || pooler.InternalDBPoolSize > 100000 {
+		validation.add("pooler.internalDbPoolSize", "must be between 1 and 100000")
+	}
 	if pooler.MaxClientConnections < 1 || pooler.MaxClientConnections > 100000 {
 		validation.add("pooler.maxClientConnections", "must be between 1 and 100000")
+	}
+}
+
+const fixedDatabaseConnectionReserve = 10
+
+func validateDatabaseConnectionBudget(cfg contracts.ProjectConfiguration, validation *ValidationError) {
+	required := fixedDatabaseConnectionReserve
+	if cfg.Services.Realtime {
+		required += cfg.Realtime.DatabasePoolSize
+	}
+	if cfg.Services.Supavisor {
+		required += cfg.Pooler.PoolSize + cfg.Pooler.InternalDBPoolSize
+	}
+	if required >= cfg.Database.MaxConnections {
+		validation.add("database.maxConnections", "must exceed reserved service connection budget")
 	}
 }
 

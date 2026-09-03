@@ -391,6 +391,50 @@ func TestConfigurationValidationStrictInputs(t *testing.T) {
 	}
 }
 
+func TestConfigurationValidationDatabaseConnectionBudget(t *testing.T) {
+	cases := []struct {
+		name      string
+		configure func(*contracts.ProjectConfiguration)
+		valid     bool
+	}{
+		{"reserve equals maximum", func(c *contracts.ProjectConfiguration) { c.Database.MaxConnections = 10 }, false},
+		{"realtime pool above maximum", func(c *contracts.ProjectConfiguration) {
+			c.Services.Realtime = true
+			c.Database.MaxConnections = 10
+			c.Realtime.DatabasePoolSize = 11
+		}, false},
+		{"supavisor pools included", func(c *contracts.ProjectConfiguration) { c.Services.Supavisor = true; c.Database.MaxConnections = 35 }, false},
+		{"disabled consumers excluded", func(c *contracts.ProjectConfiguration) {
+			c.Database.MaxConnections = 11
+			c.Realtime.DatabasePoolSize = 10000
+			c.Pooler.PoolSize = 100000
+			c.Pooler.InternalDBPoolSize = 100000
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfiguration(contracts.PresetLightweight)
+			tc.configure(&cfg)
+			err := ValidateConfiguration(cfg)
+			if tc.valid && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+			if !tc.valid {
+				var validation *ValidationError
+				if !errors.As(err, &validation) || validation.Fields["database.maxConnections"] == "" {
+					t.Fatalf("expected database.maxConnections error, got %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultConfigurationUsesIndependentInternalPool(t *testing.T) {
+	if got := DefaultConfiguration(contracts.PresetLightweight).Pooler.InternalDBPoolSize; got != 5 {
+		t.Fatalf("InternalDBPoolSize = %d, want 5", got)
+	}
+}
+
 func TestValidateStoredConfigurationAcceptsConsumedSecretActions(t *testing.T) {
 	cfg := DefaultConfiguration(contracts.PresetLightweight)
 	cfg.Auth.SMTP = contracts.SMTPConfig{Enabled: true, Host: "smtp.example.com", Port: 587, Username: "mailer", PasswordSet: true, SenderEmail: "mailer@example.com", SenderName: "Mailer"}

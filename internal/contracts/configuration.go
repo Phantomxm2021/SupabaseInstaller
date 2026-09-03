@@ -224,6 +224,7 @@ type PoolerConfig struct {
 	TransactionPort      int `json:"transactionPort"`
 	SessionPort          int `json:"sessionPort"`
 	PoolSize             int `json:"poolSize"`
+	InternalDBPoolSize   int `json:"internalDbPoolSize"`
 	MaxClientConnections int `json:"maxClientConnections"`
 }
 
