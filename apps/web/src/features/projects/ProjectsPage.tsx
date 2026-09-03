@@ -77,12 +77,11 @@ function ProjectsTable({ projects }: { projects: Project[] }) {
         <TableRow>
           <TableHead className="pl-5">Project</TableHead>
           <TableHead>Health</TableHead>
-          <TableHead>Version</TableHead>
           <TableHead className="pr-5 text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {projects.length === 0 ? <TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">No projects match your search.</TableCell></TableRow> : null}
+        {projects.length === 0 ? <TableRow><TableCell colSpan={3} className="h-24 text-center text-muted-foreground">No projects match your search.</TableCell></TableRow> : null}
         {projects.map((project) => (
           <TableRow key={project.id}>
             <TableCell className="pl-5">
@@ -95,7 +94,6 @@ function ProjectsTable({ projects }: { projects: Project[] }) {
               </Link>
             </TableCell>
             <TableCell><div className="flex items-center gap-2"><span className={`size-1.5 rounded-full ${healthDotClass(project.health)}`} aria-hidden="true" /><Badge variant={healthBadgeVariant(project.health)}>{labelHealth(project.health)}</Badge></div></TableCell>
-            <TableCell className="font-mono text-xs text-muted-foreground">{project.supabaseVersion}</TableCell>
             <TableCell className="pr-5"><div className="flex items-center justify-end gap-2"><RetryProjectButton project={project} /><Link className={buttonVariants({ variant: 'secondary', size: 'sm' })} to={`/projects/${project.id}/overview`}>View Details</Link></div></TableCell>
           </TableRow>
         ))}

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Database, ExternalLink, Globe2, Package, ServerCog, ShieldCheck } from 'lucide-react'
+import { Database, ExternalLink, Globe2, ServerCog, ShieldCheck } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { Alert } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,7 +35,6 @@ export function OverviewPage() {
         <OverviewFact icon={<ShieldCheck />} label="Status" value={humanize(data.health)} detail={humanize(data.status)} />
         <OverviewFact icon={<ServerCog />} label="Compute" value="Self-hosted" detail={`${humanize(data.preset)} stack`} />
         <OverviewFact icon={<Globe2 />} label="Supabase Studio" value={studioURL} detail={data.services.studio && data.status === 'RUNNING' ? <a href={studioURL} target="_blank" rel="noreferrer">Open Supabase Studio <ExternalLink /></a> : 'Studio unavailable while the project is stopped'} />
-        <OverviewFact icon={<Package />} label="Version" value={data.supabaseVersion} detail="Pinned runtime template" />
         <OverviewFact icon={<Database />} label="Services" value={`${enabledServiceCount} active services`} detail="Components enabled for this project" />
         <OverviewFact icon={<ServerCog />} label="Configuration" value={`Revision ${data.configurationRevision ?? 0}`} detail={`${data.slug} · ${humanize(data.preset)} preset`} />
       </div>

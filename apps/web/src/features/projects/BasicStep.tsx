@@ -1,13 +1,10 @@
 import type { UseFormReturn } from 'react-hook-form'
-import { useEffect, useState } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel, FieldGroup } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type { ProjectForm } from './projectSchema'
 import { projectDomainFromBase } from './projectSchema'
 import type { ProjectIdentityAvailability } from './wizard/useProjectIdentityAvailability'
@@ -54,7 +51,6 @@ export function BasicStep({
   const siteURL = form.watch('configuration.general.siteUrl')
   const slug = form.watch('slug')
   const authSiteURL = form.watch('configuration.general.authSiteUrl')
-  const [runtimeSettingsOpen, setRuntimeSettingsOpen] = useState(false)
   useEffect(() => {
     const domain = projectDomainFromBase(slug, siteURL)
     if (domain && !authSiteURL?.trim()) form.setValue('configuration.general.authSiteUrl', `https://${domain}`, { shouldDirty: false })
@@ -70,7 +66,7 @@ export function BasicStep({
     <Card>
       <CardHeader>
         <CardTitle>Server details</CardTitle>
-        <CardDescription>Configure the identity, public address, Studio credentials, and runtime version.</CardDescription>
+        <CardDescription>Configure the identity, public address, and Studio credentials.</CardDescription>
       </CardHeader>
       <CardContent>
         <FieldGroup className="space-y-6">
@@ -133,28 +129,6 @@ export function BasicStep({
             <FieldError>{studioPasswordError}</FieldError>
           </Field>
 
-          <Collapsible open={runtimeSettingsOpen} onOpenChange={setRuntimeSettingsOpen}>
-            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-muted/50">
-              <span className="min-w-0 space-y-1">
-                <span className="block font-medium">Advanced runtime settings</span>
-                <span className="block text-sm text-muted-foreground">Choose the pinned Supabase runtime version for this server.</span>
-                <span className="block text-xs text-muted-foreground">Pinned version: {form.watch('configuration.general.supabaseVersion')}</span>
-              </span>
-              <span className="ml-4 flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
-                <span>{runtimeSettingsOpen ? 'Hide settings' : 'Expand settings'}</span>
-                <ChevronDown className={`size-4 transition-transform ${runtimeSettingsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
-              </span>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-4">
-              <Field>
-                <FieldLabel>Supabase version</FieldLabel>
-                <Select value={form.watch('configuration.general.supabaseVersion')} onValueChange={(value) => form.setValue('configuration.general.supabaseVersion', value as any, { shouldDirty: true, shouldValidate: true })}>
-                  <SelectTrigger aria-label="Pinned Supabase version"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="self-hosted/v0.8.0">self-hosted/v0.8.0</SelectItem></SelectContent>
-                </Select>
-              </Field>
-            </CollapsibleContent>
-          </Collapsible>
         </FieldGroup>
       </CardContent>
     </Card>

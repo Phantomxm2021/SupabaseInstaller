@@ -27,6 +27,8 @@ it('uses the Supabase-style overview hierarchy while keeping local project data'
   expect(hero).toBeVisible()
   expect(within(hero).getByText('Status')).toBeVisible()
   expect(within(hero).getByText('Compute')).toBeVisible()
+  expect(within(hero).queryByText('Version')).not.toBeInTheDocument()
+  expect(within(hero).queryByText('self-hosted/v0.8.0')).not.toBeInTheDocument()
   expect(within(hero).getByText('Primary Database')).toBeVisible()
   expect(within(hero).getByText('6 active services')).toBeVisible()
   expect(screen.getByTestId('overview-services-card')).toBeVisible()
