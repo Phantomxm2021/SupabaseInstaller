@@ -50,6 +50,9 @@ func Project(input Input) (OutputFiles, error) {
 	if input.Configuration.General.Domain == "" || input.Configuration.General.SiteURL == "" {
 		return OutputFiles{}, fmt.Errorf("domain and site URL are required")
 	}
+	if input.Configuration.Network.HTTPSMode == contracts.HTTPSModeCaddy {
+		return OutputFiles{}, fmt.Errorf("network.httpsMode: legacy Caddy HTTPS requires migration to an external reverse proxy")
+	}
 	if err := validateAuthConfiguration(input.Configuration.Auth); err != nil {
 		return OutputFiles{}, err
 	}

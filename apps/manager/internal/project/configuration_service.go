@@ -118,6 +118,9 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	if patch.Network != nil {
 		cfg.Network = *patch.Network
 	}
+	if cfg.Pooler.InternalDBPoolSize == 0 {
+		cfg.Pooler.InternalDBPoolSize = 5
+	}
 	if err := requireExplicitSecretActionsForPatch(patch); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
@@ -129,8 +132,10 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	if err := NormalizeProjectAddress(project.Slug, &cfg.General); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
-	legacyCaddy := base.Configuration.Network.HTTPSMode == contracts.HTTPSModeCaddy && cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy
-	if err := validateConfiguration(cfg, legacyCaddy, false); err != nil {
+	// Stored legacy Caddy remains readable, but every candidate retaining it
+	// must first migrate TLS to an external reverse proxy. Manager deliberately
+	// does not auto-switch this setting because doing so could cause an outage.
+	if err := validateConfiguration(cfg, false, false); err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
 	return cfg, nil

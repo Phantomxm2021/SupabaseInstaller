@@ -31,6 +31,24 @@ The agent renders the fixed host routing template. It does not accept raw
 Nginx text from a server and it never publishes API or Studio ports outside
 `127.0.0.1`.
 
+## Migrate legacy Caddy projects
+
+Legacy projects that still have `network.httpsMode=caddy` remain readable, but
+Manager will not save an unrelated patch or render their Compose. Migrate each
+project explicitly:
+
+1. Configure the external TLS reverse proxy with a route for the project domain
+   to that project's loopback API port (`127.0.0.1:<Network.APIPort>`). Keep the
+   API and Studio routes on the same project host and verify both are reachable.
+2. In Manager, set `network.httpsMode` to `external` and save the project.
+3. Reconcile the project, then verify API and Studio reachability through the
+   external proxy and inspect the generated Compose for the absence of a
+   `caddy` service.
+
+Manager never auto-switches a legacy project because changing its TLS entrypoint
+without a verified external route could cause an outage. Repeat this migration
+for every project before relying on the shared external proxy.
+
 ## Cloudflare DNS and TLS
 
 Create one record per server or a wildcard record:

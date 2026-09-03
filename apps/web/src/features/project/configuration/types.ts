@@ -4,6 +4,12 @@ import type { Services } from '../../../api/types'
 export const CONFIGURATION_SECTIONS = ['general', 'services', 'storage', 'realtime', 'functions', 'database', 'pooler', 'network', 'secrets'] as const
 export type ConfigurationSection = typeof CONFIGURATION_SECTIONS[number]
 
+/** Hardened public controls shared by the general and pooler forms. */
+export type HardenedConfigurationControls = {
+  authSiteUrl: string
+  internalDbPoolSize: number
+}
+
 export type ConfigurationSnapshot = {
   projectId: string
   revision: number
@@ -37,8 +43,10 @@ export function normalizeRedactedConfiguration(config: RedactedProjectConfigurat
   const oauth = Object.fromEntries(Object.entries(config.auth.oauth ?? {}).map(([provider, value]) => [provider, { ...value, fields: value.fields ?? {} }]))
   return {
     ...config,
+    general: { ...config.general, authSiteUrl: config.general.authSiteUrl ?? '' },
     auth: { ...config.auth, redirectUrls: config.auth.redirectUrls ?? [], oauth, phone: { ...config.auth.phone, provider: config.auth.phone.provider ?? '', fields: config.auth.phone.fields ?? {} }, smtp: { ...config.auth.smtp } },
     database: { ...config.database, extensions: config.database.extensions ?? [] },
+    pooler: { ...config.pooler, internalDbPoolSize: config.pooler.internalDbPoolSize || 5 },
     functions: { ...config.functions, variables: config.functions.variables ?? [] },
   }
 }

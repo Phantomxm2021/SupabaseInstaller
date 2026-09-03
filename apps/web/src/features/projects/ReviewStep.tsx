@@ -25,5 +25,5 @@ export function ReviewStep({ project, onEdit, onEditInfrastructure }: { project:
 }
 
 function Summary({ label, value }: { label: string; value: string }) {
-  return <div className="flex items-start justify-between gap-4 border-b border-border py-2 text-sm"><span className="text-muted-foreground">{label}</span><span className="max-w-[65%] text-right font-mono text-xs">{value}</span></div>
+  return <div className="flex items-start justify-between gap-4 border-b border-border py-2 text-sm"><span className="text-muted-foreground">{label === 'Site URL base domain' ? 'Server base domain' : label}</span><span className="max-w-[65%] text-right font-mono text-xs">{value}</span></div>
 }

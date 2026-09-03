@@ -48,6 +48,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		Services: ApplyPreset(preset),
 		Auth: contracts.AuthConfig{
 			Enabled:       true,
+			JWTExpiry:     3600,
 			Email:         contracts.EmailAuthConfig{Enabled: true, AllowSignup: true, MinimumPasswordLength: 6, EmailOTPExpiration: 3600, EmailOTPLength: 8},
 			ManualLinking: false,
 			SMTP:          contracts.SMTPConfig{Port: 587},
@@ -59,7 +60,7 @@ func DefaultConfiguration(preset contracts.Preset) contracts.ProjectConfiguratio
 		Realtime:  contracts.RealtimeConfig{MaxConnections: 100, DatabasePoolSize: 5, LogLevel: contracts.LogLevelInfo},
 		Functions: contracts.FunctionsConfig{DefaultJWTVerification: true},
 		Database:  contracts.DatabaseConfig{Version: "17", MaxConnections: 100},
-		Pooler:    contracts.PoolerConfig{PoolSize: 20, MaxClientConnections: 100},
+		Pooler:    contracts.PoolerConfig{PoolSize: 20, InternalDBPoolSize: 5, MaxClientConnections: 100},
 		Network:   contracts.NetworkConfig{Gateway: contracts.GatewayEnvoy, HTTPSMode: contracts.HTTPSModeExternal},
 	}
 }
@@ -105,6 +106,7 @@ const minStorageUploadFileSizeLimit int64 = 1 * 1024 * 1024
 const maxStorageUploadFileSizeLimit int64 = 5 * 1024 * 1024 * 1024
 
 var envNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+var sharedBuffersPattern = regexp.MustCompile(`^[1-9][0-9]*(?:B|kB|MB|GB|TB|KiB|MiB|GiB|TiB)$`)
 var r2AccountIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 var reservedFunctionVariables = map[string]struct{}{
@@ -117,12 +119,18 @@ func ValidateConfiguration(cfg contracts.ProjectConfiguration) error {
 }
 
 func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy, allowOmittedUploadLimit bool) error {
+	if cfg.Pooler.InternalDBPoolSize == 0 {
+		cfg.Pooler.InternalDBPoolSize = 5
+	}
 	validation := &ValidationError{Fields: make(map[string]string)}
 	if strings.TrimSpace(cfg.General.Domain) != "" && !validDomain(cfg.General.Domain) {
 		validation.add("general.domain", "must be a hostname without a scheme or path")
 	}
 	if strings.TrimSpace(cfg.General.SiteURL) != "" && !validAbsoluteHTTPURL(cfg.General.SiteURL) {
 		validation.add("general.siteUrl", "must be an absolute http or https URL")
+	}
+	if strings.TrimSpace(cfg.General.AuthSiteURL) != "" && !validAbsoluteHTTPURL(cfg.General.AuthSiteURL) {
+		validation.add("general.authSiteUrl", "must be an absolute http or https URL")
 	}
 	if cfg.General.SupabaseVersion != "self-hosted/v0.8.0" {
 		validation.add("general.supabaseVersion", "must be self-hosted/v0.8.0")
@@ -137,9 +145,10 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 	validateFunctions(cfg.Functions, validation)
 	validateDatabase(cfg.Database, validation)
 	validatePooler(cfg.Pooler, validation)
+	validateDatabaseConnectionBudget(cfg, validation)
 	validateNetwork(cfg.Network, validation)
 	if cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy && !allowLegacyCaddy {
-		validation.add("network.httpsMode", "Caddy HTTPS is not supported for new configurations")
+		validation.add("network.httpsMode", "legacy Caddy HTTPS requires migration to an external reverse proxy")
 	}
 	if cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy && !cfg.Services.Gateway {
 		validation.add("services.gateway", "Caddy HTTPS requires API Gateway")
@@ -155,6 +164,9 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 // configured secret has an empty action by design; command validation remains
 // strict at PreparePatch/Save boundaries.
 func ValidateStoredConfiguration(cfg contracts.ProjectConfiguration) error {
+	if cfg.Auth.JWTExpiry == 0 {
+		cfg.Auth.JWTExpiry = 3600
+	}
 	if cfg.General.StudioPasswordSet && cfg.General.StudioPassword.Action == "" {
 		cfg.General.StudioPassword.Action = "retain"
 	}
@@ -221,8 +233,8 @@ func validateServicesConfiguration(services contracts.Services, validation *Vali
 }
 
 func validateAuth(auth contracts.AuthConfig, validation *ValidationError) {
-	if auth.JWTExpiry < 0 || auth.JWTExpiry > 31536000 {
-		validation.add("auth.jwtExpiry", "must be between 0 and 31536000 seconds")
+	if auth.JWTExpiry < 1 || auth.JWTExpiry > 604800 {
+		validation.add("auth.jwtExpiry", "must be between 1 and 604800 seconds")
 	}
 	if auth.DisableSignup != !auth.Email.AllowSignup {
 		validation.add("auth.disableSignup", "must equal the inverse of auth.email.allowSignup")
@@ -592,6 +604,9 @@ func validateDatabase(database contracts.DatabaseConfig, validation *ValidationE
 	if database.MaxConnections < 1 || database.MaxConnections > 100000 {
 		validation.add("database.maxConnections", "must be between 1 and 100000")
 	}
+	if database.SharedBuffers != "" && !sharedBuffersPattern.MatchString(database.SharedBuffers) {
+		validation.add("database.sharedBuffers", "must be a positive integer followed by B, kB, MB, GB, TB, KiB, MiB, GiB, or TiB")
+	}
 	if database.DirectPortNumber != 0 {
 		validatePort(database.DirectPortNumber, "database.directPortNumber", validation)
 	}
@@ -607,8 +622,26 @@ func validatePooler(pooler contracts.PoolerConfig, validation *ValidationError) 
 	if pooler.PoolSize < 1 || pooler.PoolSize > 100000 {
 		validation.add("pooler.poolSize", "must be between 1 and 100000")
 	}
+	if pooler.InternalDBPoolSize < 1 || pooler.InternalDBPoolSize > 100000 {
+		validation.add("pooler.internalDbPoolSize", "must be between 1 and 100000")
+	}
 	if pooler.MaxClientConnections < 1 || pooler.MaxClientConnections > 100000 {
 		validation.add("pooler.maxClientConnections", "must be between 1 and 100000")
+	}
+}
+
+const fixedDatabaseConnectionReserve = 10
+
+func validateDatabaseConnectionBudget(cfg contracts.ProjectConfiguration, validation *ValidationError) {
+	required := fixedDatabaseConnectionReserve
+	if cfg.Services.Realtime {
+		required += cfg.Realtime.DatabasePoolSize
+	}
+	if cfg.Services.Supavisor {
+		required += cfg.Pooler.PoolSize + cfg.Pooler.InternalDBPoolSize
+	}
+	if required >= cfg.Database.MaxConnections {
+		validation.add("database.maxConnections", fmt.Sprintf("must exceed reserved service connection budget: fixed reserve is %d connections; requires %d connections", fixedDatabaseConnectionReserve, required))
 	}
 }
 

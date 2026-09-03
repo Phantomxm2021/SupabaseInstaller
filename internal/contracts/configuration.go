@@ -38,6 +38,7 @@ type SecretInput struct {
 type GeneralConfig struct {
 	Domain            string      `json:"domain"`
 	SiteURL           string      `json:"siteUrl"`
+	AuthSiteURL       string      `json:"authSiteUrl"`
 	SupabaseVersion   string      `json:"supabaseVersion"`
 	StudioUsername    string      `json:"studioUsername"`
 	StudioPasswordSet bool        `json:"studioPasswordSet"`
@@ -223,6 +224,7 @@ type PoolerConfig struct {
 	TransactionPort      int `json:"transactionPort"`
 	SessionPort          int `json:"sessionPort"`
 	PoolSize             int `json:"poolSize"`
+	InternalDBPoolSize   int `json:"internalDbPoolSize"`
 	MaxClientConnections int `json:"maxClientConnections"`
 }
 

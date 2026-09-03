@@ -8,8 +8,9 @@
 ## Phase 1 status (2026-09-03)
 
 CFG-001, CFG-002, CFG-003, CFG-004, CFG-005, CFG-006, CFG-007, CFG-008 and CFG-009
-are fixed in the Phase 1/2 remediation. New Caddy configurations are blocked, but
-legacy Caddy compatibility remains an open multi-project safety issue (CFG-017).
+are fixed in the Phase 1/2 remediation. New Caddy configurations are blocked, and
+legacy Caddy projects now have an explicit external reverse-proxy migration guard
+(CFG-017).
 CFG-005 is closed after
 cross-stack generation, persistence, rendering, and UI safety tests. Signing
 replacement remains an explicit maintenance-window operation because it
@@ -297,7 +298,13 @@ Supavisor、Realtime、Gateway、Studio、Functions 与 Logs。嵌入模板的 m
 | CFG-014 | P2 | Supavisor 内部元数据池错误复用了业务连接池大小。 |
 | CFG-015 | P2 | `shared_buffers` 接受任意字符串并直接传给 Postgres。 |
 | CFG-016 | P1 | `General.SiteURL` 被错误实现为 Supabase 域名基址。 |
-| CFG-017 | P1 | 遗留逐项目 Caddy 仍会争用宿主机 80/443。 |
+| CFG-017 | P1 | 遗留逐项目 Caddy 需要迁移到 external proxy（已加保存与渲染 guard）。 |
+
+本轮收口状态：CFG-011–CFG-016 已验证修复；CFG-017 采用显式 operator migration
+guard。遗留 Caddy 配置仍可读取，但保留 Caddy 的 Manager patch 会返回包含
+`network.httpsMode` 和 `external reverse proxy` 的迁移错误；切换为 external 后才可
+保存并生成不含 `caddy` service 的 Compose。Manager 不会自动切换，以避免未验证外部
+路由导致停机。
 
 ### CFG-011：JWT session expiry 的默认值与边界错误
 
@@ -384,7 +391,8 @@ Realtime、Storage 等服务不可用。
 
 ### CFG-017：遗留 Caddy 路径仍允许 80/443 冲突
 
-新配置已禁止 `httpsMode=caddy`，但 `ValidateStoredConfiguration` 与渲染器仍接受遗留值。
+新配置已禁止 `httpsMode=caddy`；`ValidateStoredConfiguration` 仍接受遗留值以保证可读，
+但 PreparePatch 与渲染器均拒绝保留该值并要求迁移到 external reverse proxy。
 上游 Caddy overlay 会发布 `80:80`、`443:443`、`443:443/udp`；而 Manager 只分配 API、
 Studio、数据库与 Pooler 端口，未把 80/443 建模为全局独占资源。因此第二个遗留 Caddy
 项目会在 Compose 启动时而非配置保存时失败，并与宿主统一反向代理争用 TLS 入口。
@@ -394,9 +402,8 @@ Studio、数据库与 Pooler 端口，未把 80/443 建模为全局独占资源�
 `apps/provisioner/internal/render/render.go`、
 `internal/templates/self-hosted-v0.8.0/docker-compose.caddy.yml`。
 
-**建议：** 对遗留项目提供迁移到 external proxy 的显式流程并停止渲染逐项目 Caddy；若
-必须支持 Caddy，则将其设计为管理所有项目域名的宿主级唯一服务，不能复用项目 Compose
-overlay。
+**处置：** 已提供迁移到 external proxy 的显式运维流程并停止渲染逐项目 Caddy。Manager
+不自动切换 HTTPS 模式；运维人员需逐项目验证 loopback API/Studio 路由后切换并 reconcile。
 
 ### 本轮已确认的对齐范围
 

@@ -1,4 +1,5 @@
 import type { UseFormReturn } from 'react-hook-form'
+import { useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel, FieldGroup } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -7,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type { ProjectForm } from './projectSchema'
+import { projectDomainFromBase } from './projectSchema'
 import type { ProjectIdentityAvailability } from './wizard/useProjectIdentityAvailability'
 import type { Availability } from './wizard/types'
 
@@ -49,6 +51,12 @@ export function BasicStep({
     return current?.message as string | undefined
   }
   const siteURL = form.watch('configuration.general.siteUrl')
+  const slug = form.watch('slug')
+  const authSiteURL = form.watch('configuration.general.authSiteUrl')
+  useEffect(() => {
+    const domain = projectDomainFromBase(slug, siteURL)
+    if (domain && !authSiteURL?.trim()) form.setValue('configuration.general.authSiteUrl', `https://${domain}`, { shouldDirty: false })
+  }, [form, slug, siteURL, authSiteURL])
   const nameError = error('name')
   const slugError = error('slug')
   const studioPasswordError = error('configuration.general.studioPassword')

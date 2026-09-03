@@ -34,6 +34,46 @@ func TestDefaultConfiguration(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigurationUsesOfficialJWTExpiry(t *testing.T) {
+	if got := DefaultConfiguration(contracts.PresetLightweight).Auth.JWTExpiry; got != 3600 {
+		t.Fatalf("JWTExpiry = %d, want 3600", got)
+	}
+}
+
+func TestAuthSiteURLValidationAndStoredJWTCompatibility(t *testing.T) {
+	payload, err := json.Marshal(contracts.GeneralConfig{AuthSiteURL: "https://app.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"authSiteUrl":"https://app.example.com"`) {
+		t.Fatalf("general config JSON omitted authSiteUrl: %s", payload)
+	}
+
+	for _, expiry := range []int{0, 604801} {
+		cfg := DefaultConfiguration(contracts.PresetLightweight)
+		cfg.Auth.JWTExpiry = expiry
+		var validation *ValidationError
+		if err := ValidateConfiguration(cfg); !errors.As(err, &validation) || validation.Fields["auth.jwtExpiry"] == "" {
+			t.Fatalf("ValidateConfiguration(jwtExpiry=%d) = %v, want auth.jwtExpiry error", expiry, err)
+		}
+	}
+
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Auth.JWTExpiry = 0
+	if err := ValidateStoredConfiguration(cfg); err != nil {
+		t.Fatalf("ValidateStoredConfiguration(jwtExpiry=0) = %v, want nil", err)
+	}
+
+	for _, value := range []string{"not-a-url", "ftp://app.example.com", "https://"} {
+		cfg := DefaultConfiguration(contracts.PresetLightweight)
+		cfg.General.AuthSiteURL = value
+		var validation *ValidationError
+		if err := ValidateConfiguration(cfg); !errors.As(err, &validation) || validation.Fields["general.authSiteUrl"] == "" {
+			t.Fatalf("ValidateConfiguration(authSiteUrl=%q) = %v, want authSiteUrl error", value, err)
+		}
+	}
+}
+
 func TestFunctionsConfigurationDoesNotExposeDirectory(t *testing.T) {
 	payload, err := json.Marshal(DefaultConfiguration(contracts.PresetLightweight).Functions)
 	if err != nil {
@@ -99,6 +139,29 @@ func TestConfigurationRejectsNewCaddyValue(t *testing.T) {
 	var validation *ValidationError
 	if !errors.As(err, &validation) || validation.Fields["network.httpsMode"] == "" {
 		t.Fatalf("ValidateConfiguration() error = %v, want network.httpsMode validation error", err)
+	}
+}
+
+func TestConfigurationAuthoritativelyValidatesSharedBuffersAndReportsBudget(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Database.SharedBuffers = "128"
+	cfg.Database.MaxConnections = 40
+	cfg.Services.Realtime = true
+	cfg.Services.Supavisor = true
+	cfg.Realtime.DatabasePoolSize = 20
+	cfg.Pooler.PoolSize = 15
+	cfg.Pooler.InternalDBPoolSize = 5
+
+	var validation *ValidationError
+	if err := ValidateConfiguration(cfg); !errors.As(err, &validation) {
+		t.Fatalf("ValidateConfiguration() error = %v, want validation error", err)
+	}
+	if validation.Fields["database.sharedBuffers"] == "" {
+		t.Fatalf("missing shared buffer validation: %#v", validation.Fields)
+	}
+	message := validation.Fields["database.maxConnections"]
+	if !strings.Contains(message, "fixed reserve is 10 connections") || !strings.Contains(message, "requires 50 connections") {
+		t.Fatalf("budget error = %q, want fixed reserve and required connection count", message)
 	}
 }
 
@@ -348,6 +411,50 @@ func TestConfigurationValidationStrictInputs(t *testing.T) {
 				t.Fatalf("expected field %q, got %v", tc.field, err)
 			}
 		})
+	}
+}
+
+func TestConfigurationValidationDatabaseConnectionBudget(t *testing.T) {
+	cases := []struct {
+		name      string
+		configure func(*contracts.ProjectConfiguration)
+		valid     bool
+	}{
+		{"reserve equals maximum", func(c *contracts.ProjectConfiguration) { c.Database.MaxConnections = 10 }, false},
+		{"realtime pool above maximum", func(c *contracts.ProjectConfiguration) {
+			c.Services.Realtime = true
+			c.Database.MaxConnections = 10
+			c.Realtime.DatabasePoolSize = 11
+		}, false},
+		{"supavisor pools included", func(c *contracts.ProjectConfiguration) { c.Services.Supavisor = true; c.Database.MaxConnections = 35 }, false},
+		{"disabled consumers excluded", func(c *contracts.ProjectConfiguration) {
+			c.Database.MaxConnections = 11
+			c.Realtime.DatabasePoolSize = 10000
+			c.Pooler.PoolSize = 100000
+			c.Pooler.InternalDBPoolSize = 100000
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfiguration(contracts.PresetLightweight)
+			tc.configure(&cfg)
+			err := ValidateConfiguration(cfg)
+			if tc.valid && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+			if !tc.valid {
+				var validation *ValidationError
+				if !errors.As(err, &validation) || validation.Fields["database.maxConnections"] == "" {
+					t.Fatalf("expected database.maxConnections error, got %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultConfigurationUsesIndependentInternalPool(t *testing.T) {
+	if got := DefaultConfiguration(contracts.PresetLightweight).Pooler.InternalDBPoolSize; got != 5 {
+		t.Fatalf("InternalDBPoolSize = %d, want 5", got)
 	}
 }
 

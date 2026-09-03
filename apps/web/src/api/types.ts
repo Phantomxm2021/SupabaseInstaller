@@ -53,6 +53,8 @@ export function toUpdateSecretInput(
 export interface GeneralConfig {
   domain: string;
   siteUrl: string;
+  /** Empty/missing on legacy snapshots; create forms hydrate this field. */
+  authSiteUrl?: string;
   supabaseVersion: string;
   studioUsername?: string;
   studioPasswordSet?: boolean;
@@ -222,11 +224,14 @@ export interface PoolerConfig {
   transactionPort: number;
   sessionPort: number;
   poolSize: number;
+  /** Zero/missing on legacy snapshots; configuration forms default to 5. */
+  internalDbPoolSize?: number;
   maxClientConnections: number;
 }
 export interface NetworkConfig {
   gateway: "envoy" | "kong";
-  httpsMode: "external";
+  /** Legacy snapshots may still report caddy until explicitly migrated. */
+  httpsMode: "external" | "caddy";
   managedTls?: {
     certificateName: string;
     certificateFile: string;
@@ -311,7 +316,8 @@ export interface RedactedDatabaseConfig {
 }
 export interface RedactedNetworkConfig {
   gateway: "envoy" | "kong";
-  httpsMode: "external";
+  /** Legacy snapshots may still report caddy until explicitly migrated. */
+  httpsMode: "external" | "caddy";
   managedTls?: {
     certificateName: string;
     certificateFile: string;

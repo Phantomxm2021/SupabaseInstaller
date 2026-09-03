@@ -233,6 +233,40 @@ func TestRenderUsesDerivedProjectDomainForSiteURL(t *testing.T) {
 	}
 }
 
+func TestRenderUsesExplicitAuthSiteURL(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.General.Domain = "bee.beegame.studio"
+	cfg.General.AuthSiteURL = "https://app.example.com"
+	cfg.Auth.JWTExpiry = 0
+
+	out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, TemplateCompose: []byte(testCompose)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "SITE_URL=https://app.example.com") {
+		t.Fatalf("runtime SITE_URL does not use explicit auth site URL:\n%s", out.Env)
+	}
+	if !strings.Contains(out.Env, "JWT_EXPIRY=3600") {
+		t.Fatalf("runtime JWT expiry did not use compatibility default:\n%s", out.Env)
+	}
+	if !strings.Contains(out.Env, "API_EXTERNAL_URL=https://bee.beegame.studio/auth/v1") {
+		t.Fatalf("runtime API_EXTERNAL_URL must use project domain:\n%s", out.Env)
+	}
+}
+
+func TestRenderUsesDomainFallbackForEmptyAuthSiteURL(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.General.Domain = "bee.beegame.studio"
+
+	out, err := Project(Input{Slug: "bee", APIPort: 18001, Configuration: cfg, TemplateCompose: []byte(testCompose)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "SITE_URL=https://bee.beegame.studio") {
+		t.Fatalf("runtime SITE_URL does not use domain fallback:\n%s", out.Env)
+	}
+}
+
 func TestRenderMailerTemplatesAndNotifications(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Auth.Mailer.Templates.Confirmation = contracts.EmailTemplateConfig{
@@ -795,7 +829,7 @@ func TestRenderS3ProtocolCanBeEnabledIndependently(t *testing.T) {
 	}
 }
 
-func TestRenderUsesOnlyPostgreSQL17AndGatewayChoices(t *testing.T) {
+func TestRenderRejectsCaddyBeforeComposeGeneration(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Database.Version = "15"
 	cfg.Network.Gateway = contracts.GatewayKong
@@ -805,12 +839,16 @@ func TestRenderUsesOnlyPostgreSQL17AndGatewayChoices(t *testing.T) {
 	cfg.Database.Version = "17"
 	cfg.Network.Gateway = contracts.GatewayEnvoy
 	cfg.Network.HTTPSMode = contracts.HTTPSModeCaddy
-	out, err := Project(Input{Slug: "pg17-caddy", APIPort: 18003, Configuration: cfg})
-	if err != nil {
-		t.Fatalf("legacy Caddy render rejected: %v", err)
+	if out, err := Project(Input{Slug: "pg17-caddy", APIPort: 18003, Configuration: cfg}); err == nil || !strings.Contains(err.Error(), "network.httpsMode") || !strings.Contains(err.Error(), "external reverse proxy") || out.Compose != "" {
+		t.Fatalf("legacy Caddy render = output %q, error %v; want migration guard before Compose", out.Compose, err)
 	}
-	if !strings.Contains(out.Compose, "supabase/postgres:17.6.1.136") || !strings.Contains(out.Compose, "caddy:2.9.1") || !strings.Contains(out.Compose, "  caddy:") {
-		t.Fatal("legacy Caddy Compose behavior was not preserved")
+	cfg.Network.HTTPSMode = contracts.HTTPSModeExternal
+	out, err := Project(Input{Slug: "pg17-external", APIPort: 18003, Configuration: cfg})
+	if err != nil {
+		t.Fatalf("external reverse proxy render rejected: %v", err)
+	}
+	if strings.Contains(out.Compose, "  caddy:") {
+		t.Fatal("external HTTPS Compose unexpectedly contains Caddy service")
 	}
 }
 
@@ -869,6 +907,39 @@ func TestRenderRealtimeDatabaseAndPoolerTuning(t *testing.T) {
 	for _, want := range []string{"max_connections=321", "shared_buffers=256MB", "REALTIME_MAX_CONNECTIONS", "REALTIME_DB_POOL_SIZE", "REALTIME_LOG_LEVEL", "127.0.0.1:6544:5432", "127.0.0.1:6543:6543"} {
 		if !strings.Contains(out.Compose, want) && !strings.Contains(out.Env, want) {
 			t.Errorf("tuning mapping missing %s", want)
+		}
+	}
+}
+
+func TestRenderKeepsSupavisorInternalPoolIndependent(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Supavisor = true
+	out, err := Project(Input{Slug: "pool-default", APIPort: 18001, Configuration: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "POOLER_DEFAULT_POOL_SIZE=20\n") || !strings.Contains(out.Env, "POOLER_DB_POOL_SIZE=5\n") {
+		t.Fatalf("default pool mapping missing: %s", out.Env)
+	}
+	cfg.Pooler.InternalDBPoolSize = 9
+	out, err = Project(Input{Slug: "pool-custom", APIPort: 18001, Configuration: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "POOLER_DEFAULT_POOL_SIZE=20\n") || !strings.Contains(out.Env, "POOLER_DB_POOL_SIZE=9\n") {
+		t.Fatalf("independent pool mapping missing: %s", out.Env)
+	}
+}
+
+func TestValidSharedBuffers(t *testing.T) {
+	for _, value := range []string{"1B", "1kB", "256MB", "1GB", "1TB", "1KiB", "1MiB", "1GiB", "1TiB"} {
+		if !validSharedBuffers(value) {
+			t.Errorf("validSharedBuffers(%q) = false", value)
+		}
+	}
+	for _, value := range []string{"0MB", "128", "-1MB", "10XB", "256MB; touch /tmp/pwned", "$(id)", " 256MB", "256MB "} {
+		if validSharedBuffers(value) {
+			t.Errorf("validSharedBuffers(%q) = true", value)
 		}
 	}
 }

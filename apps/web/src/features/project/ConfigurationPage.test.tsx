@@ -86,7 +86,7 @@ it("shows the General server controls and enables saving after a domain change",
 
   renderConfiguration();
 
-  const siteUrl = await screen.findByLabelText("Site URL base domain");
+  const siteUrl = await screen.findByLabelText("Server base domain");
   expect(screen.getByLabelText("Public project hostname")).toHaveValue(
     "bee.example.com",
   );
@@ -292,13 +292,13 @@ it("keeps dirty input when preview is dismissed with Keep editing", async () => 
     }),
   );
   renderConfiguration();
-  const siteUrl = await screen.findByLabelText("Site URL base domain");
+  const siteUrl = await screen.findByLabelText("Server base domain");
   await user.clear(siteUrl);
   await user.type(siteUrl, "https://edited.example.com");
   await user.click(screen.getByRole("button", { name: "Save General" }));
   expect(await screen.findByRole("alertdialog")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
-  expect(screen.getByLabelText("Site URL base domain")).toHaveValue(
+  expect(screen.getByLabelText("Server base domain")).toHaveValue(
     "https://edited.example.com",
   );
   expect(screen.getByLabelText("Public project hostname")).toHaveValue(
@@ -336,7 +336,7 @@ it("preserves dirty fields on 409 and only Reload resets to new server data", as
     }),
   );
   renderConfiguration();
-  const siteUrl = await screen.findByLabelText("Site URL base domain");
+  const siteUrl = await screen.findByLabelText("Server base domain");
   await user.clear(siteUrl);
   await user.type(siteUrl, "https://edited.example.com");
   await user.click(screen.getByRole("button", { name: "Save General" }));
@@ -346,12 +346,12 @@ it("preserves dirty fields on 409 and only Reload resets to new server data", as
       "This configuration is stale. Your dirty fields are preserved.",
     ),
   ).toBeVisible();
-  expect(screen.getByLabelText("Site URL base domain")).toHaveValue(
+  expect(screen.getByLabelText("Server base domain")).toHaveValue(
     "https://edited.example.com",
   );
   await user.click(screen.getByRole("button", { name: "Reload" }));
   await waitFor(() =>
-    expect(screen.getByLabelText("Site URL base domain")).toHaveValue(
+    expect(screen.getByLabelText("Server base domain")).toHaveValue(
       "https://server.example.com",
     ),
   );
@@ -371,7 +371,7 @@ it("renders authoritative API field errors", async () => {
             error: {
               code: "INVALID_CONFIGURATION",
               message: "invalid",
-              fields: { siteUrl: "Site URL base domain is already used" },
+              fields: { siteUrl: "Server base domain is already used" },
             },
           }),
           { status: 422 },
@@ -380,22 +380,22 @@ it("renders authoritative API field errors", async () => {
     }),
   );
   renderConfiguration();
-  const siteUrl = await screen.findByLabelText("Site URL base domain");
+  const siteUrl = await screen.findByLabelText("Server base domain");
   await user.clear(siteUrl);
   await user.type(siteUrl, "https://edited.example.com");
   await user.click(screen.getByRole("button", { name: "Save General" }));
   await user.click(screen.getByRole("button", { name: "Confirm and apply" }));
   expect(
     await screen.findByText(
-      /siteUrl: Site URL base domain is already used/,
+      /siteUrl: Server base domain is already used/,
     ),
   ).toBeVisible();
-  expect(screen.getByLabelText("Site URL base domain")).toHaveAttribute(
+  expect(screen.getByLabelText("Server base domain")).toHaveAttribute(
     "aria-invalid",
     "true",
   );
   expect(
-    screen.getByText("Site URL base domain is already used"),
+    screen.getByText("Server base domain is already used"),
   ).toBeVisible();
 });
 
@@ -589,7 +589,7 @@ it("keeps postgres-meta when Studio is disabled and persists the independent int
 it.each([
   [
     "general",
-    "Site URL base domain",
+    "Server base domain",
     "https://edited.example.com",
     "Save General",
   ],

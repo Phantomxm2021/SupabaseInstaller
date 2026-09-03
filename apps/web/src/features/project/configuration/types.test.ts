@@ -44,6 +44,19 @@ describe('configuration projection normalization', () => {
     expect(config.database.extensions).toEqual([])
   })
 
+  it('hydrates legacy missing auth site and internal database pool defaults', () => {
+    const config = normalizeRedactedConfiguration(omittedConfiguration())
+    expect(config.general.authSiteUrl).toBe('')
+    expect(config.pooler.internalDbPoolSize).toBe(5)
+  })
+
+  it('reads legacy Caddy snapshots so Network UI can offer external migration', () => {
+    const legacy = omittedConfiguration()
+    legacy.network.httpsMode = 'caddy'
+    const config = normalizeRedactedConfiguration(legacy)
+    expect(config.network.httpsMode).toBe('caddy')
+  })
+
   it('labels rendered configuration changes as recreate', () => {
     expect(sectionImpact('smtp', {})).toBe('recreate')
     expect(sectionImpact('oauth', {})).toBe('recreate')

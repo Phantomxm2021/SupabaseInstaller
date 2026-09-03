@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,7 +62,7 @@ func TestConfigurationServiceRejectsInvalidServiceClosure(t *testing.T) {
 	}
 }
 
-func TestConfigurationServiceAllowsUnrelatedPatchOnLegacyCaddy(t *testing.T) {
+func TestPreparePatchRequiresLegacyCaddyMigration(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -76,8 +77,17 @@ func TestConfigurationServiceAllowsUnrelatedPatchOnLegacyCaddy(t *testing.T) {
 	}
 	service := NewConfigurationService(database, nil, time.Now)
 	_, err = service.PreparePatch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, General: &contracts.GeneralConfig{Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion}})
+	if err == nil || !strings.Contains(err.Error(), "network.httpsMode") || !strings.Contains(err.Error(), "external reverse proxy") {
+		t.Fatalf("legacy Caddy patch error = %v, want network.httpsMode external reverse proxy migration", err)
+	}
+	external := cfg.Network
+	external.HTTPSMode = contracts.HTTPSModeExternal
+	prepared, err := service.PreparePatch(context.Background(), project.ID, contracts.ConfigurationPatch{ExpectedRevision: 1, Network: &external})
 	if err != nil {
-		t.Fatalf("legacy Caddy unrelated patch rejected: %v", err)
+		t.Fatalf("external reverse proxy migration patch rejected: %v", err)
+	}
+	if prepared.Network.HTTPSMode != contracts.HTTPSModeExternal {
+		t.Fatalf("prepared HTTPS mode = %q, want external", prepared.Network.HTTPSMode)
 	}
 }
 
