@@ -45,7 +45,11 @@ provider secret recreates Auth; provider credentials are never returned by GET.
 ## Storage
 
 Local and S3-compatible backends validate endpoint/protocol and credentials.
-Storage changes recreate Storage (and its dependency closure when required).
+For Cloudflare R2, Manager derives the HTTPS endpoint from the Account ID and
+renders the matching `https` protocol. Storage changes recreate Storage (and
+its dependency closure when required). Changing a backend or object-storage
+location is rejected while `storage.objects` is non-empty; migrate object bytes
+out of band before switching the configuration.
 
 ## Realtime
 
@@ -54,9 +58,9 @@ key remains managed by the installer.
 
 ## Functions
 
-The Functions directory and environment variables are rendered into the
-Functions runtime. Variable changes recreate Functions only. Reserved runtime
-names cannot be overridden.
+The Manager-owned Functions directory is fixed by the runtime; only environment
+variables are configurable. Variable changes recreate Functions only. Reserved
+runtime names cannot be overridden.
 
 ## Database
 

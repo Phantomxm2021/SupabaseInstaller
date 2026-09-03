@@ -154,6 +154,7 @@ func renderEnvironment(input Input) (string, string, error) {
 	}
 	if cfg.Storage.Backend == contracts.StorageBackendR2 && cfg.Storage.Endpoint == "" && cfg.Storage.AccountID != "" {
 		values["GLOBAL_S3_ENDPOINT"] = "https://" + cfg.Storage.AccountID + ".r2.cloudflarestorage.com"
+		values["GLOBAL_S3_PROTOCOL"] = "https"
 	}
 	if cfg.Auth.SMTP.Enabled {
 		values["SMTP_PASS"] = input.RuntimeSecrets[SecretSMTPassword]

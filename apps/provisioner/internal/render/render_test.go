@@ -871,6 +871,24 @@ func TestRenderR2ForcesCompatibleStorageOptions(t *testing.T) {
 	}
 }
 
+func TestRenderR2DerivedEndpointUsesHTTPSProtocol(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Storage = true
+	cfg.Storage = contracts.StorageConfig{
+		Backend: contracts.StorageBackendR2, AccountID: "0123456789abcdef0123456789abcdef", Bucket: "bucket",
+	}
+	out, err := Project(Input{Slug: "r2-protocol", APIPort: 18001, Configuration: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Env, "GLOBAL_S3_PROTOCOL=https\n") {
+		t.Fatalf("R2 dotenv missing HTTPS protocol:\n%s", out.Env)
+	}
+	if !strings.Contains(out.Compose, "GLOBAL_S3_PROTOCOL: ${GLOBAL_S3_PROTOCOL}") {
+		t.Fatalf("storage service environment is missing GLOBAL_S3_PROTOCOL:\n%s", out.Compose)
+	}
+}
+
 func TestRenderStorageFileSizeLimit(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Services.Storage = true

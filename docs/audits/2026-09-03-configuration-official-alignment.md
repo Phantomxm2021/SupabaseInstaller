@@ -7,7 +7,8 @@
 
 ## Phase 1 status (2026-09-03)
 
-CFG-001, CFG-002, CFG-003, CFG-004, CFG-005, CFG-006, CFG-007, CFG-008 and CFG-009
+CFG-001, CFG-002, CFG-003, CFG-004, CFG-005, CFG-006, CFG-007, CFG-008, CFG-009
+and CFG-018
 are fixed in the Phase 1/2 remediation. New Caddy configurations are blocked, and
 legacy Caddy projects now have an explicit external reverse-proxy migration guard
 (CFG-017).
@@ -405,14 +406,28 @@ Studio、数据库与 Pooler 端口，未把 80/443 建模为全局独占资源�
 **处置：** 已提供迁移到 external proxy 的显式运维流程并停止渲染逐项目 Caddy。Manager
 不自动切换 HTTPS 模式；运维人员需逐项目验证 loopback API/Studio 路由后切换并 reconcile。
 
+### CFG-018：R2 派生 endpoint 漏掉 HTTPS protocol（已修复）
+
+R2 的合法输入不接受显式 endpoint，而由 Cloudflare Account ID 派生
+`https://<account>.r2.cloudflarestorage.com`。渲染器先根据空的原始 endpoint
+设置 `GLOBAL_S3_PROTOCOL`，随后才写入派生 endpoint，导致生成的 `.env` 为
+`GLOBAL_S3_PROTOCOL=`。Storage Compose 会消费这个空值。
+
+已在 R2 派生 endpoint 的同一分支固定渲染
+`GLOBAL_S3_PROTOCOL=https`，并添加回归测试，同时检查生成 `.env` 与 Storage
+服务对该变量的消费。generic S3、AWS S3 和 local 路径保持原有 protocol 语义。
+官方 S3/R2 自托管示例将 HTTPS endpoint 与 `https` protocol 成对配置：
+<https://supabase.com/docs/guides/self-hosting/self-hosted-s3#how-to-configure-an-s3-backend>。
+
 ### 本轮已确认的对齐范围
 
 - 官方固定模板与仓库嵌入模板无文件漂移；Envoy 默认、Kong opt-in、Functions private
   `env_file`、Studio/meta、Logs/Vector override 均保持官方消费者语义。
 - OAuth provider 映射、SMTP、Phone provider secret、基础 TOTP/Phone MFA 开关、邮件模板
   服务和新旧 Auth key/JWKS 消费路径与官方文档相符。
-- Storage/R2、REST/PostgREST 与基础 Realtime 环境变量没有发现新的直接文档冲突；未暴露
-  的 raw `.env` 变量继续作为明确的受控能力边界处理，而不是静默假装支持。
+- 除已修复的 CFG-018 外，Storage/R2、REST/PostgREST 与基础 Realtime 环境变量没有发现
+  新的直接文档冲突；未暴露的 raw `.env` 变量继续作为明确的受控能力边界处理，而不是
+  静默假装支持。
 
 **本轮官方依据：**
 
