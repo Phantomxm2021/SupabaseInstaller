@@ -140,6 +140,10 @@ func (backend *Backend) FunctionLogs(ctx context.Context, slug, name string, que
 	if err := contracts.ValidateFunctionLogQuery(query); err != nil {
 		return contracts.FunctionLogPage{}, err
 	}
+	logDirectory, logDirectoryErr := backend.projectFS.OpenFunctionLogDirectory(slug)
+	if logDirectory != nil {
+		defer logDirectory.Close()
+	}
 	items, err := backend.projectFS.ListFunctions(slug)
 	if err != nil {
 		return contracts.FunctionLogPage{}, err
@@ -161,14 +165,20 @@ func (backend *Backend) FunctionLogs(ctx context.Context, slug, name string, que
 	if metadata.ProjectID == "" {
 		return contracts.FunctionLogPage{}, errors.New("project metadata identity is missing")
 	}
-	path, err := backend.projectFS.FunctionLogDatabasePath(slug)
-	if err != nil {
-		return contracts.FunctionLogPage{}, err
+	if errors.Is(logDirectoryErr, os.ErrNotExist) {
+		return contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}, Health: contracts.FunctionLogHealth{Status: "not_installed"}, ServerTime: time.Now().UTC()}, nil
 	}
-	reader, err := functionlogs.OpenReader(path, time.Now)
+	if logDirectoryErr != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: open database", contracts.ErrFunctionLogsUnavailable)
+	}
+	snapshot, err := projectfs.OpenFunctionLogFileAt(logDirectory, "function-logs.read.db")
 	if errors.Is(err, os.ErrNotExist) {
 		return contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}, Health: contracts.FunctionLogHealth{Status: "not_installed"}, ServerTime: time.Now().UTC()}, nil
 	}
+	if err != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: open database", contracts.ErrFunctionLogsUnavailable)
+	}
+	reader, err := functionlogs.OpenReaderFile(snapshot, time.Now)
 	if err != nil {
 		return contracts.FunctionLogPage{}, fmt.Errorf("%w: open database", contracts.ErrFunctionLogsUnavailable)
 	}
@@ -177,7 +187,16 @@ func (backend *Backend) FunctionLogs(ctx context.Context, slug, name string, que
 	if err != nil {
 		return contracts.FunctionLogPage{}, fmt.Errorf("%w: query database", contracts.ErrFunctionLogsUnavailable)
 	}
-	page.Health, err = functionlogs.ReadHealthSnapshot(filepath.Join(filepath.Dir(path), "health.json"), time.Now())
+	healthFile, healthErr := projectfs.OpenFunctionLogFileAt(logDirectory, "health.json")
+	if errors.Is(healthErr, os.ErrNotExist) {
+		page.Health = contracts.FunctionLogHealth{Status: "offline"}
+		return page, nil
+	}
+	if healthErr != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: read health", contracts.ErrFunctionLogsUnavailable)
+	}
+	page.Health, err = functionlogs.ReadHealthSnapshotFile(healthFile, time.Now())
+	_ = healthFile.Close()
 	if err != nil {
 		return contracts.FunctionLogPage{}, fmt.Errorf("%w: read health", contracts.ErrFunctionLogsUnavailable)
 	}

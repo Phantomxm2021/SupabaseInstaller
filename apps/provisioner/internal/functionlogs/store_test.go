@@ -3,6 +3,7 @@ package functionlogs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
@@ -279,7 +280,8 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 func TestOpenReaderQueriesWithoutCreatingOrMutatingDatabase(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "logs.db")
-	if _, err := OpenReader(path, time.Now); !errors.Is(err, os.ErrNotExist) {
+	readPath := filepath.Join(filepath.Dir(path), "function-logs.read.db")
+	if _, err := OpenReader(readPath, time.Now); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("OpenReader(missing) error = %v, want not exist", err)
 	}
 	writer, err := Open(path, Options{})
@@ -296,7 +298,7 @@ func TestOpenReaderQueriesWithoutCreatingOrMutatingDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader, err := OpenReader(path, time.Now)
+	reader, err := OpenReader(readPath, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +329,7 @@ func TestOpenReaderRejectsDatabaseSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = store.Close()
-	link := filepath.Join(dir, "logs.db")
+	link := filepath.Join(dir, "function-logs.read.db")
 	if err := os.Symlink(external, link); err != nil {
 		t.Fatal(err)
 	}
@@ -348,19 +350,18 @@ func TestOpenReaderReadsWALAndRemainsBoundAcrossPathSwap(t *testing.T) {
 	if err := writer.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("original", "p", "fn", now, contracts.FunctionLogLevelInfo, "wal")}); err != nil {
 		t.Fatal(err)
 	}
-	reader, err := OpenReader(path, time.Now)
+	readPath := filepath.Join(dir, "function-logs.read.db")
+	reader, err := OpenReader(readPath, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fd := int(reader.readerFile.Fd())
-	if err := os.Rename(path, path+".old"); err != nil {
+	if err := os.Rename(readPath, readPath+".old"); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := Open(path, Options{})
-	if err != nil {
+	if err := os.WriteFile(readPath, []byte("not the opened snapshot"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_ = replacement.Close()
 	page, err := reader.Query(context.Background(), "p", "fn", contracts.FunctionLogQuery{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -373,6 +374,89 @@ func TestOpenReaderReadsWALAndRemainsBoundAcrossPathSwap(t *testing.T) {
 	}
 	if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err == nil {
 		t.Fatal("reader descriptor remains open")
+	}
+}
+
+func TestSnapshotPublishFailurePreservesPreviousReadableSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "function-logs.db")
+	now := time.Now().UTC()
+	writer, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if err := writer.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("one", "p", "fn", now, contracts.FunctionLogLevelInfo, "one")}); err != nil {
+		t.Fatal(err)
+	}
+	writer.publishSnapshot = func(context.Context) error { return errors.New("publish failed") }
+	if err := writer.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("two", "p", "fn", now.Add(time.Second), contracts.FunctionLogLevelInfo, "two")}); err == nil {
+		t.Fatal("InsertBatch succeeded")
+	}
+	reader, err := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	page, err := reader.Query(context.Background(), "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Logs) != 1 || page.Logs[0].ID != "one" {
+		t.Fatalf("page=%#v", page)
+	}
+}
+
+func TestPublishedSnapshotsRemainConsistentDuringConcurrentInserts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "function-logs.db")
+	writer, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	ctx := context.Background()
+	base := time.Now().UTC()
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 40; i++ {
+			id := fmt.Sprintf("event-%03d", i)
+			if err := writer.InsertBatch(ctx, []contracts.FunctionLogRecord{record(id, "p", "fn", base.Add(time.Duration(i)*time.Second), contracts.FunctionLogLevelInfo, id)}); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	last := 0
+	for {
+		reader, openErr := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		page, queryErr := reader.Query(ctx, "p", "fn", contracts.FunctionLogQuery{Limit: 200})
+		_ = reader.Close()
+		if queryErr != nil {
+			t.Fatal(queryErr)
+		}
+		if len(page.Logs) < last || len(page.Logs) > 40 {
+			t.Fatalf("non-monotonic snapshot rows=%d last=%d", len(page.Logs), last)
+		}
+		last = len(page.Logs)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader, _ := OpenReader(filepath.Join(dir, "function-logs.read.db"), time.Now)
+			final, _ := reader.Query(ctx, "p", "fn", contracts.FunctionLogQuery{Limit: 200})
+			_ = reader.Close()
+			if len(final.Logs) != 40 {
+				t.Fatalf("final rows=%d", len(final.Logs))
+			}
+			return
+		default:
+		}
 	}
 }
 

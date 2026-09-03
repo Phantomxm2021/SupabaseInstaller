@@ -2,12 +2,60 @@ package projectfs
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestOpenFunctionLogFileRejectsParentSymlinkAndPinsOpenedLeaf(t *testing.T) {
+	base := t.TempDir()
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logsDir := filepath.Join(base, "bee", ".manager-runtime", "function-logs")
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(logsDir, "function-logs.read.db")
+	if err := os.WriteFile(snapshot, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := root.OpenFunctionLogFile("bee", "function-logs.read.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "function-logs.read.db"), []byte("external"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(logsDir, logsDir+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(logsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logsDir, "function-logs.read.db"), []byte("external"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(file)
+	_ = file.Close()
+	if err != nil || string(data) != "original" {
+		t.Fatalf("opened data/error=%q/%v", data, err)
+	}
+	if err := os.RemoveAll(logsDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, logsDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.OpenFunctionLogFile("bee", "function-logs.read.db"); err == nil {
+		t.Fatal("parent symlink accepted")
+	}
+}
 
 func TestStageRuntimeFilesPublishesManagerOwnedEventWorkerAndPersistentLogDirectory(t *testing.T) {
 	root, err := New(t.TempDir())

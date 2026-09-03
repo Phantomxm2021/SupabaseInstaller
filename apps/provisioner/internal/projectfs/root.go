@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"supabase-manager/internal/contracts"
 	eventworker "supabase-manager/internal/templates/manager/function-logs/event-worker"
 )
@@ -1088,6 +1090,7 @@ func syncDirectory(directory string) error {
 
 type Root struct {
 	base       string
+	baseDir    *os.File
 	metadataMu sync.Mutex
 	runtimeMu  sync.Mutex
 	hooks      runtimeHooks
@@ -1164,7 +1167,11 @@ func New(base string) (*Root, error) {
 	if err := os.MkdirAll(absolute, 0o700); err != nil {
 		return nil, fmt.Errorf("create project root: %w", err)
 	}
-	root := &Root{base: filepath.Clean(absolute)}
+	baseFD, err := unix.Open(absolute, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("pin project root: %w", err)
+	}
+	root := &Root{base: filepath.Clean(absolute), baseDir: os.NewFile(uintptr(baseFD), absolute)}
 	if err := root.cleanupAbandonedRuntimeCandidatesAtStartup(); err != nil {
 		return nil, fmt.Errorf("clean abandoned runtime candidates: %w", err)
 	}
@@ -1172,6 +1179,53 @@ func New(base string) (*Root, error) {
 		return nil, fmt.Errorf("repair legacy function directories: %w", err)
 	}
 	return root, nil
+}
+
+// OpenFunctionLogFile walks only fixed managed components from the pinned
+// project root descriptor. Every directory and leaf rejects symlinks.
+func (r *Root) OpenFunctionLogFile(slug, name string) (*os.File, error) {
+	directory, err := r.OpenFunctionLogDirectory(slug)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	return OpenFunctionLogFileAt(directory, name)
+}
+
+func (r *Root) OpenFunctionLogDirectory(slug string) (*os.File, error) {
+	if !slugPattern.MatchString(slug) {
+		return nil, errors.New("invalid function log file")
+	}
+	fd, err := unix.Dup(int(r.baseDir.Fd()))
+	if err != nil {
+		return nil, err
+	}
+	for _, component := range []string{slug, ".manager-runtime", "function-logs"} {
+		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(fd)
+		if openErr != nil {
+			return nil, openErr
+		}
+		fd = next
+	}
+	return os.NewFile(uintptr(fd), "function-logs"), nil
+}
+
+func OpenFunctionLogFileAt(directory *os.File, name string) (*os.File, error) {
+	if directory == nil || (name != "function-logs.read.db" && name != "health.json") {
+		return nil, errors.New("invalid function log file")
+	}
+	leaf, err := unix.Openat(int(directory.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(leaf), name)
+	info, statErr := file.Stat()
+	if statErr != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, errors.New("function log file is unsafe")
+	}
+	return file, nil
 }
 
 // cleanupAbandonedRuntimeCandidatesAtStartup is called once during

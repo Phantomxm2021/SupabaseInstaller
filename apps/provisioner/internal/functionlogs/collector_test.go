@@ -429,17 +429,25 @@ func TestCollectorRestartPreservesCountersAndDroppedEvidence(t *testing.T) {
 	}
 }
 
-type blockingMaintenanceStore struct{ started chan struct{} }
+type blockingMaintenanceStore struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
 
 func (*blockingMaintenanceStore) InsertBatch(context.Context, []contracts.FunctionLogRecord) error {
 	return nil
 }
-func (s *blockingMaintenanceStore) Maintain(context.Context) error { close(s.started); select {} }
+func (s *blockingMaintenanceStore) Maintain(context.Context) error {
+	s.once.Do(func() { close(s.started) })
+	<-s.release
+	return nil
+}
 
 func TestCollectorCloseContextReturnsDeadlineWhenMaintenanceIgnoresContext(t *testing.T) {
 	root := t.TempDir()
 	_ = os.Mkdir(filepath.Join(root, "hello"), 0o700)
-	store := &blockingMaintenanceStore{started: make(chan struct{})}
+	store := &blockingMaintenanceStore{started: make(chan struct{}), release: make(chan struct{})}
 	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: store, Redactor: &Redactor{}, FunctionsRoot: root, MaintenanceInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
@@ -453,6 +461,30 @@ func TestCollectorCloseContextReturnsDeadlineWhenMaintenanceIgnoresContext(t *te
 	defer cancel()
 	if err := collector.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("CloseContext error=%v", err)
+	}
+	close(store.release)
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := collector.CloseContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCollectorRestartRestoresCountersFromStaleSnapshot(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, "hello"), 0o700)
+	healthPath := filepath.Join(t.TempDir(), "health.json")
+	now := time.Now().UTC()
+	if err := WriteHealthSnapshot(healthPath, contracts.FunctionLogHealth{Status: "healthy", Dropped: 5, Rejected: 9}, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: &collectorStore{}, Redactor: &Redactor{}, FunctionsRoot: root, HealthPath: healthPath, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	if health := collector.Health(); health.Dropped != 5 || health.Rejected != 9 || health.Status != "dropped" {
+		t.Fatalf("health=%#v", health)
 	}
 }
 

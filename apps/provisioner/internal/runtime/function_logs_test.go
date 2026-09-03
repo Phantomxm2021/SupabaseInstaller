@@ -94,7 +94,7 @@ func TestFunctionLogsCorruptionReturnsSafeTypedFailure(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("/private/secret corrupt"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "function-logs.read.db"), []byte("/private/secret corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := backend.FunctionLogs(context.Background(), "bee", "demo", contracts.FunctionLogQuery{Limit: 10})

@@ -34,15 +34,17 @@ type Options struct {
 }
 
 type Store struct {
-	db         *sql.DB
-	path       string
-	now        func() time.Time
-	sizeBytes  func(string) (int64, error)
-	retention  time.Duration
-	maxBytes   int64
-	redactor   *Redactor
-	readerFile *os.File
-	readerTemp string
+	db              *sql.DB
+	path            string
+	now             func() time.Time
+	sizeBytes       func(string) (int64, error)
+	retention       time.Duration
+	maxBytes        int64
+	redactor        *Redactor
+	readerFile      *os.File
+	readerTemp      string
+	snapshotPath    string
+	publishSnapshot func(context.Context) error
 }
 
 func Open(path string, options Options) (*Store, error) {
@@ -79,6 +81,7 @@ func Open(path string, options Options) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	store := &Store{db: db, path: path, now: options.Now, sizeBytes: options.SizeBytes, retention: options.Retention, maxBytes: options.MaxBytes, redactor: options.Redactor}
+	store.snapshotPath = filepath.Join(filepath.Dir(path), "function-logs.read.db")
 	if _, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS function_logs (
 		event_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, function_name TEXT NOT NULL,
 		timestamp_ns INTEGER NOT NULL, ingested_at_ns INTEGER NOT NULL, execution_id TEXT NOT NULL,
@@ -93,6 +96,44 @@ func Open(path string, options Options) (*Store, error) {
 		return nil, fmt.Errorf("maintain function log store: %w", err)
 	}
 	return store, nil
+}
+
+func (s *Store) publishReadSnapshot(ctx context.Context) error {
+	if s.publishSnapshot != nil {
+		return s.publishSnapshot(ctx)
+	}
+	temp, err := os.CreateTemp(filepath.Dir(s.snapshotPath), ".function-logs-read-*.db")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	_ = os.Remove(tempPath)
+	defer os.Remove(tempPath)
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, tempPath); err != nil {
+		return err
+	}
+	file, err := os.Open(tempPath)
+	if err != nil {
+		return err
+	}
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if err := errors.Join(syncErr, closeErr); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, s.snapshotPath); err != nil {
+		return err
+	}
+	directory, err := os.Open(filepath.Dir(s.snapshotPath))
+	if err != nil {
+		return err
+	}
+	syncErr = directory.Sync()
+	closeErr = directory.Close()
+	return errors.Join(syncErr, closeErr)
 }
 
 // OpenReader opens an existing SQLite log database without running schema or
@@ -121,8 +162,13 @@ func OpenReader(path string, now func() time.Time) (*Store, error) {
 		return nil, err
 	}
 	readerFile := os.NewFile(uintptr(fd), filepath.Base(abs))
+	return OpenReaderFile(readerFile, now)
+}
+
+// OpenReaderFile consumes a no-follow, regular snapshot descriptor and copies
+// only that immutable standalone SQLite file into a private query location.
+func OpenReaderFile(readerFile *os.File, now func() time.Time) (*Store, error) {
 	if readerFile == nil {
-		_ = unix.Close(fd)
 		return nil, errors.New("open function log database")
 	}
 	info, err := readerFile.Stat()
@@ -133,48 +179,16 @@ func OpenReader(path string, now func() time.Time) (*Store, error) {
 	if now == nil {
 		now = time.Now
 	}
-	// SQLite derives WAL sidecars from the database pathname and cannot safely
-	// discover them through /proc/self/fd. Copy the already-opened inode and its
-	// no-follow sidecars into a private snapshot, then query that snapshot only.
 	tempDir, err := os.MkdirTemp("", "function-log-reader-*")
 	if err != nil {
 		_ = readerFile.Close()
 		return nil, err
 	}
 	cleanup := func() { _ = os.RemoveAll(tempDir); _ = readerFile.Close() }
-	snapshotPath := filepath.Join(tempDir, "function-logs.db")
+	snapshotPath := filepath.Join(tempDir, "function-logs.read.db")
 	if err := copyOpenFile(readerFile, snapshotPath); err != nil {
 		cleanup()
 		return nil, err
-	}
-	for _, suffix := range []string{"-wal", "-shm"} {
-		sideParentFD, openErr := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-		if openErr != nil {
-			cleanup()
-			return nil, openErr
-		}
-		sideFD, sideErr := unix.Openat(sideParentFD, filepath.Base(abs)+suffix, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		_ = unix.Close(sideParentFD)
-		if sideErr != nil {
-			if errors.Is(sideErr, unix.ENOENT) {
-				continue
-			}
-			cleanup()
-			return nil, sideErr
-		}
-		side := os.NewFile(uintptr(sideFD), suffix)
-		sideInfo, statErr := side.Stat()
-		if statErr != nil || !sideInfo.Mode().IsRegular() {
-			side.Close()
-			cleanup()
-			return nil, errors.New("function log sidecar is unsafe")
-		}
-		if err := copyOpenFile(side, snapshotPath+suffix); err != nil {
-			side.Close()
-			cleanup()
-			return nil, err
-		}
-		_ = side.Close()
 	}
 	dsn := (&url.URL{Scheme: "file", Path: snapshotPath, RawQuery: "mode=ro"}).String()
 	db, err := sql.Open("sqlite", dsn)
@@ -188,7 +202,7 @@ func OpenReader(path string, now func() time.Time) (*Store, error) {
 		cleanup()
 		return nil, err
 	}
-	return &Store{db: db, path: path, now: now, readerFile: readerFile, readerTemp: tempDir}, nil
+	return &Store{db: db, path: readerFile.Name(), now: now, readerFile: readerFile, readerTemp: tempDir}, nil
 }
 
 func copyOpenFile(source *os.File, destination string) error {
@@ -263,7 +277,10 @@ func (s *Store) InsertBatch(ctx context.Context, records []contracts.FunctionLog
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.publishReadSnapshot(ctx)
 }
 
 func (s *Store) Query(ctx context.Context, projectID, functionName string, query contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
@@ -346,7 +363,7 @@ func (s *Store) Maintain(ctx context.Context) error {
 			return err
 		}
 		if size <= s.maxBytes {
-			return nil
+			return s.publishReadSnapshot(ctx)
 		}
 		deleted, err := s.deleteBatch(ctx, "1=1")
 		if err != nil {

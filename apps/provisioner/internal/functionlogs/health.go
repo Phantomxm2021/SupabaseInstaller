@@ -68,6 +68,13 @@ func ReadHealthSnapshot(path string, now time.Time) (contracts.FunctionLogHealth
 		return contracts.FunctionLogHealth{}, err
 	}
 	defer file.Close()
+	return ReadHealthSnapshotFile(file, now)
+}
+
+func ReadHealthSnapshotFile(file *os.File, now time.Time) (contracts.FunctionLogHealth, error) {
+	if file == nil {
+		return contracts.FunctionLogHealth{Status: "offline"}, nil
+	}
 	raw, err := io.ReadAll(io.LimitReader(file, 4097))
 	if err != nil || len(raw) > 4096 || rejectDuplicateJSONKeys(raw) != nil {
 		return contracts.FunctionLogHealth{Status: "incompatible"}, nil
@@ -92,6 +99,32 @@ func ReadHealthSnapshot(path string, now time.Time) (contracts.FunctionLogHealth
 	}
 	snapshot.Health.Detail = ""
 	return snapshot.Health, nil
+}
+
+func readHealthSnapshotForRestart(path string, now time.Time) (contracts.FunctionLogHealth, bool, error) {
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return contracts.FunctionLogHealth{}, false, nil
+	}
+	if err != nil {
+		return contracts.FunctionLogHealth{}, false, err
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, 4097))
+	if err != nil {
+		return contracts.FunctionLogHealth{}, false, err
+	}
+	if len(raw) > 4096 || rejectDuplicateJSONKeys(raw) != nil {
+		return contracts.FunctionLogHealth{}, false, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var snapshot healthSnapshot
+	if decoder.Decode(&snapshot) != nil || decoder.Decode(&struct{}{}) != io.EOF || snapshot.Version != 1 || snapshot.UpdatedAt.IsZero() || !validHealthStatus(snapshot.Health.Status) || snapshot.UpdatedAt.Sub(now) > HealthStaleAfter {
+		return contracts.FunctionLogHealth{}, false, nil
+	}
+	snapshot.Health.Detail = ""
+	return snapshot.Health, true, nil
 }
 
 func validHealthStatus(status string) bool {

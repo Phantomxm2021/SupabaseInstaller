@@ -98,11 +98,11 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	if options.HealthPath != "" {
-		previous, readErr := ReadHealthSnapshot(options.HealthPath, options.Now())
+		previous, valid, readErr := readHealthSnapshotForRestart(options.HealthPath, options.Now())
 		if readErr != nil {
 			return nil, errors.New("read function log health")
 		}
-		if previous.Status != "offline" && !(previous.Status == "incompatible" && previous.Dropped == 0 && previous.Rejected == 0) {
+		if valid {
 			c.health.Dropped, c.health.Rejected = previous.Dropped, previous.Rejected
 			if previous.Status == "incompatible" {
 				c.health.Status = "incompatible"
