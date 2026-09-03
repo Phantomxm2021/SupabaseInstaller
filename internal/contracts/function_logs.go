@@ -88,7 +88,153 @@ func (e *EdgeRuntimeIncompatibilityError) Unwrap() error { return ErrIncompatibl
 
 func incompatibleEvent(reason string) error { return &EdgeRuntimeIncompatibilityError{Reason: reason} }
 
+type edgeRuntimeEnvelope struct {
+	Timestamp string          `json:"timestamp"`
+	EventType string          `json:"event_type"`
+	Event     json.RawMessage `json:"event"`
+	Metadata  struct {
+		ServicePath    string            `json:"service_path"`
+		ExecutionID    string            `json:"execution_id"`
+		OTelAttributes map[string]string `json:"otel_attributes"`
+	} `json:"metadata"`
+}
+
+// CanonicalEdgeRuntimeEventJSON converts an EventManager callback object to
+// the deterministic compact representation used for EventID. Struct field
+// order matches the object assembled by the TypeScript adapter; map keys are
+// lexicographically ordered by encoding/json, matching the adapter's sort.
+func CanonicalEdgeRuntimeEventJSON(raw []byte) ([]byte, error) {
+	if err := rejectDuplicateJSONKeys(raw); err != nil {
+		return nil, incompatibleEvent("invalid or duplicate JSON field")
+	}
+	var envelope edgeRuntimeEnvelope
+	if err := decodeClosedJSON(raw, &envelope); err != nil {
+		return nil, incompatibleEvent("invalid or unknown JSON field")
+	}
+	var event any
+	switch envelope.EventType {
+	case "Boot":
+		var body struct {
+			BootTime *int64 `json:"boot_time"`
+		}
+		if decodeClosedJSON(envelope.Event, &body) != nil || body.BootTime == nil {
+			return nil, incompatibleEvent("invalid Boot event")
+		}
+		event = body
+	case "Log":
+		var body struct {
+			Message *string `json:"msg"`
+			Level   string  `json:"level"`
+		}
+		if decodeClosedJSON(envelope.Event, &body) != nil || body.Message == nil {
+			return nil, incompatibleEvent("invalid Log event")
+		}
+		event = body
+	case "UncaughtException":
+		var body struct {
+			Exception   *string `json:"exception"`
+			CPUTimeUsed *int64  `json:"cpu_time_used"`
+		}
+		if decodeClosedJSON(envelope.Event, &body) != nil || body.Exception == nil || body.CPUTimeUsed == nil {
+			return nil, incompatibleEvent("invalid UncaughtException event")
+		}
+		event = body
+	default:
+		return nil, incompatibleEvent("unknown event_type")
+	}
+	canonical := struct {
+		Timestamp string                      `json:"timestamp"`
+		EventType string                      `json:"event_type"`
+		Event     any                         `json:"event"`
+		Metadata  edgeRuntimeEnvelopeMetadata `json:"metadata"`
+	}{
+		Timestamp: envelope.Timestamp, EventType: envelope.EventType, Event: event,
+		Metadata: edgeRuntimeEnvelopeMetadata{ServicePath: envelope.Metadata.ServicePath, ExecutionID: envelope.Metadata.ExecutionID, OTelAttributes: envelope.Metadata.OTelAttributes},
+	}
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(canonical); err != nil {
+		return nil, incompatibleEvent("invalid JSON")
+	}
+	return bytes.TrimSuffix(output.Bytes(), []byte("\n")), nil
+}
+
+type edgeRuntimeEnvelopeMetadata struct {
+	ServicePath    string            `json:"service_path"`
+	ExecutionID    string            `json:"execution_id"`
+	OTelAttributes map[string]string `json:"otel_attributes"`
+}
+
+func decodeClosedJSON(raw []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("trailing JSON")
+	}
+	return nil
+}
+
+func rejectDuplicateJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var walk func() error
+	walk = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := map[string]bool{}
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok || seen[key] {
+					return errors.New("duplicate JSON key")
+				}
+				seen[key] = true
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		case '[':
+			for decoder.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		default:
+			return errors.New("unexpected JSON delimiter")
+		}
+	}
+	if err := walk(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("trailing JSON")
+	}
+	return nil
+}
+
 func ParseEdgeRuntimeEvent(raw []byte) (EdgeRuntimeEvent, error) {
+	canonical, err := CanonicalEdgeRuntimeEventJSON(raw)
+	if err != nil {
+		return EdgeRuntimeEvent{}, err
+	}
 	var envelope struct {
 		Timestamp string          `json:"timestamp"`
 		EventType string          `json:"event_type"`
@@ -98,7 +244,7 @@ func ParseEdgeRuntimeEvent(raw []byte) (EdgeRuntimeEvent, error) {
 			ExecutionID string `json:"execution_id"`
 		} `json:"metadata"`
 	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
+	if err := json.Unmarshal(canonical, &envelope); err != nil {
 		return EdgeRuntimeEvent{}, incompatibleEvent("invalid JSON")
 	}
 	timestamp, err := time.Parse(time.RFC3339Nano, envelope.Timestamp)
@@ -159,7 +305,7 @@ func ParseEdgeRuntimeEvent(raw []byte) (EdgeRuntimeEvent, error) {
 	default:
 		return EdgeRuntimeEvent{}, incompatibleEvent("unknown event_type")
 	}
-	hash := sha256.Sum256(raw)
+	hash := sha256.Sum256(canonical)
 	event.EventID = hex.EncodeToString(hash[:])
 	return event, nil
 }

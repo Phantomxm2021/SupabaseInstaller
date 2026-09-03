@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -20,9 +21,9 @@ func TestParseEdgeRuntimeEventFixtures(t *testing.T) {
 		level                                                        FunctionLogLevel
 		timestamp                                                    time.Time
 	}{
-		{"boot-event.json", "contract-log", "e8a9d201-c618-4051-be3c-721a97fee216", "Boot", "", "8d7390899131ea89ae39fbf4ac5f577a66ec3fe919c748bef63e51ec04a6b86d", FunctionLogLevelInfo, time.Date(2026, 9, 3, 20, 51, 33, 319000000, time.UTC)},
-		{"log-event.json", "contract-log", "e8a9d201-c618-4051-be3c-721a97fee216", "Log", "FUNCTION_LOG_FIXTURE_MESSAGE\n", "b21ef14e03afeafac0e5295527887d83d44a8f4f6b48ad6125845a82fea0850f", FunctionLogLevelInfo, time.Date(2026, 9, 3, 20, 51, 33, 326000000, time.UTC)},
-		{"uncaught-exception.json", "contract-throw", "f7cb1a48-200e-4586-9ec2-5baa4250af84", "UncaughtException", "event loop error: Error: FUNCTION_THROW_FIXTURE_MESSAGE\n    at file:///var/tmp/sb-compile-edge-runtime/app/examples/contract-throw/index.ts:3:11\n    at callback (ext:deno_web/02_timers.js:58:7)\n    at eventLoopTick (ext:core/01_core.js:210:13)", "863deab288b9bc0f09416df4d02a15d20ce0bdaeb5495eb49fb81b4912699e8c", FunctionLogLevelError, time.Date(2026, 9, 3, 20, 51, 33, 426000000, time.UTC)},
+		{"boot-event.json", "contract-log", "e8a9d201-c618-4051-be3c-721a97fee216", "Boot", "", "277b9cfd8b07e451a7d27656ca57416ae743d1d0c0c17b63c639b921a4844288", FunctionLogLevelInfo, time.Date(2026, 9, 3, 20, 51, 33, 319000000, time.UTC)},
+		{"log-event.json", "contract-log", "e8a9d201-c618-4051-be3c-721a97fee216", "Log", "FUNCTION_LOG_FIXTURE_MESSAGE\n", "ed79c198aa6af2159f0b449644d4333a441ce8a2f8f0237fc8157c70e224bae6", FunctionLogLevelInfo, time.Date(2026, 9, 3, 20, 51, 33, 326000000, time.UTC)},
+		{"uncaught-exception.json", "contract-throw", "f7cb1a48-200e-4586-9ec2-5baa4250af84", "UncaughtException", "event loop error: Error: FUNCTION_THROW_FIXTURE_MESSAGE\n    at file:///var/tmp/sb-compile-edge-runtime/app/examples/contract-throw/index.ts:3:11\n    at callback (ext:deno_web/02_timers.js:58:7)\n    at eventLoopTick (ext:core/01_core.js:210:13)", "00647ff3976a9d1e0f7ec41a6b44eae4095aa21c71c1dc86d43a2c7c60b738c1", FunctionLogLevelError, time.Date(2026, 9, 3, 20, 51, 33, 426000000, time.UTC)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
@@ -40,9 +41,21 @@ func TestParseEdgeRuntimeEventFixtures(t *testing.T) {
 			if len(got.EventID) != 64 || strings.ToLower(got.EventID) != got.EventID {
 				t.Fatalf("EventID = %q", got.EventID)
 			}
-			hash := sha256.Sum256(raw)
-			if rawHash := hex.EncodeToString(hash[:]); rawHash != tt.eventID || got.EventID != tt.eventID {
-				t.Fatalf("raw hash = %q, EventID = %q, want %q", rawHash, got.EventID, tt.eventID)
+			canonical, err := CanonicalEdgeRuntimeEventJSON(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hash := sha256.Sum256(canonical)
+			if canonicalHash := hex.EncodeToString(hash[:]); canonicalHash != tt.eventID || got.EventID != tt.eventID {
+				t.Fatalf("canonical hash = %q, EventID = %q, want %q", canonicalHash, got.EventID, tt.eventID)
+			}
+			var compact bytes.Buffer
+			if err := json.Compact(&compact, raw); err != nil {
+				t.Fatal(err)
+			}
+			compactEvent, err := ParseEdgeRuntimeEvent(compact.Bytes())
+			if err != nil || compactEvent.EventID != got.EventID {
+				t.Fatalf("compact EventID = %q, %v; pretty EventID = %q", compactEvent.EventID, err, got.EventID)
 			}
 			if got.EventID == got.ExecutionID {
 				t.Fatal("EventID must not reuse ExecutionID")
@@ -64,6 +77,9 @@ func TestParseEdgeRuntimeEventRejectsIncompatiblePayloads(t *testing.T) {
 		"dot segments":                 strings.Replace(base, "./examples/good-name", "./examples/victim/../api", 1),
 		"nested service path":          strings.Replace(base, "./examples/good-name", "./examples/nested/api", 1),
 		"backslash service path":       strings.Replace(base, "./examples/good-name", `.\\examples\\api`, 1),
+		"unknown top-level field":      strings.TrimSuffix(base, "}") + `,"extra":true}`,
+		"duplicate top-level field":    strings.Replace(base, `"timestamp":`, `"timestamp":"2026-09-03T20:51:33.000Z","timestamp":`, 1),
+		"unknown event field":          strings.Replace(base, `"level":"Info"`, `"level":"Info","extra":true`, 1),
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {

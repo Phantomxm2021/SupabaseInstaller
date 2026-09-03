@@ -1,6 +1,6 @@
 GO_CACHE ?= /tmp/supabase-installer-go-cache
 
-.PHONY: test test-go test-web build lint integration
+.PHONY: test test-go test-web build lint integration verify-edge-event-worker
 
 test: test-go test-web
 
@@ -20,3 +20,6 @@ lint:
 
 integration:
 	GOCACHE=$(GO_CACHE) go test -tags=integration ./tests/integration/... -v
+
+verify-edge-event-worker:
+	./scripts/verify-edge-event-worker.sh

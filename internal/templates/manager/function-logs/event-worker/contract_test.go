@@ -21,10 +21,17 @@ func TestAdapterUsesPinnedAPIAndBoundedDelivery(t *testing.T) {
 		[]byte("FETCH_TIMEOUT_MS = 500"),
 		[]byte("http://function-log-collector:8081/internal/v1/events"),
 		[]byte("crypto.subtle.digest(\"SHA-256\""),
+		[]byte("function canonicalRuntimeEvent"),
+		[]byte("JSON.stringify(canonical)"),
+		[]byte("FUNCTION_LOG_VERIFY_FIXTURES"),
+		[]byte("FUNCTION_LOG_FIXTURE_RECORDS="),
 	} {
 		if !bytes.Contains(source, required) {
 			t.Errorf("adapter missing %q", required)
 		}
+	}
+	if bytes.Contains(source, []byte("JSON.stringify(data)")) {
+		t.Fatal("adapter hashes runtime object insertion order instead of its canonical object")
 	}
 }
 
@@ -61,21 +68,21 @@ func TestPinnedEventFixturesCarryExactFunctionAttribution(t *testing.T) {
 			functionName: "contract-log",
 			executionID:  "e8a9d201-c618-4051-be3c-721a97fee216",
 			eventType:    "Log",
-			eventID:      "b21ef14e03afeafac0e5295527887d83d44a8f4f6b48ad6125845a82fea0850f",
+			eventID:      "ed79c198aa6af2159f0b449644d4333a441ce8a2f8f0237fc8157c70e224bae6",
 		},
 		{
 			name:         "uncaught-exception.json",
 			functionName: "contract-throw",
 			executionID:  "f7cb1a48-200e-4586-9ec2-5baa4250af84",
 			eventType:    "UncaughtException",
-			eventID:      "863deab288b9bc0f09416df4d02a15d20ce0bdaeb5495eb49fb81b4912699e8c",
+			eventID:      "00647ff3976a9d1e0f7ec41a6b44eae4095aa21c71c1dc86d43a2c7c60b738c1",
 		},
 		{
 			name:         "boot-event.json",
 			functionName: "contract-log",
 			executionID:  "e8a9d201-c618-4051-be3c-721a97fee216",
 			eventType:    "Boot",
-			eventID:      "8d7390899131ea89ae39fbf4ac5f577a66ec3fe919c748bef63e51ec04a6b86d",
+			eventID:      "277b9cfd8b07e451a7d27656ca57416ae743d1d0c0c17b63c639b921a4844288",
 		},
 	}
 
@@ -86,11 +93,16 @@ func TestPinnedEventFixturesCarryExactFunctionAttribution(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// EventID deliberately hashes the exact parser input bytes. ExecutionID
-			// attributes an invocation and must not be reused for event deduplication.
-			hash := sha256.Sum256(raw)
+			// EventID hashes the deterministic compact JSON representation of the
+			// callback object, independent of fixture whitespace. ExecutionID is
+			// invocation attribution and must not be reused for deduplication.
+			canonical, err := contracts.CanonicalEdgeRuntimeEventJSON(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hash := sha256.Sum256(canonical)
 			if got := hex.EncodeToString(hash[:]); got != tt.eventID {
-				t.Fatalf("fixture bytes changed: got SHA-256 %q, want %q", got, tt.eventID)
+				t.Fatalf("canonical fixture SHA-256 = %q, want %q", got, tt.eventID)
 			}
 
 			event, err := contracts.ParseEdgeRuntimeEvent(raw)
@@ -107,7 +119,7 @@ func TestPinnedEventFixturesCarryExactFunctionAttribution(t *testing.T) {
 				t.Errorf("EventType = %q, want %q", event.EventType, tt.eventType)
 			}
 			if event.EventID != tt.eventID {
-				t.Errorf("EventID = %q, want raw SHA-256 %q", event.EventID, tt.eventID)
+				t.Errorf("EventID = %q, want canonical SHA-256 %q", event.EventID, tt.eventID)
 			}
 		})
 	}

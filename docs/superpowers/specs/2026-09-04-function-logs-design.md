@@ -96,6 +96,11 @@ event-worker module compatible with the pinned Edge Runtime image. The adapter
 normalizes supported runtime events into a versioned internal envelope. It
 forwards console events, uncaught exceptions, and boot/shutdown events in
 bounded batches to the collector over the project's private Compose network.
+Event identity is the SHA-256 of a deterministic compact JSON serialization of
+the callback object: envelope, event, and metadata fields have fixed order and
+OpenTelemetry attribute keys are sorted. Whitespace and source JSON formatting
+therefore do not affect deduplication, and the invocation `execution_id` is not
+used as the event identifier.
 
 The adapter obtains function ownership from structured runtime metadata. An
 event without an exact function identifier is rejected from the per-function
