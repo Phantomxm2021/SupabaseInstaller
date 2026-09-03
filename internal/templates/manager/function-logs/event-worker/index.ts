@@ -49,6 +49,8 @@ declare global {
 const projectId = Deno.env.get("FUNCTION_LOG_PROJECT_ID") ?? "";
 const queue: LogEvent[] = [];
 let flushing = false;
+let flushInterval: number | undefined;
+let flushTimerTicks = 0;
 
 function hex(bytes: ArrayBuffer): string {
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -161,6 +163,13 @@ async function flush(): Promise<void> {
   }
 }
 
+function stopFlushInterval(): void {
+  if (flushInterval !== undefined) {
+    clearInterval(flushInterval);
+    flushInterval = undefined;
+  }
+}
+
 const verificationFixtures = Deno.env.get("FUNCTION_LOG_VERIFY_FIXTURES");
 if (verificationFixtures) {
   const fixtures = await Promise.all(
@@ -189,13 +198,16 @@ if (verificationFixtures) {
   }
   Deno.serve(() => new Response("verification"));
 } else {
-  setInterval(() => void flush(), FLUSH_INTERVAL_MS);
   try {
     const failureMode = Deno.env.get("FUNCTION_LOG_VERIFY_EVENT_MANAGER_FAILURE");
     if (failureMode === "constructor") throw new Error("injected constructor failure");
     const eventManager: AsyncIterable<RuntimeEvent | undefined> = failureMode === "iterator"
       ? { [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error("injected iterator failure")) }) }
       : new globalThis.EventManager();
+    flushInterval = setInterval(() => {
+      flushTimerTicks++;
+      void flush();
+    }, FLUSH_INTERVAL_MS);
     for await (const data of eventManager) {
       try {
         if (data) {
@@ -206,10 +218,18 @@ if (verificationFixtures) {
         // Malformed callbacks and collector failures never escape into the runtime.
       }
     }
+    stopFlushInterval();
     await flush();
   } catch {
-    console.error("FUNCTION_LOG_EVENT_MANAGER_INERT");
+    stopFlushInterval();
+    // Wait longer than two flush periods; a leaked interval would increment
+    // flushTimerTicks and fail the pinned-image verifier.
+    await new Promise<void>((resolve) => setTimeout(resolve, FLUSH_INTERVAL_MS * 3));
+    console.error(`FUNCTION_LOG_EVENT_MANAGER_INERT timers=0 ticks=${flushTimerTicks}`);
     // Compatibility failure disables collection without taking down Functions.
+    // A single maximum-delay timeout keeps Edge Runtime's event loop alive
+    // without retaining the 250ms flush interval or periodically waking it.
+    setTimeout(() => {}, 2_147_000_000);
     await new Promise<void>(() => {});
   }
 }

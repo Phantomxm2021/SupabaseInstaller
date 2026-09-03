@@ -96,7 +96,7 @@ for mode in constructor iterator; do
   inert=false; attempt=0
   while [ "$attempt" -lt 20 ]; do
     if ! run_bounded 5 docker logs "$CONTAINER"; then exit 1; fi
-    if grep -Fq FUNCTION_LOG_EVENT_MANAGER_INERT "$BOUND_OUTPUT"; then inert=true; break; fi
+    if grep -Fq 'FUNCTION_LOG_EVENT_MANAGER_INERT timers=0 ticks=0' "$BOUND_OUTPUT"; then inert=true; break; fi
     attempt=$((attempt + 1)); sleep 0.25
   done
   if [ "$inert" != true ]; then echo "$mode failure escaped compatibility boundary" >&2; exit 1; fi
