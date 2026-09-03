@@ -1,46 +1,64 @@
-# Supported Runtime Versions and Upgrades
+# Runtime Image Manifests and Upgrades
 
 ## Goal
 
-New servers default to the newest Supabase self-hosted release that this
-Manager has tested and bundled. Administrators can choose any other supported
-pinned release. Existing servers stay on their recorded release until an
+New servers default to the newest official Supabase Compose image manifest that
+this Manager has tested and bundled. Administrators can choose another
+supported manifest. Existing servers stay on their recorded manifest until an
 administrator performs a safe, explicit runtime upgrade.
 
 ## Terminology and invariants
 
-`Latest supported` is a Manager-owned alias, resolved before persistence to a
-concrete release such as `self-hosted/v0.8.0`. It is never the mutable Docker
-`latest` tag and no rendered image may use that tag. The initial supported
-release is `self-hosted/v0.8.0`, which is also the current upstream stable
-self-hosted snapshot at the time this feature is designed.
+`self-hosted/v0.8.0` identifies an upstream Docker Compose template snapshot.
+It is not a Supabase runtime or Docker image version, and it must not be
+presented as one in the product. Runtime version selection is a complete image
+manifest: the exact tags for Studio, Auth, Postgres, PostgREST, Realtime,
+Storage, postgres-meta, Edge Runtime, Supavisor, gateways, and every enabled
+dependency.
 
-A supported release consists of an embedded official Compose template,
-overlays, a compatibility validator, image-pin verification, release notes,
-and a migration classification. Adding a new upstream release therefore means
-shipping a new Manager release after the complete template has passed the
-existing render and real-runtime test suites. The application must not fetch or
-execute an arbitrary upstream Compose file at runtime.
+`Latest official` is a Manager-owned alias, resolved before persistence to an
+immutable manifest ID. It uses the image matrix from the official upstream
+`docker/docker-compose.yml` and official overlays as imported and tested by the
+Manager release. The initial manifest derives from the bundled upstream
+template and includes, for example, Studio `2026.08.03-sha-022b374`, Auth
+`v2.189.0`, and Postgres `17.6.1.136`. It is not the mutable Docker `latest`
+tag.
 
-The `general.supabaseVersion` field always stores a concrete supported release.
-Legacy rows with `self-hosted/v0.8.0` remain valid without a data migration.
-The Manager must reject an unknown release before it changes configuration,
+Docker Hub's individual image tags advance independently of the official
+Compose matrix. A separately labeled `Docker Hub latest (experimental)`
+manifest may be offered only after its complete service matrix has been
+resolved, persisted, compatibility-tested, and marked experimental. It is
+never substituted silently for `Latest official`.
+
+A supported manifest consists of an embedded official Compose template and
+overlays, its immutable service-image matrix, a compatibility validator,
+release notes, and a migration classification. Adding an official upstream
+matrix means shipping a new Manager release after the complete template has
+passed the existing render and real-runtime test suites. The application must
+not fetch or execute an arbitrary upstream Compose file at runtime.
+
+The `general.supabaseVersion` field is migrated to a concrete manifest ID;
+legacy values of `self-hosted/v0.8.0` map to the original bundled manifest.
+The Manager must reject an unknown manifest before it changes configuration,
 stages files, pulls images, or stops a container.
 
 ## Version catalog
 
-Introduce one shared runtime-version catalog in `internal/templates`. It owns:
+Introduce one shared runtime-manifest catalog in `internal/templates`. It owns:
 
 - `LatestSupported()` and `SupportedVersions()` in newest-first order.
-- a release descriptor containing ID, label, embedded template root, status,
+- a manifest descriptor containing ID, label, channel (`OFFICIAL` or
+  `EXPERIMENTAL`), embedded template root, service-image tags and digests,
   release notes URL/text, and migration class;
 - lookup and validation functions used by Manager validation, Provisioner
   rendering, and Web API responses.
 
-The initial catalog contains only `self-hosted/v0.8.0`; the UI must still show
-it as `Latest supported — self-hosted/v0.8.0` rather than pretending a newer
-release exists. The catalog design makes the version picker useful as soon as a
-second verified template is shipped, without accepting user-provided tags.
+The initial catalog contains one official image manifest derived from the
+bundled upstream Compose template. The UI presents it as `Latest official`,
+shows its imported date and representative component tags, and never claims
+that the template snapshot name is a runtime image version. The catalog becomes
+a picker as soon as a second verified manifest is shipped, without accepting
+user-provided tags.
 
 The embedded-template package becomes version-addressable. Rendering selects
 the exact template root from the configuration instead of hard-coding
@@ -51,9 +69,9 @@ renderer.
 ## New-server behavior
 
 `DefaultConfiguration` selects `LatestSupported()`. The create wizard requests
-the catalog from Manager, renders a default `Latest supported` choice plus the
-other concrete releases, and explains that all choices are pinned release
-sets. Submission contains the resolved concrete ID, not the alias.
+the catalog from Manager, renders a default `Latest official` choice plus other
+concrete manifests, and explains their channels and component images.
+Submission contains the resolved concrete manifest ID, not the alias.
 
 Server details and configuration pages display both the selected release and,
 when applicable, an "Update available" state. They do not silently change a
@@ -61,15 +79,15 @@ server's recorded version when Manager itself is upgraded.
 
 ## Existing-server upgrade workflow
 
-Changing runtime version is not a normal general-configuration PATCH. Add a
+Changing runtime manifest is not a normal general-configuration PATCH. Add a
 dedicated `UPDATE_VERSION` operation and endpoint carrying a target supported
-version plus the server's exact-name confirmation. The request is accepted
+manifest plus the server's exact-name confirmation. The request is accepted
 only for an installed, non-deleting server with no active operation.
 
 Before staging a candidate runtime, the Manager validates that the target is a
 supported forward transition and retrieves its migration classification:
 
-- **Compatible:** configuration is translated by the target release adapter;
+- **Compatible:** configuration is translated by the target manifest adapter;
   a configuration and runtime-generation backup is retained, candidate images
   are pulled, the candidate is reconciled, restarted, and health-checked.
 - **Manual migration required:** the endpoint returns a structured blocking
@@ -102,21 +120,22 @@ released Manager image, not by changing managed Supabase image tags. A Manager
 upgrade introduces catalog entries but does not mutate existing projects.
 
 Release discovery is advisory: a scheduled or CI job checks official
-`self-hosted/v*` releases and opens a candidate update for maintainers. The
-candidate must vendor the complete upstream template, define its compatibility
-and migration rules, run template/render/integration tests, and ship in a
-Manager release before users see it as supported. There is no unattended
-production auto-upgrade in this feature.
+official Compose changes and Docker Hub tag changes, then opens a candidate
+update for maintainers. The candidate must vendor the complete upstream
+template, record the exact image matrix, define compatibility and migration
+rules, run template/render/integration tests, and ship in a Manager release
+before users see it as supported. There is no unattended production
+auto-upgrade in this feature.
 
 ## API and UI
 
 Add a read-only runtime catalog endpoint returning the current latest concrete
-version and descriptors safe for browsers. Extend project details with an
-upgrade eligibility summary: current version, newest supported version,
+manifest and descriptors safe for browsers. Extend project details with an
+upgrade eligibility summary: current manifest, newest supported manifest,
 availability, target migration class, and user-facing reason when blocked.
 
-Add a project `Upgrade runtime` dialog. It has a version selector, concise
-release/migration summary, backup/rollback statement, and exact server-name
+Add a project `Upgrade runtime` dialog. It has a manifest selector, concise
+component/migration summary, backup/rollback statement, and exact server-name
 confirmation. The primary action is disabled for a manual-migration target or
 until confirmation matches. It queues the dedicated operation and reuses the
 existing operation event view for progress and failure feedback.
@@ -124,10 +143,11 @@ existing operation event view for progress and failure feedback.
 ## Testing and acceptance
 
 - Catalog tests prove newest-first ordering, exact alias resolution, template
-  lookup, and rejection of `latest`, `master`, empty, or unknown versions.
+  lookup, legacy mapping, and rejection of `latest`, `master`, empty, or
+  unknown manifests.
 - Manager create/configuration tests prove new servers persist the resolved
-  latest version and existing `v0.8.0` rows remain readable.
-- Renderer tests prove each supported release selects its own templates and
+  latest manifest and existing template-version rows map safely.
+- Renderer tests prove each supported manifest selects its own image matrix and
   every emitted image is pinned.
 - Upgrade orchestration tests cover compatible success, unavailable target,
   active-operation conflict, required exact confirmation, image/reconcile/
@@ -142,6 +162,6 @@ existing operation event view for progress and failure feedback.
 ## Non-goals
 
 This change does not auto-update production projects, import arbitrary
-externally-created Compose projects, permit individual-service image overrides,
-or automate a PostgreSQL major-version migration. Those require separate
-ownership, compatibility, and recovery contracts.
+externally-created Compose projects, permit arbitrary individual-service image
+overrides, or automate a PostgreSQL major-version migration. Those require
+separate ownership, compatibility, and recovery contracts.

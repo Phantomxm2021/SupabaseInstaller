@@ -1,10 +1,10 @@
-# Supported Runtime Upgrades Implementation Plan
+# Runtime Image Manifest Upgrades Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make every new server default to a concrete latest supported Supabase runtime version, expose the supported version catalog, and provide safe upgrade eligibility without accepting mutable Docker tags.
+**Goal:** Make every new server default to a concrete latest official Supabase image manifest, expose supported official and experimental manifests, and provide safe upgrade eligibility without accepting mutable Docker tags.
 
-**Architecture:** A single embedded-template catalog supplies version metadata and template roots to Manager and Provisioner. The persisted configuration remains an exact version ID. The first delivery introduces the generic catalog and upgrade eligibility contract while `self-hosted/v0.8.0` is the sole tested upstream release; a runnable cross-version upgrade is enabled only in the same release that vendors and tests a second official template.
+**Architecture:** A single embedded-template catalog supplies image-manifest metadata, template roots, and exact image pins to Manager and Provisioner. The persisted configuration remains an immutable manifest ID; legacy `self-hosted/v0.8.0` values map to the existing image matrix. The first delivery introduces the catalog and upgrade eligibility contract; a runnable cross-manifest upgrade is enabled only after a second official matrix is bundled and tested.
 
 **Tech Stack:** Go 1.24, `embed.FS`, `net/http`, SQLite-backed Manager operations, React, TypeScript, TanStack Query, Vitest.
 
@@ -12,16 +12,16 @@
 
 ## Global Constraints
 
-- `latest`, `master`, blank values, and arbitrary Docker image tags are invalid persisted runtime versions.
-- Latest supported resolves to an exact catalog ID before it reaches SQLite or Compose.
-- Existing `self-hosted/v0.8.0` rows stay readable and runnable without migration.
+- `latest`, `master`, blank values, and arbitrary Docker image tags are invalid persisted manifest IDs.
+- Latest official resolves to an exact catalog ID before it reaches SQLite or Compose.
+- Existing `self-hosted/v0.8.0` rows map to the imported existing image manifest without a runtime migration.
 - Runtime-version changes must never be accepted through the normal configuration PATCH route.
 - No runtime is stopped, rebuilt, or pulled when a target is missing, unsupported, identical, or requires a manual migration.
 - No API response, event, or test output may expose secret values or rendered environment contents.
 
 ---
 
-### Task 1: Create the shared embedded runtime catalog
+### Task 1: Create the shared embedded image-manifest catalog
 
 **Files:**
 - Create: `internal/templates/catalog.go`
@@ -31,64 +31,63 @@
 - Test: `apps/provisioner/internal/render/render_test.go`
 
 **Interfaces:**
-- Produces `templates.RuntimeVersion`, `templates.SupportedVersions()`, `templates.LatestSupported()`, `templates.Lookup(id string)`, and `templates.Validate(id string)`.
+- Produces `templates.RuntimeManifest`, `templates.SupportedManifests()`, `templates.LatestOfficial()`, `templates.Lookup(id string)`, and `templates.ResolveLegacy(id string)`.
 - Consumes `contracts.ProjectConfiguration.General.SupabaseVersion` in the renderer.
 - Produces a version-selected official Compose root for `loadOfficialCompose`.
 
 - [ ] **Step 1: Write catalog tests before implementation**
 
 ```go
-func TestCatalogResolvesOneConcreteLatestVersion(t *testing.T) {
-    latest := LatestSupported()
-    if latest.ID != "self-hosted/v0.8.0" || latest.TemplateRoot != "self-hosted-v0.8.0" {
+func TestCatalogResolvesOneConcreteLatestOfficialManifest(t *testing.T) {
+    latest := LatestOfficial()
+    if latest.ID != "official-2026-08-03" || latest.Images["studio"] != "supabase/studio:2026.08.03-sha-022b374" {
         t.Fatalf("latest=%+v", latest)
     }
-    if err := Validate("latest"); err == nil { t.Fatal("latest must be rejected") }
-    if err := Validate("self-hosted/v9.9.9"); err == nil { t.Fatal("unknown version must be rejected") }
+    if _, ok := ResolveLegacy("self-hosted/v0.8.0"); !ok { t.Fatal("legacy map missing") }
+    if _, ok := Lookup("latest"); ok { t.Fatal("latest must be rejected") }
 }
 ```
 
 - [ ] **Step 2: Run the catalog test and confirm it fails**
 
-Run: `go test ./internal/templates -run TestCatalogResolvesOneConcreteLatestVersion -count=1`
+Run: `go test ./internal/templates -run TestCatalogResolvesOneConcreteLatestOfficialManifest -count=1`
 
 Expected: FAIL because the catalog symbols do not exist.
 
 - [ ] **Step 3: Implement the immutable catalog**
 
 ```go
-type MigrationClass string
-const MigrationCompatible MigrationClass = "COMPATIBLE"
-const MigrationManual MigrationClass = "MANUAL_MIGRATION_REQUIRED"
-
-type RuntimeVersion struct {
-    ID, Label, TemplateRoot string
+type RuntimeManifest struct {
+    ID, Label, Channel, TemplateRoot string
+    Images map[string]string
     MigrationClass MigrationClass
     ReleaseNotesURL string
 }
 
-var supported = []RuntimeVersion{{
-    ID: "self-hosted/v0.8.0", Label: "Latest supported — self-hosted/v0.8.0",
-    TemplateRoot: "self-hosted-v0.8.0", MigrationClass: MigrationCompatible,
+var supported = []RuntimeManifest{{
+    ID: "official-2026-08-03", Label: "Latest official", Channel: "OFFICIAL",
+    TemplateRoot: "self-hosted-v0.8.0",
+    Images: map[string]string{"studio": "supabase/studio:2026.08.03-sha-022b374", "auth": "supabase/gotrue:v2.189.0", "db": "supabase/postgres:17.6.1.136"},
+    MigrationClass: MigrationCompatible,
 }}
 
-func LatestSupported() RuntimeVersion { return supported[0] }
+func LatestOfficial() RuntimeManifest { return supported[0] }
 ```
 
-`Lookup` must return `(RuntimeVersion, bool)` and `Validate` must only accept an exact `ID`. Change `DockerCompose` and `EnvExample` to read from `LatestSupported().TemplateRoot`; leave their public signatures unchanged.
+`Lookup` must return `(RuntimeManifest, bool)`. `ResolveLegacy("self-hosted/v0.8.0")` must return the first official manifest. Change `DockerCompose` and `EnvExample` to read from `LatestOfficial().TemplateRoot`; leave their public signatures unchanged.
 
 - [ ] **Step 4: Select the template through the catalog in the renderer**
 
-Replace the hard-coded version equality check and `"self-hosted-v0.8.0/"` path in `render.go` with `templates.Lookup`. Return `general.supabaseVersion: unsupported pinned version` when lookup fails. Pass the resolved descriptor into `loadOfficialCompose` so all template reads use `descriptor.TemplateRoot + "/" + name`.
+Resolve legacy values before rendering, then replace the hard-coded version equality check and `"self-hosted-v0.8.0/"` path in `render.go` with `templates.Lookup`. Return `general.supabaseVersion: unsupported runtime manifest` when lookup fails. Pass the resolved descriptor into `loadOfficialCompose`; after decoding Compose, replace every catalog-owned service image with the exact `descriptor.Images` entry before pin validation.
 
 - [ ] **Step 5: Add renderer coverage for rejection and exact template selection**
 
 ```go
-func TestProjectRejectsUnknownPinnedVersion(t *testing.T) {
+func TestProjectRejectsUnknownRuntimeManifest(t *testing.T) {
     input := validInput()
     input.Configuration.General.SupabaseVersion = "latest"
     _, err := Project(input)
-    if err == nil || !strings.Contains(err.Error(), "unsupported pinned version") {
+    if err == nil || !strings.Contains(err.Error(), "unsupported runtime manifest") {
         t.Fatalf("err=%v", err)
     }
 }
@@ -107,7 +106,7 @@ git add internal/templates apps/provisioner/internal/render
 git commit -m "feat(runtime): add supported version catalog"
 ```
 
-### Task 2: Make Manager defaults and validation catalog-backed
+### Task 2: Make Manager defaults and validation manifest-backed
 
 **Files:**
 - Modify: `apps/manager/internal/project/configuration.go`
@@ -118,18 +117,18 @@ git commit -m "feat(runtime): add supported version catalog"
 - Modify: `apps/web/src/features/projects/projectSchema.test.ts`
 
 **Interfaces:**
-- Consumes `templates.LatestSupported().ID` and `templates.Validate`.
-- Produces persisted exact runtime version IDs from `DefaultConfiguration` and create-form defaults.
+- Consumes `templates.LatestOfficial().ID` and `templates.ResolveLegacy`.
+- Produces persisted exact manifest IDs from `DefaultConfiguration` and create-form defaults.
 
 - [ ] **Step 1: Write failing default and legacy tests**
 
 ```go
-func TestDefaultConfigurationUsesLatestSupportedVersion(t *testing.T) {
+func TestDefaultConfigurationUsesLatestOfficialManifest(t *testing.T) {
     got := DefaultConfiguration(contracts.PresetLightweight).General.SupabaseVersion
-    if got != templates.LatestSupported().ID { t.Fatalf("version=%q", got) }
+    if got != templates.LatestOfficial().ID { t.Fatalf("manifest=%q", got) }
 }
 
-func TestValidateStoredConfigurationAcceptsExistingV080(t *testing.T) {
+func TestPreparePatchMapsExistingTemplateSnapshotToManifest(t *testing.T) {
     cfg := DefaultConfiguration(contracts.PresetLightweight)
     cfg.General.SupabaseVersion = "self-hosted/v0.8.0"
     if err := ValidateStoredConfiguration(cfg); err != nil { t.Fatal(err) }
@@ -138,25 +137,25 @@ func TestValidateStoredConfigurationAcceptsExistingV080(t *testing.T) {
 
 - [ ] **Step 2: Run the focused Manager tests and confirm the old literal assertion fails**
 
-Run: `go test ./apps/manager/internal/project -run 'Test(DefaultConfigurationUsesLatestSupportedVersion|ValidateStoredConfigurationAcceptsExistingV080)' -count=1`
+Run: `go test ./apps/manager/internal/project -run 'Test(DefaultConfigurationUsesLatestOfficialManifest|PreparePatchMapsExistingTemplateSnapshotToManifest)' -count=1`
 
 Expected: FAIL until the application imports the catalog.
 
 - [ ] **Step 3: Replace version literals with catalog calls**
 
-Use `templates.LatestSupported().ID` in `DefaultConfiguration`; use `templates.Validate` in complete and stored configuration validation. Keep the existing field error name `general.supabaseVersion` so browser validation remains stable. Change the TypeScript schema from `z.literal(SUPABASE_VERSION)` to a catalog-fed enum only after Task 3 exposes the public catalog; until then keep a local exact default and accept the server as authority.
+Use `templates.LatestOfficial().ID` in `DefaultConfiguration`; resolve the legacy snapshot before complete and stored configuration validation. Keep the existing field name `general.supabaseVersion` for wire compatibility while browser copy calls it `Runtime image manifest`. Change the TypeScript schema from `z.literal(SUPABASE_VERSION)` to a catalog-fed enum only after Task 3 exposes the public catalog; until then keep a local exact fallback and accept the server as authority.
 
 - [ ] **Step 4: Make create-form version data API-backed**
 
-Create `useRuntimeCatalog` next to the project create hooks. It fetches `/api/runtime-versions`, uses `latest.id` for `defaultConfiguration`, and does not submit an alias. While the catalog query is loading, the form uses the build-time `SUPABASE_VERSION` fallback; on success it updates untouched forms to the returned exact ID.
+Create `useRuntimeManifests` next to the project create hooks. It fetches `/api/runtime-manifests`, uses `latest.id` for `defaultConfiguration`, and does not submit an alias. While the catalog query is loading, the form uses the build-time exact manifest fallback; on success it updates untouched forms to the returned exact ID.
 
 - [ ] **Step 5: Add form tests**
 
 ```tsx
 it('uses the API latest supported ID for a pristine create form', async () => {
-  mockFetch('/api/runtime-versions', { latest: { id: 'self-hosted/v0.8.0' }, versions: [] })
+  mockFetch('/api/runtime-manifests', { latest: { id: 'official-2026-08-03', label: 'Latest official' }, manifests: [] })
   renderNewProjectPage()
-  expect(await screen.findByText('Latest supported — self-hosted/v0.8.0')).toBeVisible()
+  expect(await screen.findByText('Latest official')).toBeVisible()
 })
 ```
 
@@ -170,10 +169,10 @@ Expected: PASS.
 
 ```bash
 git add apps/manager/internal/project apps/web/src/features/projects
-git commit -m "feat(runtime): default new servers to latest supported"
+git commit -m "feat(runtime): default new servers to latest official manifest"
 ```
 
-### Task 3: Publish the catalog and upgrade eligibility over the protected API
+### Task 3: Publish manifests and upgrade eligibility over the protected API
 
 **Files:**
 - Create: `apps/manager/internal/runtimeversions/service.go`
@@ -185,18 +184,18 @@ git commit -m "feat(runtime): default new servers to latest supported"
 - Modify: `apps/web/src/api/client.ts`
 
 **Interfaces:**
-- Produces `GET /api/runtime-versions` with `{latest, versions}` and no secrets.
-- Produces `GET /api/projects/{id}/runtime-upgrade` with current version, latest version, eligibility, migration class, and reason.
+- Produces `GET /api/runtime-manifests` with `{latest, manifests}` and no secrets.
+- Produces `GET /api/projects/{id}/runtime-upgrade` with current manifest, latest manifest, eligibility, migration class, component differences, and reason.
 - Consumes the catalog and project store; does not mutate projects.
 
 - [ ] **Step 1: Write failing HTTP contract tests**
 
 ```go
-func TestRuntimeVersionsReturnsConcreteLatest(t *testing.T) {
-    request := httptest.NewRequest(http.MethodGet, "/api/runtime-versions", nil)
+func TestRuntimeManifestsReturnsConcreteLatestOfficial(t *testing.T) {
+    request := httptest.NewRequest(http.MethodGet, "/api/runtime-manifests", nil)
     response := httptest.NewRecorder()
     router.ServeHTTP(response, request)
-    if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"id":"self-hosted/v0.8.0"`) {
+    if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"id":"official-2026-08-03"`) {
         t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
     }
 }
@@ -204,7 +203,7 @@ func TestRuntimeVersionsReturnsConcreteLatest(t *testing.T) {
 
 - [ ] **Step 2: Implement a read-only service**
 
-Return browser-safe descriptors (`id`, `label`, `migrationClass`, `releaseNotesURL`, `isLatest`) from the template catalog. The eligibility service returns `eligible=false, reason="Already running the latest supported version"` for a project on the latest ID, and `eligible=false` for any target with `MANUAL_MIGRATION_REQUIRED`.
+Return browser-safe descriptors (`id`, `label`, `channel`, `migrationClass`, `releaseNotesURL`, representative `images`, `isLatest`) from the template catalog. The eligibility service returns `eligible=false, reason="Already running the latest official image manifest"` for a project on the latest ID, includes a sorted component image diff for an older manifest, and returns `eligible=false` for any target with `MANUAL_MIGRATION_REQUIRED`.
 
 - [ ] **Step 3: Register protected routes and preserve auth behavior**
 
@@ -213,9 +212,9 @@ Register the catalog endpoint through the same protected mux used by project rou
 - [ ] **Step 4: Define client types and fetch functions**
 
 ```ts
-export interface RuntimeVersion { id: string; label: string; migrationClass: 'COMPATIBLE' | 'MANUAL_MIGRATION_REQUIRED'; releaseNotesUrl?: string; isLatest: boolean }
-export interface RuntimeUpgradeEligibility { currentVersion: string; latestVersion: RuntimeVersion; eligible: boolean; reason: string }
-export const getRuntimeVersions = () => apiFetch<RuntimeCatalog>('/api/runtime-versions')
+export interface RuntimeManifest { id: string; label: string; channel: 'OFFICIAL' | 'EXPERIMENTAL'; images: Record<string, string>; migrationClass: 'COMPATIBLE' | 'MANUAL_MIGRATION_REQUIRED'; releaseNotesUrl?: string; isLatest: boolean }
+export interface RuntimeUpgradeEligibility { currentManifest: string; latestManifest: RuntimeManifest; changedImages: string[]; eligible: boolean; reason: string }
+export const getRuntimeManifests = () => apiFetch<RuntimeManifestCatalog>('/api/runtime-manifests')
 export const getRuntimeUpgradeEligibility = (id: string) => apiFetch<RuntimeUpgradeEligibility>(`/api/projects/${id}/runtime-upgrade`)
 ```
 
@@ -229,10 +228,10 @@ Expected: PASS.
 
 ```bash
 git add apps/manager/internal/runtimeversions apps/manager/internal/httpapi apps/web/src/api
-git commit -m "feat(runtime): expose version catalog and upgrade eligibility"
+git commit -m "feat(runtime): expose image manifests and upgrade eligibility"
 ```
 
-### Task 4: Surface version choice and safe upgrade status in the dashboard
+### Task 4: Surface manifest choice and safe upgrade status in the dashboard
 
 **Files:**
 - Modify: `apps/web/src/features/projects/BasicStep.tsx`
@@ -243,31 +242,31 @@ git commit -m "feat(runtime): expose version catalog and upgrade eligibility"
 - Create: `apps/web/src/features/project/RuntimeUpgradeCard.test.tsx`
 
 **Interfaces:**
-- Consumes `RuntimeCatalog` and `RuntimeUpgradeEligibility` from Task 3.
-- Produces exact selected version in create submissions and a read-only upgrade state on existing project overview pages.
+- Consumes `RuntimeManifestCatalog` and `RuntimeUpgradeEligibility` from Task 3.
+- Produces exact selected manifest IDs in create submissions and a read-only upgrade state on existing project overview pages.
 
 - [ ] **Step 1: Write failing component tests**
 
 ```tsx
-it('labels the default version as Latest supported and submits its exact ID', async () => {
+it('labels the default manifest as Latest official and submits its exact ID', async () => {
   renderNewProjectPageWithCatalog()
-  expect(await screen.findByText('Latest supported — self-hosted/v0.8.0')).toBeVisible()
+  expect(await screen.findByText('Latest official')).toBeVisible()
 })
 
 it('explains that an already-current server has no upgrade action', async () => {
-  renderRuntimeUpgradeCard({ eligible: false, reason: 'Already running the latest supported version' })
-  expect(await screen.findByText(/Already running the latest supported version/)).toBeVisible()
+  renderRuntimeUpgradeCard({ eligible: false, reason: 'Already running the latest official image manifest' })
+  expect(await screen.findByText(/Already running the latest official image manifest/)).toBeVisible()
   expect(screen.queryByRole('button', { name: /upgrade runtime/i })).not.toBeInTheDocument()
 })
 ```
 
 - [ ] **Step 2: Render catalog options in the wizard**
 
-Display `Latest supported — <id>` as the first option and concrete older IDs underneath. Preserve the field's existing progressive-disclosure placement in Runtime settings. If no query data is available, show the build-time exact version without the word `latest`; do not create a selector containing invented choices.
+Display `Latest official` as the first option, include its representative Studio/Auth/Postgres image tags, and list historical official manifests underneath. Experimental Docker Hub manifests are visually distinct and require a confirmation dialog before selection. Preserve the field's existing progressive-disclosure placement in Runtime settings. If no query data is available, show the build-time exact manifest without the word `latest`; do not create a selector containing invented choices.
 
 - [ ] **Step 3: Add the overview card**
 
-Place `RuntimeUpgradeCard` under the version fact. It shows current version, latest supported version, and the eligibility reason. For a manual-migration target it shows the warning and release-notes link but no activation control. This first delivery deliberately has no POST upgrade button until a second, tested official template is bundled.
+Place `RuntimeUpgradeCard` under the version fact. It shows current manifest, latest official manifest, representative component changes, and the eligibility reason. For a manual-migration target it shows the warning and release-notes link but no activation control. This first delivery deliberately has no POST upgrade button until a second, tested official manifest is bundled.
 
 - [ ] **Step 4: Run focused Web tests**
 
@@ -279,7 +278,7 @@ Expected: PASS.
 
 ```bash
 git add apps/web/src/features/projects apps/web/src/features/project
-git commit -m "feat(web): show supported runtime versions"
+git commit -m "feat(web): show supported runtime manifests"
 ```
 
 ## Final verification
