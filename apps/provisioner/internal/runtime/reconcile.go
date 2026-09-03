@@ -586,6 +586,9 @@ func affectedServices(before, after contracts.ProjectConfiguration) []string {
 	if before.General.SiteURL != after.General.SiteURL || before.General.Domain != after.General.Domain {
 		set["auth"], set["studio"], set["api-gw"] = true, true, true
 	}
+	if before.General.AuthSiteURL != after.General.AuthSiteURL {
+		set["auth"] = true
+	}
 	if before.Auth.SMTP != after.Auth.SMTP || !reflect.DeepEqual(before.Auth, after.Auth) {
 		set["auth"] = true
 		set["auth-templates"] = true

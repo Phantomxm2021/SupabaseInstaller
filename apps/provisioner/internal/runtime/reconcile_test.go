@@ -36,6 +36,7 @@ func TestReconcileRecreatesOnlyAffectedService(t *testing.T) {
 		}, want: []string{"functions"}},
 		{name: "storage backend", change: func(c *contracts.ProjectConfiguration) { c.Storage.Backend = contracts.StorageBackendS3 }, want: []string{"storage"}},
 		{name: "site URL", change: func(c *contracts.ProjectConfiguration) { c.General.SiteURL = "https://new.example.com" }, want: []string{"auth", "studio", "api-gw"}},
+		{name: "auth site URL", change: func(c *contracts.ProjectConfiguration) { c.General.AuthSiteURL = "https://app.example.com" }, want: []string{"auth"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
