@@ -13,9 +13,9 @@ it.each([0, 604801])('rejects out-of-contract JWT expiry %s', (jwtExpiry) => {
 
 it('accepts auth site URL and validates shared buffers and internal pool size', () => {
   const project = validProject()
-  project.configuration.general.authSiteUrl = 'https://app.example.com'
+  ;(project.configuration.general as any).authSiteUrl = 'https://app.example.com'
   project.configuration.database.sharedBuffers = '256MB'
-  project.configuration.pooler.internalDbPoolSize = 5
+  ;(project.configuration.pooler as any).internalDbPoolSize = 5
   expect(projectSchema.safeParse(project).success).toBe(true)
   project.configuration.database.sharedBuffers = 'not-a-memory-size'
   expect(projectSchema.safeParse(project).success).toBe(false)

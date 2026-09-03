@@ -53,6 +53,8 @@ export function toUpdateSecretInput(
 export interface GeneralConfig {
   domain: string;
   siteUrl: string;
+  /** Empty/missing on legacy snapshots; create forms hydrate this field. */
+  authSiteUrl?: string;
   supabaseVersion: string;
   studioUsername?: string;
   studioPasswordSet?: boolean;
@@ -222,6 +224,8 @@ export interface PoolerConfig {
   transactionPort: number;
   sessionPort: number;
   poolSize: number;
+  /** Zero/missing on legacy snapshots; configuration forms default to 5. */
+  internalDbPoolSize?: number;
   maxClientConnections: number;
 }
 export interface NetworkConfig {
