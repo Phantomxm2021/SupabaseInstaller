@@ -58,7 +58,7 @@ function canonicalRuntimeEvent(data: RuntimeEvent): CanonicalRuntimeEvent | unde
   let event: Record<string, unknown>;
   switch (data.event_type) {
     case "Boot":
-      if (typeof data.event?.boot_time !== "number") return;
+      if (!Number.isSafeInteger(data.event?.boot_time)) return;
       event = { boot_time: data.event.boot_time };
       break;
     case "Log":
@@ -66,13 +66,17 @@ function canonicalRuntimeEvent(data: RuntimeEvent): CanonicalRuntimeEvent | unde
       event = { msg: data.event.msg, level: data.event.level };
       break;
     case "UncaughtException":
-      if (typeof data.event?.exception !== "string" || typeof data.event?.cpu_time_used !== "number") return;
+      if (typeof data.event?.exception !== "string" || !Number.isSafeInteger(data.event?.cpu_time_used)) return;
       event = { exception: data.event.exception, cpu_time_used: data.event.cpu_time_used };
       break;
     default:
       return;
   }
   const attributes = data.metadata?.otel_attributes;
+  if (attributes != null && (typeof attributes !== "object" || Array.isArray(attributes))) return;
+  if (attributes != null && Object.keys(attributes).some((key) =>
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(key) || typeof attributes[key] !== "string"
+  )) return;
   const sortedAttributes = attributes == null
     ? null
     : Object.fromEntries(Object.keys(attributes).sort().map((key) => [key, attributes[key]]));
@@ -86,6 +90,10 @@ function canonicalRuntimeEvent(data: RuntimeEvent): CanonicalRuntimeEvent | unde
       otel_attributes: sortedAttributes,
     },
   };
+}
+
+function canonicalJSONString(data: CanonicalRuntimeEvent): string {
+  return JSON.stringify(data).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
 }
 
 async function normalize(data: RuntimeEvent): Promise<LogEvent | undefined> {
@@ -121,7 +129,7 @@ async function normalize(data: RuntimeEvent): Promise<LogEvent | undefined> {
   }
 
   // Hash the fixed-order callback object shared with the Go canonicalizer.
-  const raw = new TextEncoder().encode(JSON.stringify(canonical));
+  const raw = new TextEncoder().encode(canonicalJSONString(canonical));
   const eventId = hex(await crypto.subtle.digest("SHA-256", raw));
   return { version: 1, eventId, functionName, executionId, eventType: canonical.event_type, message, timestamp: canonical.timestamp, level };
 }
@@ -167,20 +175,43 @@ if (verificationFixtures) {
     records.push(record);
   }
   console.log("FUNCTION_LOG_FIXTURE_RECORDS=" + JSON.stringify(records));
+  const parityPath = `${verificationFixtures}/parity-cases.json`;
+  try {
+    const cases = JSON.parse(await Deno.readTextFile(parityPath)) as Array<{ name: string; event: RuntimeEvent }>;
+    const results = [];
+    for (const testCase of cases) {
+      const record = await normalize(testCase.event);
+      results.push(record ? { name: testCase.name, eventId: record.eventId, level: record.level } : { name: testCase.name, error: "incompatible" });
+    }
+    console.log("FUNCTION_LOG_PARITY_RECORDS=" + JSON.stringify(results));
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  Deno.serve(() => new Response("verification"));
 } else {
   setInterval(() => void flush(), FLUSH_INTERVAL_MS);
-  const eventManager = new globalThis.EventManager();
-  for await (const data of eventManager) {
-    try {
-      if (data) {
-        const event = await normalize(data);
-        if (event) enqueue(event);
+  try {
+    const failureMode = Deno.env.get("FUNCTION_LOG_VERIFY_EVENT_MANAGER_FAILURE");
+    if (failureMode === "constructor") throw new Error("injected constructor failure");
+    const eventManager: AsyncIterable<RuntimeEvent | undefined> = failureMode === "iterator"
+      ? { [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error("injected iterator failure")) }) }
+      : new globalThis.EventManager();
+    for await (const data of eventManager) {
+      try {
+        if (data) {
+          const event = await normalize(data);
+          if (event) enqueue(event);
+        }
+      } catch {
+        // Malformed callbacks and collector failures never escape into the runtime.
       }
-    } catch {
-      // Malformed callbacks and collector failures never escape into the runtime.
     }
+    await flush();
+  } catch {
+    console.error("FUNCTION_LOG_EVENT_MANAGER_INERT");
+    // Compatibility failure disables collection without taking down Functions.
+    await new Promise<void>(() => {});
   }
-  await flush();
 }
 
 export {};

@@ -101,6 +101,10 @@ the callback object: envelope, event, and metadata fields have fixed order and
 OpenTelemetry attribute keys are sorted. Whitespace and source JSON formatting
 therefore do not affect deduplication, and the invocation `execution_id` is not
 used as the event identifier.
+Numeric timing fields are restricted to JavaScript safe integers, and
+OpenTelemetry attribute names use the ASCII `[A-Za-z0-9][A-Za-z0-9._/-]*`
+domain with string values. Both `Warn` and the runtime's `Warning` spelling are
+accepted and normalized while retaining their original spelling in EventID.
 
 The adapter obtains function ownership from structured runtime metadata. An
 event without an exact function identifier is rejected from the per-function

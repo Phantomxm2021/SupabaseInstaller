@@ -31,12 +31,17 @@ func TestLoadDefaultsToPrivateAddressAndProjectRoot(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresConcreteProvisionerImageReference(t *testing.T) {
+func TestLoadAllowsMissingProvisionerImageReference(t *testing.T) {
 	t.Setenv("MANAGER_TOKEN", strings.Repeat("a", 32))
 	t.Setenv("PROVISIONER_IMAGE_REF", "")
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PROVISIONER_IMAGE_REF") {
-		t.Fatalf("Load() error = %v, want image reference validation", err)
+	config, err := Load()
+	if err != nil || config.ProvisionerImageRef != "" {
+		t.Fatalf("Load() = %#v, %v", config, err)
 	}
+}
+
+func TestLoadRejectsInterpolatedProvisionerImageReference(t *testing.T) {
+	t.Setenv("MANAGER_TOKEN", strings.Repeat("a", 32))
 	t.Setenv("PROVISIONER_IMAGE_REF", "supabase-provisioner:${MANAGER_IMAGE_TAG}")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PROVISIONER_IMAGE_REF") {
 		t.Fatalf("Load() error = %v, want interpolation rejection", err)

@@ -38,7 +38,7 @@ func Load() (Config, error) {
 		ProvisionerImageRef:         strings.TrimSpace(os.Getenv("PROVISIONER_IMAGE_REF")),
 		AcceptanceInspectorFailOnce: os.Getenv("ACCEPTANCE_INSPECTOR_FAIL_ONCE") == "1",
 	}
-	if config.ProvisionerImageRef == "" || strings.Contains(config.ProvisionerImageRef, "${") {
+	if strings.Contains(config.ProvisionerImageRef, "${") {
 		return Config{}, fmt.Errorf("PROVISIONER_IMAGE_REF must be a concrete image reference")
 	}
 	if config.NginxProxyMode == "managed" && (config.NginxProxySocket == "" || config.NginxProxyToken == "") {

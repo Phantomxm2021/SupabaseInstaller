@@ -271,7 +271,7 @@ services:
         volumes:
             - ./volumes/functions:/home/deno/functions:z
             - deno-cache:/root/.cache/deno
-            - ./.manager-runtime/function-logs/event-worker:/opt/supabase-manager/event-worker:ro
+            - ./.manager-runtime/current/function-logs/event-worker:/opt/supabase-manager/event-worker:ro
     imgproxy:
         environment:
             IMGPROXY_AUTO_WEBP: ${IMGPROXY_AUTO_WEBP}

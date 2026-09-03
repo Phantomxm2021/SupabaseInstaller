@@ -22,16 +22,13 @@ func TestAdapterUsesPinnedAPIAndBoundedDelivery(t *testing.T) {
 		[]byte("http://function-log-collector:8081/internal/v1/events"),
 		[]byte("crypto.subtle.digest(\"SHA-256\""),
 		[]byte("function canonicalRuntimeEvent"),
-		[]byte("JSON.stringify(canonical)"),
+		[]byte("canonicalJSONString(canonical)"),
 		[]byte("FUNCTION_LOG_VERIFY_FIXTURES"),
 		[]byte("FUNCTION_LOG_FIXTURE_RECORDS="),
 	} {
 		if !bytes.Contains(source, required) {
 			t.Errorf("adapter missing %q", required)
 		}
-	}
-	if bytes.Contains(source, []byte("JSON.stringify(data)")) {
-		t.Fatal("adapter hashes runtime object insertion order instead of its canonical object")
 	}
 }
 

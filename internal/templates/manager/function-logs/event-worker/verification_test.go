@@ -21,10 +21,15 @@ func TestPinnedImageVerificationScriptIsBoundedAndChecksFixtures(t *testing.T) {
 		"FUNCTION_LOG_VERIFY_FIXTURES",
 		"FUNCTION_LOG_FIXTURE_RECORDS=",
 		"sleep 0.25",
+		"run_bounded",
+		"FUNCTION_LOG_EVENT_MANAGER_INERT",
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Errorf("verification script missing %q", fragment)
 		}
+	}
+	if strings.Contains(text, "|| true") {
+		t.Fatal("verification script suppresses Docker operation failures")
 	}
 	makefile, err := os.ReadFile(filepath.Join(root, "Makefile"))
 	if err != nil {

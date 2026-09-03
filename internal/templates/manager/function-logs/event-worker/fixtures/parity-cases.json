@@ -1,0 +1,8 @@
+[
+  {"name":"warn-u2028","event":{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Log","event":{"msg":"line paragraph ","level":"Warn"},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{"edge_runtime.worker.kind":"user"}}}},
+  {"name":"warning-u2028","event":{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Log","event":{"msg":"line paragraph ","level":"Warning"},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{"edge_runtime.worker.kind":"user"}}}},
+  {"name":"fractional","event":{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Boot","event":{"boot_time":1.5},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{}}}},
+  {"name":"unsafe","event":{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Boot","event":{"boot_time":9007199254740992},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{}}}},
+  {"name":"unicode-attribute","event":{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Log","event":{"msg":"x","level":"Info"},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{"é":"x"}}}},
+  {"name":"nonstring-attribute","event":{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Log","event":{"msg":"x","level":"Info"},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{"valid.key":1}}}}
+]

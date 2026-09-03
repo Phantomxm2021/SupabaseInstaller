@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +93,32 @@ func TestParseEdgeRuntimeEventRejectsIncompatiblePayloads(t *testing.T) {
 				t.Fatalf("error type = %T", err)
 			}
 		})
+	}
+}
+
+func TestEdgeRuntimeCanonicalDomainMatchesJavaScript(t *testing.T) {
+	base := `{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Log","event":{"msg":"line paragraph ","level":"%s"},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{"edge_runtime.worker.kind":"user"}}}`
+	for level, eventID := range map[string]string{
+		"Warn":    "9f053d87d5ee7e902d32a426ef041c8d4d2a58279914038543256b58821f4dea",
+		"Warning": "d12a29e976e73eca17fcbb45adc2aa6db63c6967bdfc88ffe77a04b152fcf458",
+	} {
+		event, err := ParseEdgeRuntimeEvent([]byte(fmt.Sprintf(base, level)))
+		if err != nil || event.Level != FunctionLogLevelWarn || event.EventID != eventID {
+			t.Errorf("level %s: event=%#v err=%v", level, event, err)
+		}
+	}
+
+	rejected := []string{
+		`{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Boot","event":{"boot_time":1.5},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{}}}`,
+		`{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Boot","event":{"boot_time":9007199254740992},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{}}}`,
+		`{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"UncaughtException","event":{"exception":"x","cpu_time_used":9007199254740992},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{}}}`,
+		`{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Log","event":{"msg":"x","level":"Info"},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{"é":"x"}}}`,
+		`{"timestamp":"2026-09-03T20:51:33.326Z","event_type":"Log","event":{"msg":"x","level":"Info"},"metadata":{"service_path":"./examples/good-name","execution_id":"exec","otel_attributes":{"valid.key":1}}}`,
+	}
+	for _, raw := range rejected {
+		if _, err := ParseEdgeRuntimeEvent([]byte(raw)); !errors.Is(err, ErrIncompatibleEdgeRuntimeEvent) {
+			t.Errorf("ParseEdgeRuntimeEvent(%s) error = %v", raw, err)
+		}
 	}
 }
 

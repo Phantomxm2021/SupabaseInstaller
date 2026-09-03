@@ -277,7 +277,7 @@ func injectFunctionLogCollection(services map[string]any, input Input) {
 			}
 		}
 	}
-	functions["volumes"] = append(volumes, "./.manager-runtime/function-logs/event-worker:/opt/supabase-manager/event-worker:ro")
+	functions["volumes"] = append(volumes, "./.manager-runtime/current/function-logs/event-worker:/opt/supabase-manager/event-worker:ro")
 	dependencies, _ := functions["depends_on"].(map[string]any)
 	if dependencies == nil {
 		dependencies = map[string]any{}

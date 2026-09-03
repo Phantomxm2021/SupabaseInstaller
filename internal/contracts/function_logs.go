@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -77,6 +78,7 @@ type FunctionLogBatch struct {
 }
 
 var ErrIncompatibleEdgeRuntimeEvent = errors.New("incompatible edge runtime event")
+var edgeRuntimeAttributeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$`)
 
 type EdgeRuntimeIncompatibilityError struct{ Reason string }
 
@@ -111,13 +113,19 @@ func CanonicalEdgeRuntimeEventJSON(raw []byte) ([]byte, error) {
 	if err := decodeClosedJSON(raw, &envelope); err != nil {
 		return nil, incompatibleEvent("invalid or unknown JSON field")
 	}
+	for name := range envelope.Metadata.OTelAttributes {
+		if !edgeRuntimeAttributeNamePattern.MatchString(name) {
+			return nil, incompatibleEvent("invalid metadata.otel_attributes key")
+		}
+	}
+	const maxJSSafeInteger int64 = 1<<53 - 1
 	var event any
 	switch envelope.EventType {
 	case "Boot":
 		var body struct {
 			BootTime *int64 `json:"boot_time"`
 		}
-		if decodeClosedJSON(envelope.Event, &body) != nil || body.BootTime == nil {
+		if decodeClosedJSON(envelope.Event, &body) != nil || body.BootTime == nil || *body.BootTime < -maxJSSafeInteger || *body.BootTime > maxJSSafeInteger {
 			return nil, incompatibleEvent("invalid Boot event")
 		}
 		event = body
@@ -135,7 +143,7 @@ func CanonicalEdgeRuntimeEventJSON(raw []byte) ([]byte, error) {
 			Exception   *string `json:"exception"`
 			CPUTimeUsed *int64  `json:"cpu_time_used"`
 		}
-		if decodeClosedJSON(envelope.Event, &body) != nil || body.Exception == nil || body.CPUTimeUsed == nil {
+		if decodeClosedJSON(envelope.Event, &body) != nil || body.Exception == nil || body.CPUTimeUsed == nil || *body.CPUTimeUsed < -maxJSSafeInteger || *body.CPUTimeUsed > maxJSSafeInteger {
 			return nil, incompatibleEvent("invalid UncaughtException event")
 		}
 		event = body
@@ -286,7 +294,7 @@ func ParseEdgeRuntimeEvent(raw []byte) (EdgeRuntimeEvent, error) {
 			event.Level = FunctionLogLevelDebug
 		case "Info":
 			event.Level = FunctionLogLevelInfo
-		case "Warn":
+		case "Warn", "Warning":
 			event.Level = FunctionLogLevelWarn
 		case "Error":
 			event.Level = FunctionLogLevelError

@@ -1,7 +1,6 @@
 package projectfs
 
 import (
-	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,7 +14,7 @@ func TestStageRuntimeFilesPublishesManagerOwnedEventWorkerAndPersistentLogDirect
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, commit, err := root.StageRuntimeFiles("event-assets", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions")})
+	_, commit, err := root.StageRuntimeFiles("event-assets", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions"), FunctionLogEventWorker: []byte("old-adapter")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,29 +22,50 @@ func TestStageRuntimeFilesPublishesManagerOwnedEventWorkerAndPersistentLogDirect
 		t.Fatal(err)
 	}
 	project, _ := root.ProjectPath("event-assets")
-	worker := filepath.Join(project, ".manager-runtime", "function-logs", "event-worker", "index.ts")
+	worker := filepath.Join(project, ".manager-runtime", "current", "function-logs", "event-worker", "index.ts")
 	data, err := os.ReadFile(worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(data, []byte("new globalThis.EventManager()")) {
-		t.Fatalf("event worker does not use pinned runtime API: %s", data)
+	if string(data) != "old-adapter" {
+		t.Fatalf("current adapter = %q", data)
 	}
 	databaseDir := filepath.Join(project, ".manager-runtime", "function-logs")
 	if info, err := os.Stat(databaseDir); err != nil || info.Mode().Perm() != 0o700 {
 		t.Fatalf("database directory = %v, %v", info, err)
 	}
-	firstWorker := string(data)
-	_, commit, err = root.StageRuntimeFiles("event-assets", RuntimeFiles{Compose: []byte("compose-2"), Env: []byte("env-2"), FunctionsEnv: []byte("functions-2")})
+	candidate, restore, commit, err := root.StageRuntimeFilesWithRef("event-assets", RuntimeFiles{Compose: []byte("compose-2"), Env: []byte("env-2"), FunctionsEnv: []byte("functions-2"), FunctionLogEventWorker: []byte("candidate-adapter")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, worker)); got != "old-adapter" {
+		t.Fatalf("staging changed current adapter to %q", got)
+	}
+	candidateWorker := filepath.Join(filepath.Dir(candidate.ComposeFile), "function-logs", "event-worker", "index.ts")
+	if got := string(mustRead(t, candidateWorker)); got != "candidate-adapter" {
+		t.Fatalf("candidate adapter = %q", got)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, worker)); got != "old-adapter" {
+		t.Fatalf("failed stage restore changed adapter to %q", got)
+	}
+	_, restore, commit, err = root.StageRuntimeFilesWithRef("event-assets", RuntimeFiles{Compose: []byte("compose-3"), Env: []byte("env-3"), FunctionsEnv: []byte("functions-3"), FunctionLogEventWorker: []byte("new-adapter")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := commit(); err != nil {
 		t.Fatal(err)
 	}
-	data, err = os.ReadFile(worker)
-	if err != nil || string(data) != firstWorker {
-		t.Fatalf("stable worker changed across generation swap: %v", err)
+	if got := string(mustRead(t, worker)); got != "new-adapter" {
+		t.Fatalf("successful switch adapter = %q", got)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, worker)); got != "old-adapter" {
+		t.Fatalf("rollback adapter = %q", got)
 	}
 }
 

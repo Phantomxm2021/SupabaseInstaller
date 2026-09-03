@@ -436,7 +436,7 @@ func TestRenderFunctionsWiresPrivateEventCollector(t *testing.T) {
 		"./.manager-runtime/function-logs:/var/lib/function-logs",
 		"./volumes/functions:/srv/functions:ro",
 		"./.manager-runtime/current:/srv/runtime:ro",
-		"./.manager-runtime/function-logs/event-worker:/opt/supabase-manager/event-worker:ro",
+		"./.manager-runtime/current/function-logs/event-worker:/opt/supabase-manager/event-worker:ro",
 		"--event-worker",
 		"/opt/supabase-manager/event-worker",
 		"http://127.0.0.1:8081/health/live",
@@ -472,6 +472,12 @@ func TestRenderWithoutFunctionsOmitsEventCollector(t *testing.T) {
 func TestRenderFunctionsRequiresConcreteProvisionerImage(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Services.Functions = true
+	template := append([]byte(nil), testTemplateCompose...)
+	testTemplateCompose = nil
+	defer func() { testTemplateCompose = template }()
+	if _, err := Project(Input{ProjectID: "project-123", Slug: "functions", APIPort: 18001, Configuration: cfg, TemplateCompose: template}); err == nil || !strings.Contains(err.Error(), "provisioner image") {
+		t.Fatalf("Project(missing image) error = %v", err)
+	}
 	for _, image := range []string{"supabase-provisioner:${MANAGER_IMAGE_TAG}"} {
 		if _, err := Project(Input{ProjectID: "project-123", Slug: "functions", APIPort: 18001, Configuration: cfg, ProvisionerImageRef: image}); err == nil || !strings.Contains(err.Error(), "provisioner image") {
 			t.Fatalf("Project(image=%q) error = %v", image, err)

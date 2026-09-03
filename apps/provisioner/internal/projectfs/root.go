@@ -87,10 +87,11 @@ func (r *Root) DeleteProjectData(slug string) error {
 }
 
 type RuntimeFiles struct {
-	Compose         []byte
-	Env             []byte
-	FunctionsEnv    []byte
-	MailerTemplates map[string][]byte
+	Compose                []byte
+	Env                    []byte
+	FunctionsEnv           []byte
+	MailerTemplates        map[string][]byte
+	FunctionLogEventWorker []byte
 	// TemplateFiles is the verified official docker directory, keyed by a
 	// slash-separated path relative to docker/. It is stored with the project
 	// as an immutable rollback/bootstrap snapshot, never compiled into Manager.
@@ -353,26 +354,35 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 		return RuntimeRef{}, nil, nil, fmt.Errorf("create runtime generations: %w", err)
 	}
 	functionLogsRoot := filepath.Join(runtimeRoot, "function-logs")
-	if err := os.MkdirAll(filepath.Join(functionLogsRoot, "event-worker"), 0o700); err != nil {
+	if err := os.MkdirAll(functionLogsRoot, 0o700); err != nil {
 		return RuntimeRef{}, nil, nil, fmt.Errorf("create function log runtime directory: %w", err)
 	}
 	if err := os.Chmod(functionLogsRoot, 0o700); err != nil {
 		return RuntimeRef{}, nil, nil, fmt.Errorf("secure function log database directory: %w", err)
-	}
-	if err := writeAtomic(filepath.Join(functionLogsRoot, "event-worker"), "index.ts", eventworker.Source(), 0o600); err != nil {
-		return RuntimeRef{}, nil, nil, fmt.Errorf("publish function log event worker: %w", err)
 	}
 	current := filepath.Join(runtimeRoot, "current")
 	candidateDir, err := os.MkdirTemp(runtimeRoot, ".candidate-")
 	if err != nil {
 		return RuntimeRef{}, nil, nil, fmt.Errorf("create runtime staging directory: %w", err)
 	}
-	candidateFiles := RuntimeFiles{Compose: append([]byte(nil), files.Compose...), Env: append([]byte(nil), files.Env...), FunctionsEnv: append([]byte(nil), files.FunctionsEnv...)}
+	workerSource := files.FunctionLogEventWorker
+	if len(workerSource) == 0 {
+		workerSource = eventworker.Source()
+	}
+	candidateFiles := RuntimeFiles{Compose: append([]byte(nil), files.Compose...), Env: append([]byte(nil), files.Env...), FunctionsEnv: append([]byte(nil), files.FunctionsEnv...), MailerTemplates: files.MailerTemplates, FunctionLogEventWorker: append([]byte(nil), workerSource...)}
 	for name, data := range map[string][]byte{"docker-compose.yml": candidateFiles.Compose, ".env": candidateFiles.Env, ".env.functions": candidateFiles.FunctionsEnv} {
 		if err := writeAtomic(candidateDir, name, data, 0o600); err != nil {
 			_ = os.RemoveAll(candidateDir)
 			return RuntimeRef{}, nil, nil, err
 		}
+	}
+	if err := os.MkdirAll(filepath.Join(candidateDir, "function-logs", "event-worker"), 0o700); err != nil {
+		_ = os.RemoveAll(candidateDir)
+		return RuntimeRef{}, nil, nil, fmt.Errorf("create candidate event worker directory: %w", err)
+	}
+	if err := writeAtomic(filepath.Join(candidateDir, "function-logs", "event-worker"), "index.ts", candidateFiles.FunctionLogEventWorker, 0o600); err != nil {
+		_ = os.RemoveAll(candidateDir)
+		return RuntimeRef{}, nil, nil, fmt.Errorf("write candidate event worker: %w", err)
 	}
 	if len(candidateFiles.MailerTemplates) > 0 {
 		if err := os.MkdirAll(filepath.Join(candidateDir, "templates"), 0o700); err != nil {
