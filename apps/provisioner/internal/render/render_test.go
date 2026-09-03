@@ -829,7 +829,7 @@ func TestRenderS3ProtocolCanBeEnabledIndependently(t *testing.T) {
 	}
 }
 
-func TestRenderUsesOnlyPostgreSQL17AndGatewayChoices(t *testing.T) {
+func TestRenderRejectsCaddyBeforeComposeGeneration(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Database.Version = "15"
 	cfg.Network.Gateway = contracts.GatewayKong
@@ -839,12 +839,16 @@ func TestRenderUsesOnlyPostgreSQL17AndGatewayChoices(t *testing.T) {
 	cfg.Database.Version = "17"
 	cfg.Network.Gateway = contracts.GatewayEnvoy
 	cfg.Network.HTTPSMode = contracts.HTTPSModeCaddy
-	out, err := Project(Input{Slug: "pg17-caddy", APIPort: 18003, Configuration: cfg})
-	if err != nil {
-		t.Fatalf("legacy Caddy render rejected: %v", err)
+	if out, err := Project(Input{Slug: "pg17-caddy", APIPort: 18003, Configuration: cfg}); err == nil || !strings.Contains(err.Error(), "network.httpsMode") || !strings.Contains(err.Error(), "external reverse proxy") || out.Compose != "" {
+		t.Fatalf("legacy Caddy render = output %q, error %v; want migration guard before Compose", out.Compose, err)
 	}
-	if !strings.Contains(out.Compose, "supabase/postgres:17.6.1.136") || !strings.Contains(out.Compose, "caddy:2.9.1") || !strings.Contains(out.Compose, "  caddy:") {
-		t.Fatal("legacy Caddy Compose behavior was not preserved")
+	cfg.Network.HTTPSMode = contracts.HTTPSModeExternal
+	out, err := Project(Input{Slug: "pg17-external", APIPort: 18003, Configuration: cfg})
+	if err != nil {
+		t.Fatalf("external reverse proxy render rejected: %v", err)
+	}
+	if strings.Contains(out.Compose, "  caddy:") {
+		t.Fatal("external HTTPS Compose unexpectedly contains Caddy service")
 	}
 }
 

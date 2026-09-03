@@ -147,7 +147,7 @@ func validateConfiguration(cfg contracts.ProjectConfiguration, allowLegacyCaddy,
 	validateDatabaseConnectionBudget(cfg, validation)
 	validateNetwork(cfg.Network, validation)
 	if cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy && !allowLegacyCaddy {
-		validation.add("network.httpsMode", "Caddy HTTPS is not supported for new configurations")
+		validation.add("network.httpsMode", "legacy Caddy HTTPS requires migration to an external reverse proxy")
 	}
 	if cfg.Network.HTTPSMode == contracts.HTTPSModeCaddy && !cfg.Services.Gateway {
 		validation.add("services.gateway", "Caddy HTTPS requires API Gateway")
