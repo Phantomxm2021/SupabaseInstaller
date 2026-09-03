@@ -153,7 +153,7 @@ func TestCollectorRejectsMalformedUnknownTrailingOversizedAndTooMany(t *testing.
 	}
 	tooMany := validBatch()
 	tooMany.Events = make([]contracts.EdgeRuntimeEvent, 101)
-	if got := requestBatch(t, handler, tooMany, "application/json").Code; got != 400 {
+	if got := requestBatch(t, handler, tooMany, "application/json").Code; got != http.StatusRequestEntityTooLarge {
 		t.Fatalf("too many status = %d", got)
 	}
 	big := `{"version":1,"projectId":"project","events":[],"padding":"` + strings.Repeat("x", 1<<20) + `"}`
@@ -182,6 +182,34 @@ func TestCollectorReturnsPayloadTooLargeForOversizedTrailingWhitespace(t *testin
 	handler.ServeHTTP(response, req)
 	if response.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestCollectorRejectsDuplicateSemanticJSONKeys(t *testing.T) {
+	event := `{"version":1,"eventId":"event-1","functionName":"hello","executionId":"exec-1","eventType":"Log","message":"hello","timestamp":"1970-01-01T00:01:40Z","level":"info"}`
+	tests := map[string]string{
+		"batch version":       `{"version":1,"version":1,"projectId":"project","events":[` + event + `]}`,
+		"batch project":       `{"version":1,"projectId":"project","projectId":"project","events":[` + event + `]}`,
+		"event function name": `{"version":1,"projectId":"project","events":[{"version":1,"eventId":"event-1","functionName":"hello","functionName":"hello","executionId":"exec-1","eventType":"Log","message":"hello","timestamp":"1970-01-01T00:01:40Z","level":"info"}]}`,
+		"event ID":            `{"version":1,"projectId":"project","events":[{"version":1,"eventId":"event-1","eventId":"event-1","functionName":"hello","executionId":"exec-1","eventType":"Log","message":"hello","timestamp":"1970-01-01T00:01:40Z","level":"info"}]}`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			store := &collectorStore{}
+			_, handler := newCollectorTest(t, store, &bytes.Buffer{}, time.Hour)
+			req := httptest.NewRequest(http.MethodPost, "/internal/v1/events", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+			}
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			if len(store.records) != 0 {
+				t.Fatalf("stored records = %+v", store.records)
+			}
+		})
 	}
 }
 
@@ -268,6 +296,41 @@ func TestCollectorConstructionRejectsUnsafeFunctionsRoots(t *testing.T) {
 	batch.Events[0].FunctionName = "linked"
 	if got := requestBatch(t, NewCollectorHandler(collector), batch, "application/json").Code; got != 400 {
 		t.Fatalf("symlink status = %d", got)
+	}
+}
+
+func TestCollectorRejectsReplacedFunctionsRoot(t *testing.T) {
+	configuredRoot := filepath.Join(t.TempDir(), "functions")
+	if err := os.Mkdir(configuredRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(configuredRoot, "hello"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := &collectorStore{}
+	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: store, Redactor: &Redactor{}, FunctionsRoot: configuredRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer collector.Close()
+	originalRoot := configuredRoot + "-original"
+	if err := os.Rename(configuredRoot, originalRoot); err != nil {
+		t.Fatal(err)
+	}
+	externalRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(externalRoot, "hello"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalRoot, configuredRoot); err != nil {
+		t.Fatal(err)
+	}
+	if got := requestBatch(t, NewCollectorHandler(collector), validBatch(), "application/json").Code; got != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", got, http.StatusBadRequest)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.records) != 0 {
+		t.Fatalf("stored records = %+v", store.records)
 	}
 }
 

@@ -1,6 +1,7 @@
 package functionlogs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -45,12 +46,13 @@ type CollectorOptions struct {
 }
 
 type Collector struct {
-	projectID     string
-	store         CollectorStore
-	redactor      *Redactor
-	functionsRoot string
-	logger        *slog.Logger
-	now           func() time.Time
+	projectID      string
+	store          CollectorStore
+	redactor       *Redactor
+	configuredRoot string
+	canonicalRoot  string
+	logger         *slog.Logger
+	now            func() time.Time
 
 	healthMu sync.RWMutex
 	health   contracts.FunctionLogHealth
@@ -66,7 +68,7 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 	if options.Store == nil {
 		return nil, errors.New("function log store is required")
 	}
-	root, err := validateFunctionsRoot(options.FunctionsRoot)
+	configuredRoot, canonicalRoot, err := validateFunctionsRoot(options.FunctionsRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +89,7 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 		options.MaintenanceInterval = defaultMaintenanceTime
 	}
 	c := &Collector{
-		projectID: options.ProjectID, store: options.Store, redactor: redactor, functionsRoot: root,
+		projectID: options.ProjectID, store: options.Store, redactor: redactor, configuredRoot: configuredRoot, canonicalRoot: canonicalRoot,
 		logger: options.Logger, now: options.Now, health: contracts.FunctionLogHealth{Status: "healthy"},
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
@@ -95,19 +97,27 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 	return c, nil
 }
 
-func validateFunctionsRoot(path string) (string, error) {
+func validateFunctionsRoot(path string) (string, string, error) {
 	if path == "" {
-		return "", errors.New("functions root is required")
+		return "", "", errors.New("functions root is required")
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return "", errors.New("invalid functions root")
+		return "", "", errors.New("invalid functions root")
 	}
 	info, err := os.Lstat(abs)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("functions root must be a real directory")
+		return "", "", errors.New("functions root must be a real directory")
 	}
-	return filepath.Clean(abs), nil
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", "", errors.New("resolve functions root")
+	}
+	canonical, err = filepath.Abs(canonical)
+	if err != nil {
+		return "", "", errors.New("resolve functions root")
+	}
+	return filepath.Clean(abs), filepath.Clean(canonical), nil
 }
 
 func (c *Collector) Health() contracts.FunctionLogHealth {
@@ -143,8 +153,29 @@ func (c *Collector) functionExists(name string) bool {
 	if contracts.ValidateFunctionName(name) != nil {
 		return false
 	}
-	info, err := os.Lstat(filepath.Join(c.functionsRoot, name))
-	return err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0
+	rootInfo, err := os.Lstat(c.configuredRoot)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(c.configuredRoot)
+	if err != nil {
+		return false
+	}
+	resolvedRoot, err = filepath.Abs(resolvedRoot)
+	if err != nil || filepath.Clean(resolvedRoot) != c.canonicalRoot {
+		return false
+	}
+	candidate := filepath.Join(c.configuredRoot, name)
+	info, err := os.Lstat(candidate)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	resolvedCandidate, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return false
+	}
+	resolvedCandidate, err = filepath.Abs(resolvedCandidate)
+	return err == nil && filepath.Dir(filepath.Clean(resolvedCandidate)) == c.canonicalRoot
 }
 
 func (c *Collector) maintain(interval time.Duration) {
@@ -191,7 +222,23 @@ func (c *Collector) ingest(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	request.Body = http.MaxBytesReader(response, request.Body, maxCollectorBody)
-	decoder := json.NewDecoder(request.Body)
+	raw, err := io.ReadAll(request.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		c.reject(1, false)
+		if errors.As(err, &maxErr) {
+			http.Error(response, "request too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(response, "invalid request", http.StatusBadRequest)
+		}
+		return
+	}
+	if err = rejectDuplicateJSONKeys(raw); err != nil {
+		c.reject(1, false)
+		http.Error(response, "invalid request", http.StatusBadRequest)
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	var batch contracts.FunctionLogBatch
 	if err = decoder.Decode(&batch); err != nil {
@@ -220,7 +267,12 @@ func (c *Collector) ingest(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "unsupported contract version", http.StatusUnprocessableEntity)
 		return
 	}
-	if batch.ProjectID != c.projectID || len(batch.Events) < 1 || len(batch.Events) > 100 {
+	if len(batch.Events) > 100 {
+		c.reject(count, false)
+		http.Error(response, "batch too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if batch.ProjectID != c.projectID || len(batch.Events) < 1 {
 		c.reject(count, false)
 		http.Error(response, "invalid batch", http.StatusBadRequest)
 		return
@@ -259,6 +311,63 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 			return errors.New("trailing JSON value")
 		}
 		return fmt.Errorf("trailing JSON: %w", err)
+	}
+	return nil
+}
+
+func rejectDuplicateJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := scanJSONValue(decoder); err != nil {
+		return err
+	}
+	return ensureJSONEOF(decoder)
+}
+
+func scanJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("invalid JSON object key")
+			}
+			if _, exists := seen[key]; exists {
+				return errors.New("duplicate JSON object key")
+			}
+			seen[key] = struct{}{}
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	closingDelim, ok := closing.(json.Delim)
+	if !ok || (delim == '{' && closingDelim != '}') || (delim == '[' && closingDelim != ']') {
+		return errors.New("invalid JSON closing delimiter")
 	}
 	return nil
 }
