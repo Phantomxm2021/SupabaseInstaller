@@ -1,0 +1,108 @@
+package functionlogs
+
+import (
+	"bufio"
+	"os"
+	"regexp"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"supabase-manager/internal/diagnostic"
+)
+
+const maxMessageBytes = 10 * 1024
+
+var (
+	projectSecretName  = regexp.MustCompile(`(?i)(authorization|api[_-]?key|jwt|database|postgres|password|secret|service[_-]?role|dashboard|oauth|client[_-]?secret|smtp|storage|access[_-]?key|private[_-]?key|token|vault)`)
+	messageCredentials = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(["']?\b(?:api[_-]?key|apikey|password|passwd|pwd|secret|token|access[_-]?key(?:[_-]?id)?|secret[_-]?key|private[_-]?key|client[_-]?secret|jwt[_-]?secret|service[_-]?role[_-]?key|supabase[_-]?secret[_-]?key|postgres[_-]?password|smtp[_-]?password|aws[_-]?secret[_-]?access[_-]?key|vault[_-]?enc[_-]?key|secret[_-]?key[_-]?base)\b["']?\s*(?:=|:)\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)`),
+		regexp.MustCompile(`(?i)(\bauthorization\s*:\s*[^\s,;]+\s+)[^\s,;]+`),
+		regexp.MustCompile(`(?i)(\bbearer\s+)[^\s,;]+`),
+	}
+)
+
+type Redactor struct{ known []string }
+
+func LoadRedactor(projectEnvPath, functionsEnvPath string) (*Redactor, error) {
+	known, err := readDotenvValues(projectEnvPath, func(name string) bool { return projectSecretName.MatchString(name) })
+	if err != nil {
+		return nil, err
+	}
+	functionValues, err := readDotenvValues(functionsEnvPath, func(string) bool { return true })
+	if err != nil {
+		return nil, err
+	}
+	known = append(known, functionValues...)
+	sort.SliceStable(known, func(i, j int) bool { return len(known[i]) > len(known[j]) })
+	return &Redactor{known: known}, nil
+}
+
+func readDotenvValues(path string, include func(string) bool) ([]string, error) {
+	if path == "" {
+		return nil, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var values []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		name = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(name), "export "))
+		if !ok || name == "" || !include(name) {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && ((value[0] == '\'' && value[len(value)-1] == '\'') || (value[0] == '"' && value[len(value)-1] == '"')) {
+			value = value[1 : len(value)-1]
+		}
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values, scanner.Err()
+}
+
+func (r *Redactor) SanitizeMessage(input string) (string, bool) {
+	input = strings.ToValidUTF8(input, string(utf8.RuneError))
+	for _, value := range r.known {
+		input = strings.ReplaceAll(input, value, "[REDACTED]")
+	}
+	for _, pattern := range messageCredentials {
+		input = pattern.ReplaceAllString(input, `${1}[REDACTED]`)
+	}
+	var sanitized strings.Builder
+	for len(input) > 0 {
+		end := len(input)
+		if end > 3072 {
+			end = 3072
+			for !utf8.RuneStart(input[end]) {
+				end--
+			}
+		}
+		sanitized.WriteString(diagnostic.Sanitize(input[:end], r.known))
+		input = input[end:]
+	}
+	message := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, sanitized.String())
+	if len(message) <= maxMessageBytes {
+		return message, false
+	}
+	message = message[:maxMessageBytes]
+	for !utf8.ValidString(message) {
+		message = message[:len(message)-1]
+	}
+	return message, true
+}
