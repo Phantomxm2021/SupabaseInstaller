@@ -25,11 +25,12 @@ import (
 )
 
 const (
-	defaultRepositoryAPI = "https://api.github.com/repos/supabase/supabase"
-	defaultArchiveBase   = "https://codeload.github.com/supabase/supabase/tar.gz/refs/tags/"
-	maxArchiveBytes      = 32 << 20
-	maxExtractedBytes    = 64 << 20
-	maxTemplateFiles     = 500
+	defaultRepositoryAPI    = "https://api.github.com/repos/supabase/supabase"
+	defaultArchiveBase      = "https://codeload.github.com/supabase/supabase/tar.gz/refs/tags/"
+	maxArchiveBytes         = 32 << 20
+	maxExtractedBytes       = 64 << 20
+	maxTemplateFiles        = 500
+	templateDownloadTimeout = 5 * time.Minute
 )
 
 var tagPattern = regexp.MustCompile(`^self-hosted/v([0-9]+)\.([0-9]+)\.([0-9]+)$`)
@@ -62,7 +63,7 @@ func New(cacheRoot string, client *http.Client) (*Source, error) {
 		return nil, errors.New("official template cache path must be absolute")
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 45 * time.Second}
+		client = &http.Client{Timeout: templateDownloadTimeout}
 	}
 	return &Source{cacheRoot: cacheRoot, client: client, repository: defaultRepositoryAPI, archiveBase: defaultArchiveBase}, nil
 }

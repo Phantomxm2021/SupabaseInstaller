@@ -10,7 +10,18 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestNewAllowsFiveMinutesForOfficialTemplateDownloads(t *testing.T) {
+	source, err := New(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.client.Timeout < 5*time.Minute {
+		t.Fatalf("official template timeout = %s, want at least 5m for a GitHub archive download", source.client.Timeout)
+	}
+}
 
 func TestResolveDownloadsCachesAndReloadsOfficialRelease(t *testing.T) {
 	archive := testArchive(t, map[string]string{
