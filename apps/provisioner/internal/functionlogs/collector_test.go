@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -165,6 +166,63 @@ func TestCollectorRejectsMalformedUnknownTrailingOversizedAndTooMany(t *testing.
 	}
 	if collector.Health().Rejected != 105 {
 		t.Fatalf("health = %+v", collector.Health())
+	}
+}
+
+func TestCollectorReturnsPayloadTooLargeForOversizedTrailingWhitespace(t *testing.T) {
+	_, handler := newCollectorTest(t, &collectorStore{}, &bytes.Buffer{}, time.Hour)
+	body, err := json.Marshal(validBatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = append(body, bytes.Repeat([]byte(" "), maxCollectorBody+1-len(body))...)
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/events", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestCollectorRedactsBeforeCallingStore(t *testing.T) {
+	for _, insertErr := range []error{nil, errors.New("store unavailable")} {
+		store := &collectorStore{insertErr: insertErr}
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, "hello"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		collector, err := NewCollector(CollectorOptions{
+			ProjectID: "project", Store: store, Redactor: &Redactor{known: []string{"private-sentinel"}},
+			FunctionsRoot: root, Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		batch := validBatch()
+		batch.Events[0].Message = "token private-sentinel"
+		requestBatch(t, NewCollectorHandler(collector), batch, "application/json")
+		_ = collector.Close()
+		store.mu.Lock()
+		if len(store.records) != 1 || strings.Contains(store.records[0].Message, "private-sentinel") || !strings.Contains(store.records[0].Message, "[REDACTED]") {
+			t.Fatalf("records = %+v", store.records)
+		}
+		store.mu.Unlock()
+	}
+}
+
+func TestCollectorHealthCountersSaturate(t *testing.T) {
+	collector, _ := newCollectorTest(t, &collectorStore{}, &bytes.Buffer{}, time.Hour)
+	collector.healthMu.Lock()
+	collector.health.Rejected = math.MaxUint64 - 1
+	collector.health.Dropped = math.MaxUint64 - 1
+	collector.healthMu.Unlock()
+	collector.reject(10, false)
+	collector.storageFailure(10, false)
+	collector.storageFailure(1, true)
+	health := collector.Health()
+	if health.Rejected != math.MaxUint64 || health.Dropped != math.MaxUint64 {
+		t.Fatalf("health = %+v", health)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
 	"net/http"
 	"os"
@@ -121,7 +122,7 @@ func (c *Collector) reject(count uint64, incompatible bool) {
 	}
 	c.healthMu.Lock()
 	defer c.healthMu.Unlock()
-	c.health.Rejected += count
+	c.health.Rejected = saturatingAdd(c.health.Rejected, count)
 	if incompatible {
 		c.health.Status = "incompatible"
 		c.health.Detail = "unsupported event contract version"
@@ -131,9 +132,10 @@ func (c *Collector) reject(count uint64, incompatible bool) {
 func (c *Collector) storageFailure(count uint64, maintenance bool) {
 	c.healthMu.Lock()
 	defer c.healthMu.Unlock()
-	if !maintenance {
-		c.health.Dropped += count
+	if maintenance {
+		count = 1
 	}
+	c.health.Dropped = saturatingAdd(c.health.Dropped, count)
 	c.health.Status = "storage_error"
 	c.health.Detail = "function log storage unavailable"
 }
@@ -157,7 +159,7 @@ func (c *Collector) maintain(interval time.Duration) {
 			err := c.store.Maintain(ctx)
 			cancel()
 			if err != nil {
-				c.storageFailure(0, true)
+				c.storageFailure(1, true)
 				c.logger.Error("function log maintenance failed")
 			}
 		case <-c.stop:
@@ -205,7 +207,12 @@ func (c *Collector) ingest(response http.ResponseWriter, request *http.Request) 
 	}
 	if err = ensureJSONEOF(decoder); err != nil {
 		c.reject(eventCount(batch.Events), false)
-		http.Error(response, "invalid request", http.StatusBadRequest)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(response, "request too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(response, "invalid request", http.StatusBadRequest)
+		}
 		return
 	}
 	count := eventCount(batch.Events)
@@ -232,6 +239,9 @@ func (c *Collector) ingest(response http.ResponseWriter, request *http.Request) 
 			http.Error(response, "invalid event", http.StatusBadRequest)
 			return
 		}
+		var sanitizedTruncated bool
+		record.Message, sanitizedTruncated = c.redactor.SanitizeMessage(record.Message)
+		record.Truncated = record.Truncated || sanitizedTruncated
 		records[index] = record
 	}
 	if err = c.store.InsertBatch(request.Context(), records); err != nil {
@@ -259,4 +269,11 @@ func eventCount(events []contracts.EdgeRuntimeEvent) uint64 {
 		return 1
 	}
 	return uint64(len(events))
+}
+
+func saturatingAdd(value, increment uint64) uint64 {
+	if increment > math.MaxUint64-value {
+		return math.MaxUint64
+	}
+	return value + increment
 }
