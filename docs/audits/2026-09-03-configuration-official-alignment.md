@@ -7,8 +7,10 @@
 
 ## Phase 1 status (2026-09-03)
 
-CFG-001, CFG-002, CFG-003, CFG-004, CFG-005, CFG-006, CFG-007, CFG-008, CFG-009,
-and CFG-010 are fixed in the Phase 1/2 remediation. CFG-005 is closed after
+CFG-001, CFG-002, CFG-003, CFG-004, CFG-005, CFG-006, CFG-007, CFG-008 and CFG-009
+are fixed in the Phase 1/2 remediation. New Caddy configurations are blocked, but
+legacy Caddy compatibility remains an open multi-project safety issue (CFG-017).
+CFG-005 is closed after
 cross-stack generation, persistence, rendering, and UI safety tests. Signing
 replacement remains an explicit maintenance-window operation because it
 invalidates existing ES256 sessions.
@@ -253,8 +255,8 @@ Supavisor 管理 API 更新租户；加入“初始 20/100，更新为 40/200”
   机密均会进入最终 Storage 容器；不是仅 UI 持久化。
 - 当前使用的 `GLOBAL_S3_*` 名称是官方仍支持的 legacy aliases，短期兼容，不应单独
   作为故障处理；新字段优先使用 `STORAGE_S3_*` 是后续模板升级时的技术债。
-- `General.SiteURL` 是 Manager 用来派生 `<slug>.<base-domain>` 的基域，而不是 GoTrue
-  的 `SITE_URL`；渲染 `SITE_URL=https://General.Domain` 与该项目模型一致。
+- `General.SiteURL` 的既有“项目域名基址”语义与官方 GoTrue `SITE_URL` 的语义冲突；该项
+  在复审中重新归类为 CFG-016，而不是已确认对齐项。
 - Logs 使用官方 `docker-compose.logs.yml` overlay，并正确选择 Analytics 与 Vector；
   未发现 Logs 配置已保存但未渲染的字段。
 - Database 的 extensions 字段在 UI 中只读且渲染前明确拒绝非空值；它是“未支持”而非
@@ -279,3 +281,139 @@ Supavisor 管理 API 更新租户；加入“初始 20/100，更新为 40/200”
    真实运行态测试。
 4. CFG-006 至 CFG-008：补 Storage 的可配置限额、R2 输入防御，并移除或实现 Functions
   directory 字段。
+
+## 复审：其他服务配置（2026-09-03）
+
+本轮以当前官方自托管文档和固定 `self-hosted/v0.8.0` 模板为基准，沿着
+“配置 DTO → 服务端校验 → 渲染环境变量 → Compose 消费者”逐项检查 Auth、数据库、
+Supavisor、Realtime、Gateway、Studio、Functions 与 Logs。嵌入模板的 manifest commit
+与上游 tag 一致，且逐文件比较无漂移；以下问题发生在 Manager 的建模或渲染层。
+
+| 编号 | 优先级 | 问题 |
+|---|---|---|
+| CFG-011 | P1 | JWT session expiry 允许并默认写入官方范围外的值。 |
+| CFG-012 | P2 | Phone MFA OTP 长度使用了错误的 GoTrue 配置语义。 |
+| CFG-013 | P1 | PostgreSQL、Supavisor、Realtime 缺少总连接预算校验。 |
+| CFG-014 | P2 | Supavisor 内部元数据池错误复用了业务连接池大小。 |
+| CFG-015 | P2 | `shared_buffers` 接受任意字符串并直接传给 Postgres。 |
+| CFG-016 | P1 | `General.SiteURL` 被错误实现为 Supabase 域名基址。 |
+| CFG-017 | P1 | 遗留逐项目 Caddy 仍会争用宿主机 80/443。 |
+
+### CFG-011：JWT session expiry 的默认值与边界错误
+
+服务端和前端均接受 `0..31536000`，新项目默认 `jwtExpiry=0`，而渲染器将值原样写入
+`JWT_EXPIRY` / `GOTRUE_JWT_EXP`。官方将默认值定义为 3600 秒、最大值为 604800 秒。
+因此 0 和超过一周的值会产生启动/会话语义错误或违反官方安全边界。
+
+**证据：** `apps/manager/internal/project/configuration.go`、
+`apps/web/src/features/projects/projectSchema.ts`、
+`apps/provisioner/internal/render/environment.go`。
+
+**建议：** 服务端为权威边界，限制为 `1..604800`，默认 3600；前端同步限制；渲染器对
+遗留的 0 做 3600 的防御性回退并添加 0、604801、默认渲染测试。
+
+### CFG-012：Phone MFA OTP 长度映射到未记录的变量
+
+`MFAConfig.PhoneOTPLength` 允许 4–10，并被写为 `GOTRUE_MFA_PHONE_OTP_LENGTH`。官方 MFA
+配置清单没有这个参数；电话 OTP 长度属于 `GOTRUE_SMS_OTP_LENGTH`，范围应为 6–10。
+当前 UI 暗示该字段可控制 Phone MFA，但其结果未被官方支持的配置路径消费。
+
+**证据：** `internal/contracts/configuration.go`、
+`apps/manager/internal/project/configuration.go`、
+`apps/provisioner/internal/render/environment.go`。
+
+**建议：** 删除该误导字段，或将其重命名为 SMS OTP 长度、限制 6–10 并渲染
+`GOTRUE_SMS_OTP_LENGTH`；同时明确是否要受控支持 SMS 过期时间、发送频率和模板。
+
+### CFG-013：服务之间没有 PostgreSQL 连接预算
+
+`Database.MaxConnections`、Supavisor 业务/元数据池与 Realtime DB pool 各自仅做范围校验。
+渲染器会把它们同时写入 Postgres、Supavisor 和 Realtime，因而允许 Realtime pool 超过
+Postgres 上限，或各池合计耗尽连接。官方要求 pool size 为 `max_connections` 留出其他
+服务后的预算；连接不足时 Realtime 会拒绝启动。
+
+**证据：** `internal/contracts/configuration.go`、
+`apps/manager/internal/project/configuration.go`、
+`apps/provisioner/internal/render/environment.go`。
+
+**建议：** 在聚合校验中要求 `realtime.databasePoolSize <= database.maxConnections`，并用
+Supavisor 业务池、其内部元数据池、Realtime pool 和固定服务预留计算保守总预算；UI 展示
+预算和失败原因。
+
+### CFG-014：Supavisor 内部 DB pool 与业务 pool 被错误耦合
+
+官方 `POOLER_DEFAULT_POOL_SIZE`（每个业务 pool 的 Postgres 连接）与
+`POOLER_DB_POOL_SIZE`（Supavisor 元数据存储）是独立变量，默认分别为 20 与 5。当前
+契约只有 `PoolSize`，渲染时同时赋给两者，因此调大业务池会意外调大内部元数据连接池。
+
+**证据：** `internal/contracts/configuration.go`、
+`apps/manager/internal/project/configuration.go`、
+`apps/provisioner/internal/render/environment.go`。
+
+**建议：** 在 `PoolerConfig` 添加独立的 `InternalDBPoolSize`，默认 5、独立校验、UI 与
+迁移回填；并把它纳入 CFG-013 的总预算。
+
+### CFG-015：`shared_buffers` 可让数据库因非法启动参数而不可用
+
+`Database.SharedBuffers` 在前后端只是自由字符串；只要非空就被拼为
+`postgres -c shared_buffers=<raw>`。非法内容将在重建后阻止 DB 启动，并连带 REST、
+Realtime、Storage 等服务不可用。
+
+**证据：** `apps/manager/internal/project/configuration.go`、
+`apps/web/src/features/projects/projectSchema.ts`、
+`apps/provisioner/internal/render/environment.go`。
+
+**建议：** 服务端解析正整数与 Postgres 支持的容量单位（如 `256MB`），前端复用该格式，
+并在保存时提示该操作需要重启数据库及其依赖服务；可进一步依据宿主可用内存限制上限。
+
+### CFG-016：`General.SiteURL` 未按官方 Auth 语义渲染
+
+官方区分 `SUPABASE_PUBLIC_URL`（公开 Supabase 基址）、`API_EXTERNAL_URL`（Auth 外部 URL）
+与 `SITE_URL`（Auth 默认回跳 URL）。当前 Manager 会以 `SiteURL` 派生 `<slug>.<host>`，
+然后完全忽略原始 `SiteURL`，将三者固定写为该项目域名及 `/auth/v1`。这使管理员无法把
+`https://app.example.com` 设为邮件确认/OAuth 的默认回跳地址，且仓库运维文档自身将它
+描述为 application redirect URL，形成契约矛盾。
+
+**证据：** `apps/manager/internal/project/validate.go`、
+`apps/provisioner/internal/render/environment.go`、
+`docs/operations/project-host-nginx.md`。
+
+**建议：** 将公开 Supabase origin（可由 `Domain` 派生）与 Auth `SiteURL` 分离：前两项
+驱动 `SUPABASE_PUBLIC_URL` / `API_EXTERNAL_URL`，规范化后的用户 `SiteURL` 原样驱动
+`GOTRUE_SITE_URL`；补 OAuth 与邮件链接端到端测试。
+
+### CFG-017：遗留 Caddy 路径仍允许 80/443 冲突
+
+新配置已禁止 `httpsMode=caddy`，但 `ValidateStoredConfiguration` 与渲染器仍接受遗留值。
+上游 Caddy overlay 会发布 `80:80`、`443:443`、`443:443/udp`；而 Manager 只分配 API、
+Studio、数据库与 Pooler 端口，未把 80/443 建模为全局独占资源。因此第二个遗留 Caddy
+项目会在 Compose 启动时而非配置保存时失败，并与宿主统一反向代理争用 TLS 入口。
+
+**证据：** `apps/manager/internal/project/configuration.go`、
+`apps/manager/internal/ports/allocator.go`、
+`apps/provisioner/internal/render/render.go`、
+`internal/templates/self-hosted-v0.8.0/docker-compose.caddy.yml`。
+
+**建议：** 对遗留项目提供迁移到 external proxy 的显式流程并停止渲染逐项目 Caddy；若
+必须支持 Caddy，则将其设计为管理所有项目域名的宿主级唯一服务，不能复用项目 Compose
+overlay。
+
+### 本轮已确认的对齐范围
+
+- 官方固定模板与仓库嵌入模板无文件漂移；Envoy 默认、Kong opt-in、Functions private
+  `env_file`、Studio/meta、Logs/Vector override 均保持官方消费者语义。
+- OAuth provider 映射、SMTP、Phone provider secret、基础 TOTP/Phone MFA 开关、邮件模板
+  服务和新旧 Auth key/JWKS 消费路径与官方文档相符。
+- Storage/R2、REST/PostgREST 与基础 Realtime 环境变量没有发现新的直接文档冲突；未暴露
+  的 raw `.env` 变量继续作为明确的受控能力边界处理，而不是静默假装支持。
+
+**本轮官方依据：**
+
+- <https://supabase.com/docs/guides/self-hosting/docker>
+- <https://supabase.com/docs/guides/self-hosting/auth/config>
+- <https://supabase.com/docs/guides/self-hosting/self-hosted-phone-mfa>
+- <https://supabase.com/docs/guides/self-hosting/accessing-postgres>
+- <https://supabase.com/docs/guides/realtime/settings>
+- <https://supabase.com/docs/guides/database/custom-postgres-config>
+- <https://supabase.com/docs/guides/self-hosting/self-hosted-functions>
+- <https://supabase.com/docs/guides/self-hosting/self-hosted-envoy>
