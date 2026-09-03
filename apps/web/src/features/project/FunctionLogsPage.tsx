@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 type LevelFilter = '' | FunctionLogLevel
@@ -34,7 +35,7 @@ export function FunctionLogsPage() {
       <Button variant="outline" onClick={() => setPaused((value) => !value)}>{paused ? <Play /> : <Pause />}{paused ? 'Resume' : 'Pause'} auto refresh</Button>
     </>} />
     <div className="function-logs-toolbar">
-      <label><span>Level</span><select aria-label="Log level" value={level} onChange={(event) => setLevel(event.target.value as LevelFilter)}><option value="">All levels</option><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warn</option><option value="error">Error</option></select></label>
+      <label><span>Level</span><Select value={level || 'all'} onValueChange={(value) => setLevel(value === 'all' ? '' : value as LevelFilter)}><SelectTrigger aria-label="Log level"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All levels</SelectItem><SelectItem value="debug">Debug</SelectItem><SelectItem value="info">Info</SelectItem><SelectItem value="warn">Warn</SelectItem><SelectItem value="error">Error</SelectItem></SelectContent></Select></label>
       <label className="function-logs-search"><span className="sr-only">Search logs</span><Search /><Input type="search" aria-label="Search logs" placeholder="Search messages" value={search} onChange={(event) => setSearch(limitUTF8(event.target.value, 256))} /></label>
     </div>
     <LogResults key={`${level}\u0000${debouncedSearch}`} projectId={projectId} functionName={functionName} level={level} search={debouncedSearch} paused={paused} />
@@ -82,7 +83,6 @@ function LogResults({ projectId, functionName, level, search, paused }: { projec
       const page = await apiFetch<FunctionLogPage>(makeURL(base, { limit: '200', level, search, before: olderCursor }), { signal: controller.signal })
       if (!mounted.current) return
       setRecords((current) => mergeLogs(current, page.logs))
-      setHealth(page.health)
       setOlderCursor(page.olderCursor)
     } catch (error) {
       if (!mounted.current || controller.signal.aborted) return

@@ -114,11 +114,13 @@ it("debounces filters, caps search at 256 UTF-8 bytes, and resets to a base requ
       request.includes(`search=${encodeURIComponent("界".repeat(85) + "a")}`),
     ),
   ).toBe(true);
-  fireEvent.change(screen.getByRole("combobox", { name: /log level/i }), { target: { value: "error" } });
-  await flushAsync();
+  vi.useRealTimers();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: /log level/i }));
+  await user.click(await screen.findByRole("option", { name: "Error" }));
+  await screen.findByText("Log collection healthy");
   expect(requests.at(-1)).toContain("level=error");
   expect(requests.at(-1)).not.toContain("after=");
-  vi.useRealTimers();
 });
 
 it("polls with the newer cursor, pauses and resumes, refreshes incrementally, loads older, and deduplicates", async () => {
@@ -242,6 +244,91 @@ it("stops polling after unmount", async () => {
   const count = requests.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
   expect(requests).toHaveLength(count);
+});
+
+it("aborts a pending initial request on unmount", async () => {
+  let signal: AbortSignal | undefined;
+  let resolve!: (response: Response) => void;
+  const pending = new Promise<Response>((done) => { resolve = done; });
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const view = setup(async (_input, init) => { signal = init?.signal as AbortSignal; return pending; });
+  await flushAsync();
+  view.unmount();
+  expect(signal?.aborted).toBe(true);
+  resolve(new Response(JSON.stringify(page()), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await flushAsync();
+  expect(error).not.toHaveBeenCalled();
+  error.mockRestore();
+});
+
+it("aborts a pending older request on unmount", async () => {
+  let olderSignal: AbortSignal | undefined;
+  let resolveOlder!: (response: Response) => void;
+  const pendingOlder = new Promise<Response>((done) => { resolveOlder = done; });
+  const view = setup(async (input, init) => String(input).includes("before=") ? (olderSignal = init?.signal as AbortSignal, pendingOlder) : new Response(JSON.stringify(page([log("base", "2026-09-04T10:00:00Z")], { olderCursor: "old" })), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await screen.findByText("base");
+  fireEvent.click(screen.getByRole("button", { name: /load older/i }));
+  await flushAsync();
+  view.unmount();
+  expect(olderSignal?.aborted).toBe(true);
+  resolveOlder(new Response(JSON.stringify(page()), { status: 200, headers: { "Content-Type": "application/json" } }));
+});
+
+it("aborts a pending incremental refetch on unmount", async () => {
+  let refetchSignal: AbortSignal | undefined;
+  let resolveRefetch!: (response: Response) => void;
+  const pendingRefetch = new Promise<Response>((done) => { resolveRefetch = done; });
+  const view = setup(async (input, init) => String(input).includes("after=") ? (refetchSignal = init?.signal as AbortSignal, pendingRefetch) : new Response(JSON.stringify(page([log("base", "2026-09-04T10:00:00Z")], { newerCursor: "newer" })), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await screen.findByText("base");
+  fireEvent.click(screen.getByRole("button", { name: /^refresh$/i }));
+  await flushAsync();
+  view.unmount();
+  expect(refetchSignal?.aborted).toBe(true);
+  resolveRefetch(new Response(JSON.stringify(page()), { status: 200, headers: { "Content-Type": "application/json" } }));
+});
+
+it("keeps newer poll health and records when an older page resolves last", async () => {
+  vi.useFakeTimers();
+  let resolveOlder!: (response: Response) => void;
+  const pendingOlder = new Promise<Response>((done) => { resolveOlder = done; });
+  setup(async (input) => {
+    const path = String(input);
+    if (path.includes("before=")) return pendingOlder;
+    if (path.includes("after=")) return new Response(JSON.stringify(page([log("new", "2026-09-04T11:00:00Z")], { newerCursor: "next", health: { status: "dropped", dropped: 7, rejected: 0, detail: "" } })), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify(page([log("base", "2026-09-04T10:00:00Z")], { olderCursor: "old", newerCursor: "first" })), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  await flushAsync();
+  fireEvent.click(screen.getByRole("button", { name: /load older/i }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(5001); });
+  await flushAsync();
+  expect(screen.getByText(/7 log events were dropped/i)).toBeVisible();
+  resolveOlder(new Response(JSON.stringify(page([log("old", "2026-09-04T09:00:00Z")], { olderCursor: "", health: { status: "offline", dropped: 0, rejected: 0, detail: "stale" } })), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await flushAsync();
+  expect(screen.getByText(/7 log events were dropped/i)).toBeVisible();
+  expect(screen.queryByText(/offline/i)).not.toBeInTheDocument();
+  expect(screen.getAllByText(/^(old|base|new)$/)).toHaveLength(3);
+});
+
+it("does not merge a stale filter response into the current filter key", async () => {
+  let resolveError!: (response: Response) => void;
+  const pendingError = new Promise<Response>((done) => { resolveError = done; });
+  setup(async (input) => {
+    const path = String(input);
+    if (path.includes("level=error")) return pendingError;
+    if (path.includes("level=warn")) return new Response(JSON.stringify(page([log("warn-only", "2026-09-04T11:00:00Z", "warn-only", "warn")])), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify(page()), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  const user = userEvent.setup();
+  await screen.findByText("No retained logs.");
+  await user.click(screen.getByRole("combobox", { name: /log level/i }));
+  await user.click(await screen.findByRole("option", { name: "Error" }));
+  await user.click(screen.getByRole("combobox", { name: /log level/i }));
+  await user.click(await screen.findByRole("option", { name: "Warn" }));
+  expect(await screen.findByText("warn-only")).toBeVisible();
+  resolveError(new Response(JSON.stringify(page([log("stale-error", "2026-09-04T12:00:00Z", "stale-error", "error")])), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await flushAsync();
+  expect(screen.queryByText("stale-error")).not.toBeInTheDocument();
+  expect(screen.getByText("warn-only")).toBeVisible();
 });
 
 function fireInput(input: HTMLElement, value: string) {

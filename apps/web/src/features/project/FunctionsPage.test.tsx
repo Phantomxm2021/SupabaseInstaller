@@ -1,22 +1,23 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { FunctionsPage } from './FunctionsPage'
 
 it('navigates each managed function Actions menu to its own logs page even when Functions is disabled', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ functions: [{ name: 'hello world' }, { name: 'snow/雪' }], enabled: false }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
-  const renderPage = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/project one/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /><Route path="/projects/:projectId/functions/:functionName/logs" element={<p>logs destination</p>} /></Routes></MemoryRouter></QueryClientProvider>)
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ functions: [{ name: 'api' }, { name: 'deliver-push' }], enabled: false }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+  const Location = () => <p data-testid="location">{useLocation().pathname}</p>
+  const renderPage = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/projects/bee/functions']}><Routes><Route path="/projects/:projectId/functions" element={<FunctionsPage />} /><Route path="*" element={<Location />} /></Routes></MemoryRouter></QueryClientProvider>)
   const user = userEvent.setup()
   renderPage()
-  await user.click(await screen.findByRole('button', { name: 'Actions for hello world' }))
+  await user.click(await screen.findByRole('button', { name: 'Actions for api' }))
   await user.click(await screen.findByRole('menuitem', { name: 'View logs' }))
-  expect(await screen.findByText('logs destination')).toBeVisible()
+  expect(await screen.findByTestId('location')).toHaveTextContent('/projects/bee/functions/api/logs')
 
   renderPage()
-  await user.click((await screen.findAllByRole('button', { name: 'Actions for snow/雪' })).at(-1)!)
+  await user.click((await screen.findAllByRole('button', { name: 'Actions for deliver-push' })).at(-1)!)
   await user.click((await screen.findAllByRole('menuitem', { name: 'View logs' })).at(-1)!)
-  expect((await screen.findAllByText('logs destination')).at(-1)).toBeVisible()
+  expect((await screen.findAllByTestId('location')).at(-1)).toHaveTextContent('/projects/bee/functions/deliver-push/logs')
 })
 
 it('tracks a queued deployment and refreshes the function list after it succeeds', async () => {
