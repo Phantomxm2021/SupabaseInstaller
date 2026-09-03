@@ -644,6 +644,9 @@ func redactedReconcileDiagnostic(request contracts.ReconcileProjectRequest, caus
 	if errors.As(cause, &failure) && failure.Cause != nil {
 		cause = failure.Cause
 	}
+	if strings.Contains(cause.Error(), "official Supabase template") {
+		return "Unable to retrieve the official Supabase runtime template. Check the server network connection and retry."
+	}
 	secrets := request.Secrets
 	values := []string{
 		secrets.DatabasePassword, secrets.JWTSecret, secrets.AnonKey, secrets.ServiceRoleKey,

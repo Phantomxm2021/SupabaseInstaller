@@ -611,6 +611,13 @@ func TestRedactedReconcileDiagnosticUsesServerTerminologyWithoutCause(t *testing
 	}
 }
 
+func TestRedactedReconcileDiagnosticHidesResolvedOfficialTemplateTag(t *testing.T) {
+	message := redactedReconcileDiagnostic(contracts.ReconcileProjectRequest{}, errors.New("resolve official Supabase template: read official Supabase template self-hosted/v0.8.0: context deadline exceeded"))
+	if message != "Unable to retrieve the official Supabase runtime template. Check the server network connection and retry." {
+		t.Fatalf("redactedReconcileDiagnostic() = %q", message)
+	}
+}
+
 func TestReconcilePollsStartingHealthBeforeAdvancingRevision(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
