@@ -1,5 +1,6 @@
 import type { UseFormReturn } from 'react-hook-form'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldLabel, FieldGroup } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -53,6 +54,7 @@ export function BasicStep({
   const siteURL = form.watch('configuration.general.siteUrl')
   const slug = form.watch('slug')
   const authSiteURL = form.watch('configuration.general.authSiteUrl')
+  const [runtimeSettingsOpen, setRuntimeSettingsOpen] = useState(false)
   useEffect(() => {
     const domain = projectDomainFromBase(slug, siteURL)
     if (domain && !authSiteURL?.trim()) form.setValue('configuration.general.authSiteUrl', `https://${domain}`, { shouldDirty: false })
@@ -131,8 +133,18 @@ export function BasicStep({
             <FieldError>{studioPasswordError}</FieldError>
           </Field>
 
-          <Collapsible>
-            <CollapsibleTrigger className="font-medium">Runtime settings</CollapsibleTrigger>
+          <Collapsible open={runtimeSettingsOpen} onOpenChange={setRuntimeSettingsOpen}>
+            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-border px-4 py-3 text-left transition-colors hover:bg-muted/50">
+              <span className="min-w-0 space-y-1">
+                <span className="block font-medium">Advanced runtime settings</span>
+                <span className="block text-sm text-muted-foreground">Choose the pinned Supabase runtime version for this server.</span>
+                <span className="block text-xs text-muted-foreground">Pinned version: {form.watch('configuration.general.supabaseVersion')}</span>
+              </span>
+              <span className="ml-4 flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
+                <span>{runtimeSettingsOpen ? 'Hide settings' : 'Expand settings'}</span>
+                <ChevronDown className={`size-4 transition-transform ${runtimeSettingsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </span>
+            </CollapsibleTrigger>
             <CollapsibleContent className="mt-4">
               <Field>
                 <FieldLabel>Supabase version</FieldLabel>

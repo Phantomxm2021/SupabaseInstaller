@@ -262,7 +262,8 @@ it('shows Custom SMTP configuration fields after its switch is enabled', async (
   expect(screen.getByLabelText('Sender name')).toBeVisible()
 })
 
-it('shows the identity fields in the Basic step', () => {
+it('makes advanced runtime settings discoverable and expandable in the Basic step', async () => {
+  const user = userEvent.setup()
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } })}>
       <MemoryRouter><NewProjectPage /></MemoryRouter>
@@ -274,9 +275,19 @@ it('shows the identity fields in the Basic step', () => {
   expect(screen.getByLabelText('Site URL hostname')).toBeVisible()
   expect(screen.getByLabelText('Studio username')).toBeVisible()
   expect(screen.getByLabelText('Studio password')).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Runtime settings' })).toBeVisible()
+  const runtimeSettings = screen.getByRole('button', { name: /advanced runtime settings/i })
+  expect(runtimeSettings).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.getByText('Choose the pinned Supabase runtime version for this server.')).toBeVisible()
+  expect(screen.getByText('Pinned version: self-hosted/v0.8.0')).toBeVisible()
+  expect(screen.getByText('Expand settings')).toBeVisible()
   expect(screen.queryByLabelText('Pinned Supabase version')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Server URL')).not.toBeInTheDocument()
+
+  await user.click(runtimeSettings)
+
+  expect(runtimeSettings).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByText('Hide settings')).toBeVisible()
+  expect(screen.getByLabelText('Pinned Supabase version')).toBeVisible()
 })
 
 it('uses the InputGroup control slot for the Site URL focus state', () => {
