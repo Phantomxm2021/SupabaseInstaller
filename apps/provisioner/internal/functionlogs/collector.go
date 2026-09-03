@@ -132,10 +132,9 @@ func (c *Collector) reject(count uint64, incompatible bool) {
 func (c *Collector) storageFailure(count uint64, maintenance bool) {
 	c.healthMu.Lock()
 	defer c.healthMu.Unlock()
-	if maintenance {
-		count = 1
+	if !maintenance {
+		c.health.Dropped = saturatingAdd(c.health.Dropped, count)
 	}
-	c.health.Dropped = saturatingAdd(c.health.Dropped, count)
 	c.health.Status = "storage_error"
 	c.health.Detail = "function log storage unavailable"
 }

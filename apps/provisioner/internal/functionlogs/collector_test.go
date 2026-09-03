@@ -289,3 +289,25 @@ func TestCollectorRunsAndStopsPeriodicMaintenance(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 }
+
+func TestCollectorMaintenanceFailureDoesNotCountDroppedEvents(t *testing.T) {
+	maintained := make(chan struct{}, 1)
+	store := &collectorStore{maintainErr: errors.New("maintenance failed"), maintained: maintained}
+	collector, _ := newCollectorTest(t, store, &bytes.Buffer{}, 5*time.Millisecond)
+	collector.healthMu.Lock()
+	collector.health.Dropped = 7
+	collector.healthMu.Unlock()
+	select {
+	case <-maintained:
+	case <-time.After(time.Second):
+		t.Fatal("maintenance did not run")
+	}
+	deadline := time.Now().Add(time.Second)
+	for collector.Health().Status != "storage_error" && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	health := collector.Health()
+	if health.Status != "storage_error" || health.Detail != "function log storage unavailable" || health.Dropped != 7 {
+		t.Fatalf("health = %+v", health)
+	}
+}
