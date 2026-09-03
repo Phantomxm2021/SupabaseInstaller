@@ -37,27 +37,40 @@ type Options struct {
 }
 
 type Store struct {
-	db               *sql.DB
-	path             string
-	now              func() time.Time
-	sizeBytes        func(string) (int64, error)
-	retention        time.Duration
-	maxBytes         int64
-	redactor         *Redactor
-	readerFile       *os.File
-	readerTemp       string
-	snapshotPath     string
-	publishSnapshot  func(context.Context) error
-	snapshotInterval time.Duration
-	dirty            chan struct{}
-	closeRequest     chan context.Context
-	publisherDone    chan struct{}
-	closeOnce        sync.Once
-	dbCloseOnce      sync.Once
-	closeErr         error
-	snapshotMu       sync.RWMutex
-	snapshotHealthy  bool
-	snapshotHooks    snapshotPublishHooks
+	db                  *sql.DB
+	snapshotDB          *sql.DB
+	path                string
+	now                 func() time.Time
+	sizeBytes           func(string) (int64, error)
+	retention           time.Duration
+	maxBytes            int64
+	redactor            *Redactor
+	readerFile          *os.File
+	readerTemp          string
+	snapshotPath        string
+	publishSnapshot     func(context.Context) error
+	snapshotInterval    time.Duration
+	dirty               chan struct{}
+	closeRequest        chan snapshotCloseRequest
+	publisherDone       chan struct{}
+	dbCloseOnce         sync.Once
+	closeErr            error
+	closeCallMu         sync.Mutex
+	lifecycleMu         sync.RWMutex
+	closing             bool
+	snapshotMu          sync.RWMutex
+	snapshotHealthy     bool
+	committedGeneration uint64
+	publishedGeneration uint64
+	snapshotDurable     bool
+	hooksMu             sync.RWMutex
+	snapshotHooks       snapshotPublishHooks
+	beforeInsertCommit  func()
+}
+
+type snapshotCloseRequest struct {
+	ctx    context.Context
+	result chan error
 }
 
 type snapshotPublishHooks struct {
@@ -118,12 +131,26 @@ func Open(path string, options Options) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("maintain function log store: %w", err)
 	}
+	snapshotDSN := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
+	snapshotDB, openErr := sql.Open("sqlite", snapshotDSN)
+	if openErr != nil {
+		_ = db.Close()
+		return nil, openErr
+	}
+	snapshotDB.SetMaxOpenConns(1)
+	if openErr = snapshotDB.Ping(); openErr != nil {
+		_ = snapshotDB.Close()
+		_ = db.Close()
+		return nil, openErr
+	}
+	store.snapshotDB = snapshotDB
 	if err = store.publishAndRecord(context.Background()); err != nil {
+		_ = snapshotDB.Close()
 		_ = db.Close()
 		return nil, fmt.Errorf("publish initial function log snapshot: %w", err)
 	}
 	store.dirty = make(chan struct{}, 1)
-	store.closeRequest = make(chan context.Context, 1)
+	store.closeRequest = make(chan snapshotCloseRequest)
 	store.publisherDone = make(chan struct{})
 	go store.runSnapshotPublisher()
 	return store, nil
@@ -138,14 +165,33 @@ func (s *Store) markSnapshotDirty() {
 	default:
 	}
 }
+func (s *Store) markCommitted() {
+	s.snapshotMu.Lock()
+	s.committedGeneration++
+	s.snapshotMu.Unlock()
+	s.markSnapshotDirty()
+}
+
+func (s *Store) needsSnapshot() bool {
+	s.snapshotMu.RLock()
+	defer s.snapshotMu.RUnlock()
+	return s.publishedGeneration < s.committedGeneration || !s.snapshotDurable
+}
 func (s *Store) SnapshotHealthy() bool {
 	s.snapshotMu.RLock()
 	defer s.snapshotMu.RUnlock()
 	return s.snapshotHealthy
 }
 func (s *Store) publishAndRecord(ctx context.Context) error {
-	err := s.publishReadSnapshot(ctx)
+	s.snapshotMu.RLock()
+	target := s.committedGeneration
+	s.snapshotMu.RUnlock()
+	committed, err := s.publishReadSnapshot(ctx)
 	s.snapshotMu.Lock()
+	if committed && target > s.publishedGeneration {
+		s.publishedGeneration = target
+	}
+	s.snapshotDurable = err == nil
 	s.snapshotHealthy = err == nil
 	s.snapshotMu.Unlock()
 	return err
@@ -155,87 +201,121 @@ func (s *Store) runSnapshotPublisher() {
 	defer close(s.publisherDone)
 	var timer *time.Timer
 	var timerC <-chan time.Time
-	pending := false
+	backoff := s.snapshotInterval
 	for {
 		select {
 		case <-s.dirty:
-			pending = true
 			if timer == nil {
-				timer = time.NewTimer(s.snapshotInterval)
+				timer = time.NewTimer(backoff)
 				timerC = timer.C
 			}
 		case <-timerC:
 			timer = nil
 			timerC = nil
-			pending = false
-			_ = s.publishAndRecord(context.Background())
-		case ctx := <-s.closeRequest:
+			err := s.publishAndRecord(context.Background())
+			if err != nil {
+				backoff = nextBackoff(backoff)
+			} else {
+				backoff = s.snapshotInterval
+			}
+			if s.needsSnapshot() {
+				timer = time.NewTimer(backoff)
+				timerC = timer.C
+			}
+		case request := <-s.closeRequest:
 			if timer != nil {
 				timer.Stop()
+				timer, timerC = nil, nil
 			}
-			if pending {
-				s.closeErr = s.publishAndRecord(ctx)
-			} else {
-				select {
-				case <-s.dirty:
-					s.closeErr = s.publishAndRecord(ctx)
-				default:
-				}
+			err := s.flushSnapshots(request.ctx)
+			request.result <- err
+			if err == nil {
+				return
 			}
-			return
 		}
 	}
 }
 
-func (s *Store) publishReadSnapshot(ctx context.Context) error {
+func nextBackoff(backoff time.Duration) time.Duration {
+	backoff *= 2
+	if backoff > 5*time.Second {
+		return 5 * time.Second
+	}
+	return backoff
+}
+
+func (s *Store) flushSnapshots(ctx context.Context) error {
+	backoff := s.snapshotInterval
+	for s.needsSnapshot() {
+		if err := s.publishAndRecord(ctx); err != nil {
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+			backoff = nextBackoff(backoff)
+		}
+	}
+	return nil
+}
+
+func (s *Store) publishReadSnapshot(ctx context.Context) (bool, error) {
 	if s.publishSnapshot != nil {
-		return s.publishSnapshot(ctx)
+		err := s.publishSnapshot(ctx)
+		return err == nil, err
 	}
 	temp, err := os.CreateTemp(filepath.Dir(s.snapshotPath), ".function-logs-read-*.db")
 	if err != nil {
-		return err
+		return false, err
 	}
 	tempPath := temp.Name()
 	if err := temp.Close(); err != nil {
-		return err
+		return false, err
 	}
 	_ = os.Remove(tempPath)
 	defer os.Remove(tempPath)
-	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, tempPath); err != nil {
-		return err
+	if _, err := s.snapshotDB.ExecContext(ctx, `VACUUM INTO ?`, tempPath); err != nil {
+		return false, err
 	}
 	file, err := os.Open(tempPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	syncErr := file.Sync()
 	closeErr := file.Close()
 	if err := errors.Join(syncErr, closeErr); err != nil {
-		return err
+		return false, err
 	}
-	if s.snapshotHooks.beforeRename != nil {
-		if err := s.snapshotHooks.beforeRename(); err != nil {
-			return err
+	s.hooksMu.RLock()
+	hooks := s.snapshotHooks
+	s.hooksMu.RUnlock()
+	if hooks.beforeRename != nil {
+		if err := hooks.beforeRename(); err != nil {
+			return false, err
 		}
 	}
 	rename := os.Rename
-	if s.snapshotHooks.rename != nil {
-		rename = s.snapshotHooks.rename
+	if hooks.rename != nil {
+		rename = hooks.rename
 	}
 	if err := rename(tempPath, s.snapshotPath); err != nil {
-		return err
+		return false, err
 	}
 	directory, err := os.Open(filepath.Dir(s.snapshotPath))
 	if err != nil {
-		return err
+		// Rename is the publication commit point. Failure to fsync its parent is
+		// a durability warning, but the new snapshot is already visible.
+		return true, err
 	}
-	if s.snapshotHooks.syncDirectory != nil {
-		syncErr = s.snapshotHooks.syncDirectory(directory)
+	if hooks.syncDirectory != nil {
+		syncErr = hooks.syncDirectory(directory)
 	} else {
 		syncErr = directory.Sync()
 	}
 	closeErr = directory.Close()
-	return errors.Join(syncErr, closeErr)
+	return true, errors.Join(syncErr, closeErr)
 }
 
 // OpenReader opens an existing SQLite log database without running schema or
@@ -334,14 +414,50 @@ func (s *Store) CloseContext(ctx context.Context) error {
 	if s.readerFile != nil {
 		return errors.New("reader does not support CloseContext")
 	}
-	s.closeOnce.Do(func() { s.closeRequest <- ctx })
+	s.closeCallMu.Lock()
+	defer s.closeCallMu.Unlock()
+
+	s.lifecycleMu.Lock()
+	s.closing = true
+	s.lifecycleMu.Unlock()
+
 	select {
 	case <-s.publisherDone:
-		s.dbCloseOnce.Do(func() { s.closeErr = errors.Join(s.closeErr, s.db.Close()) })
-		return s.closeErr
+		return s.closeDatabases()
+	default:
+	}
+	request := snapshotCloseRequest{ctx: ctx, result: make(chan error, 1)}
+	select {
+	case s.closeRequest <- request:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	select {
+	case err := <-request.result:
+		if err != nil {
+			return err
+		}
+		<-s.publisherDone
+		return s.closeDatabases()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Store) closeDatabases() error {
+	s.dbCloseOnce.Do(func() {
+		s.closeErr = errors.Join(s.snapshotDB.Close(), s.db.Close())
+	})
+	return s.closeErr
+}
+
+func (s *Store) beginOperation() error {
+	s.lifecycleMu.RLock()
+	if s.closing {
+		s.lifecycleMu.RUnlock()
+		return errors.New("function log store is closing")
+	}
+	return nil
 }
 
 func validateRecord(record contracts.FunctionLogRecord) error {
@@ -368,6 +484,10 @@ func validateRecord(record contracts.FunctionLogRecord) error {
 }
 
 func (s *Store) InsertBatch(ctx context.Context, records []contracts.FunctionLogRecord) (resultErr error) {
+	if err := s.beginOperation(); err != nil {
+		return err
+	}
+	defer s.lifecycleMu.RUnlock()
 	for _, record := range records {
 		if err := validateRecord(record); err != nil {
 			return err
@@ -387,18 +507,31 @@ func (s *Store) InsertBatch(ctx context.Context, records []contracts.FunctionLog
 		return err
 	}
 	defer statement.Close()
+	var inserted int64
 	for _, record := range records {
 		var sanitizedTruncated bool
 		record.Message, sanitizedTruncated = s.redactor.SanitizeMessage(record.Message)
 		record.Truncated = record.Truncated || sanitizedTruncated
-		if _, err = statement.ExecContext(ctx, record.ID, record.ProjectID, record.FunctionName, record.Timestamp.UnixNano(), record.IngestedAt.UnixNano(), record.ExecutionID, record.Level, record.EventType, record.Message, record.Truncated); err != nil {
+		result, execErr := statement.ExecContext(ctx, record.ID, record.ProjectID, record.FunctionName, record.Timestamp.UnixNano(), record.IngestedAt.UnixNano(), record.ExecutionID, record.Level, record.EventType, record.Message, record.Truncated)
+		if execErr != nil {
+			err = execErr
 			return err
 		}
+		rows, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return rowsErr
+		}
+		inserted += rows
+	}
+	if s.beforeInsertCommit != nil {
+		s.beforeInsertCommit()
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	s.markSnapshotDirty()
+	if inserted > 0 {
+		s.markCommitted()
+	}
 	return nil
 }
 
@@ -466,12 +599,23 @@ func (s *Store) Query(ctx context.Context, projectID, functionName string, query
 }
 
 func (s *Store) Maintain(ctx context.Context) error {
+	if err := s.beginOperation(); err != nil {
+		return err
+	}
+	defer s.lifecycleMu.RUnlock()
+	mutated := false
+	defer func() {
+		if mutated {
+			s.markCommitted()
+		}
+	}()
 	cutoff := s.now().Add(-s.retention).UnixNano()
 	for {
 		deleted, err := s.deleteBatch(ctx, `timestamp_ns < ?`, cutoff)
 		if err != nil {
 			return err
 		}
+		mutated = mutated || deleted > 0
 		if deleted < maintenanceBatch {
 			break
 		}
@@ -482,7 +626,6 @@ func (s *Store) Maintain(ctx context.Context) error {
 			return err
 		}
 		if size <= s.maxBytes {
-			s.markSnapshotDirty()
 			return nil
 		}
 		deleted, err := s.deleteBatch(ctx, "1=1")
@@ -492,6 +635,7 @@ func (s *Store) Maintain(ctx context.Context) error {
 		if deleted == 0 {
 			return fmt.Errorf("function log store remains over capacity: %d bytes exceeds %d bytes", size, s.maxBytes)
 		}
+		mutated = true
 		if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 			return err
 		}

@@ -2,6 +2,7 @@ package functionlogs
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"golang.org/x/sys/unix"
@@ -556,7 +557,16 @@ func TestPostRenameSyncFailureCommitsNewSnapshotButMarksUnhealthy(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer store.Close()
-	store.snapshotHooks.syncDirectory = func(*os.File) error { return errors.New("sync failed") }
+	var failSync atomic.Bool
+	failSync.Store(true)
+	store.hooksMu.Lock()
+	store.snapshotHooks.syncDirectory = func(directory *os.File) error {
+		if failSync.Load() {
+			return errors.New("sync failed")
+		}
+		return directory.Sync()
+	}
+	store.hooksMu.Unlock()
 	now := time.Now().UTC()
 	_ = store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("committed", "p", "fn", now, contracts.FunctionLogLevelInfo, "new")})
 	deadline := time.Now().Add(time.Second)
@@ -572,6 +582,7 @@ func TestPostRenameSyncFailureCommitsNewSnapshotButMarksUnhealthy(t *testing.T) 
 	if err != nil || len(page.Logs) != 1 || store.SnapshotHealthy() {
 		t.Fatalf("page/healthy/error=%#v/%v/%v", page, store.SnapshotHealthy(), err)
 	}
+	failSync.Store(false)
 }
 
 func TestRenameFailurePreservesPriorSnapshot(t *testing.T) {
@@ -584,7 +595,16 @@ func TestRenameFailurePreservesPriorSnapshot(t *testing.T) {
 	now := time.Now().UTC()
 	_ = store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("old", "p", "fn", now, contracts.FunctionLogLevelInfo, "old")})
 	waitForSnapshotRows(t, dir, 1)
-	store.snapshotHooks.rename = func(string, string) error { return errors.New("rename failed") }
+	var failRename atomic.Bool
+	failRename.Store(true)
+	store.hooksMu.Lock()
+	store.snapshotHooks.rename = func(oldPath, newPath string) error {
+		if failRename.Load() {
+			return errors.New("rename failed")
+		}
+		return os.Rename(oldPath, newPath)
+	}
+	store.hooksMu.Unlock()
 	_ = store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("new", "p", "fn", now.Add(time.Second), contracts.FunctionLogLevelInfo, "new")})
 	deadline := time.Now().Add(time.Second)
 	for store.SnapshotHealthy() && time.Now().Before(deadline) {
@@ -596,6 +616,7 @@ func TestRenameFailurePreservesPriorSnapshot(t *testing.T) {
 	if len(page.Logs) != 1 || page.Logs[0].ID != "old" {
 		t.Fatalf("page=%#v", page)
 	}
+	failRename.Store(false)
 }
 
 func waitForSnapshotRows(t *testing.T, dir string, want int) {
@@ -634,12 +655,126 @@ func TestStoreCloseContextIsBoundedByBlockedPublisher(t *testing.T) {
 	if err := store.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("CloseContext error=%v", err)
 	}
+	if err := store.InsertBatch(context.Background(), nil); err == nil {
+		t.Fatal("insert while closing succeeded")
+	}
 	close(release)
 	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Second)
 	defer cancel2()
 	if err := store.CloseContext(ctx2); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestCloseRetriesFailedPublicationAndFlushesLatestGeneration(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "function-logs.db"), Options{SnapshotInterval: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	store.hooksMu.Lock()
+	store.snapshotHooks.beforeRename = func() error {
+		if calls.Add(1) == 1 {
+			return errors.New("transient publish failure")
+		}
+		return nil
+	}
+	store.hooksMu.Unlock()
+	if err := store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("close-retry", "p", "fn", time.Now().UTC(), contracts.FunctionLogLevelInfo, "ok")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitForSnapshotRows(t, dir, 1)
+}
+
+func TestSnapshotConnectionDoesNotMonopolizeWriterConnection(t *testing.T) {
+	store := testStore(t, Options{SnapshotInterval: time.Hour})
+	if store.db == store.snapshotDB {
+		t.Fatal("snapshot and writer connections are shared")
+	}
+	tx, err := store.snapshotDB.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var count int
+	if err := tx.QueryRow(`SELECT count(*) FROM function_logs`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("separate", "p", "fn", time.Now().UTC(), contracts.FunctionLogLevelInfo, "ok")})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("writer waited for snapshot connection")
+	}
+}
+
+func TestSnapshotPublisherRetriesFailedGenerationWhileIdle(t *testing.T) {
+	store := testStore(t, Options{SnapshotInterval: time.Millisecond})
+	var calls atomic.Int32
+	store.publishSnapshot = func(context.Context) error {
+		if calls.Add(1) == 1 {
+			return errors.New("fail once")
+		}
+		return nil
+	}
+	if err := store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("retry", "p", "fn", time.Now().UTC(), contracts.FunctionLogLevelInfo, "ok")}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	store.snapshotMu.RLock()
+	committed, published := store.committedGeneration, store.publishedGeneration
+	healthy := store.snapshotHealthy
+	store.snapshotMu.RUnlock()
+	if calls.Load() < 2 || !healthy || committed != published {
+		t.Fatalf("calls=%d healthy=%v committed=%d published=%d", calls.Load(), healthy, committed, published)
+	}
+}
+
+func TestCloseWaitsForInflightInsertAndFlushesItsGeneration(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "function-logs.db"), Options{SnapshotInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused := make(chan struct{})
+	release := make(chan struct{})
+	store.beforeInsertCommit = func() { close(paused); <-release }
+	insertDone := make(chan error, 1)
+	go func() {
+		insertDone <- store.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("raced", "p", "fn", time.Now().UTC(), contracts.FunctionLogLevelInfo, "ok")})
+	}()
+	<-paused
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- store.CloseContext(context.Background()) }()
+	select {
+	case err := <-closeDone:
+		t.Fatalf("close returned before in-flight insert: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-insertDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertBatch(context.Background(), nil); err == nil {
+		t.Fatal("insert after close succeeded")
+	}
+	waitForSnapshotRows(t, dir, 1)
 }
 
 func TestConcurrentInsertAndQuerySmoke(t *testing.T) {
