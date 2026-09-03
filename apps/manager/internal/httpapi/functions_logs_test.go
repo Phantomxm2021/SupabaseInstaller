@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,8 +21,11 @@ import (
 )
 
 type logsProvisionerFake struct {
-	page contracts.FunctionLogPage
-	err  error
+	page  contracts.FunctionLogPage
+	err   error
+	slug  string
+	name  string
+	query contracts.FunctionLogQuery
 }
 
 func (*logsProvisionerFake) DeployFunction(context.Context, string, string, string, io.Reader) (contracts.FunctionDeploymentResult, error) {
@@ -30,7 +34,8 @@ func (*logsProvisionerFake) DeployFunction(context.Context, string, string, stri
 func (*logsProvisionerFake) ListFunctions(context.Context, string) ([]contracts.FunctionSummary, error) {
 	return nil, nil
 }
-func (f *logsProvisionerFake) FunctionLogs(context.Context, string, string, contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
+func (f *logsProvisionerFake) FunctionLogs(_ context.Context, slug, name string, query contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
+	f.slug, f.name, f.query = slug, name, query
 	return f.page, f.err
 }
 func (*logsProvisionerFake) RollbackFunction(context.Context, string, string, string) (contracts.FunctionDeploymentResult, error) {
@@ -49,6 +54,10 @@ func logsHandler(t *testing.T, fake *logsProvisionerFake) http.Handler {
 	t.Cleanup(func() { _ = database.Close() })
 	p := contracts.Project{ID: "p-1", Name: "Bee", Slug: "bee", Services: contracts.Services{Functions: true}, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := database.CreateProject(context.Background(), p, contracts.ProjectConfiguration{General: contracts.GeneralConfig{Domain: "bee.example.com"}, Services: p.Services}); err != nil {
+		t.Fatal(err)
+	}
+	other := contracts.Project{ID: "p-2", Name: "Wasp", Slug: "wasp", Services: contracts.Services{Functions: true}, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), other, contracts.ProjectConfiguration{General: contracts.GeneralConfig{Domain: "wasp.example.com"}, Services: other.Services}); err != nil {
 		t.Fatal(err)
 	}
 	projects := project.NewService(database, func() string { return "unused" }, time.Now)
@@ -91,5 +100,39 @@ func TestFunctionLogsRouteRequiresSessionThroughRouter(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/projects/p/functions/demo/logs", nil))
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestFunctionLogsPublicRouteForwardsResolvedIdentityAndDefaultQuery(t *testing.T) {
+	fake := &logsProvisionerFake{page: contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}}}
+	response := httptest.NewRecorder()
+	logsHandler(t, fake).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/projects/p-1/functions/demo/logs", nil))
+	if response.Code != http.StatusOK || fake.slug != "bee" || fake.name != "demo" || fake.query != (contracts.FunctionLogQuery{Limit: 200}) {
+		t.Fatalf("response/forwarding = %d slug=%q name=%q query=%#v", response.Code, fake.slug, fake.name, fake.query)
+	}
+}
+
+func TestFunctionLogsPublicRouteForwardsExactExplicitQuery(t *testing.T) {
+	cursor, err := contracts.EncodeFunctionLogCursor(contracts.FunctionLogCursor{Timestamp: time.Date(2026, 9, 4, 1, 2, 3, 4, time.UTC), ID: "event/id?&"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := contracts.FunctionLogQuery{Limit: 17, Before: cursor, Level: "warn", Search: "雪 & tea/?"}
+	values := url.Values{"limit": {"17"}, "before": {cursor}, "level": {"warn"}, "search": {want.Search}}
+	fake := &logsProvisionerFake{page: contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}}}
+	response := httptest.NewRecorder()
+	path := "/api/projects/p-1/functions/demo/logs?" + values.Encode()
+	logsHandler(t, fake).ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	if response.Code != http.StatusOK || fake.slug != "bee" || fake.name != "demo" || fake.query != want {
+		t.Fatalf("response/forwarding = %d slug=%q name=%q query=%#v want=%#v", response.Code, fake.slug, fake.name, fake.query, want)
+	}
+}
+
+func TestFunctionLogsPublicRouteUsesSelectedProjectsSlug(t *testing.T) {
+	fake := &logsProvisionerFake{page: contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}}}
+	response := httptest.NewRecorder()
+	logsHandler(t, fake).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/projects/p-2/functions/demo/logs", nil))
+	if response.Code != http.StatusOK || fake.slug != "wasp" {
+		t.Fatalf("status/slug = %d/%q", response.Code, fake.slug)
 	}
 }
