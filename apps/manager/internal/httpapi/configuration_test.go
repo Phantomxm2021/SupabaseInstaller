@@ -118,6 +118,33 @@ func TestOfficialRuntimeSyncAcceptsLegacyStoredJWTExpiry(t *testing.T) {
 	}
 }
 
+func TestFunctionsPatchAcceptsLegacyStoredJWTExpiry(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := projectservice.DefaultConfiguration(contracts.PresetStandard)
+	cfg.Auth.JWTExpiry = 0 // Existing projects created before the compatibility default.
+	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
+	project := contracts.Project{ID: "bee", Name: "Bee", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := managersecrets.NewCipher(bytes.Repeat([]byte{8}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterConfigurationRoutes(mux, ConfigurationOptions{Orchestrator: configuration.NewOrchestrator(database, operation.NewService(database, func() string { return "functions-op" }, time.Now), cipher)})
+	body := strings.NewReader(`{"value":{"defaultJwtVerification":true,"variables":[{"name":"ANY_SECRET","valueSet":true,"value":{"action":"replace","value":"secret-value"}}]}}`)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPatch, "/api/projects/bee/configuration/functions", body))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("Functions PATCH status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestConfigurationHTTPRejectsUnsupportedNetworkFields(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {

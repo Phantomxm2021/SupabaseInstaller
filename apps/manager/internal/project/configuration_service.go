@@ -70,6 +70,7 @@ func (s *ConfigurationService) PreparePatch(ctx context.Context, projectID strin
 	if err != nil {
 		return contracts.ProjectConfiguration{}, err
 	}
+	base.Configuration = NormalizeStoredConfiguration(base.Configuration)
 	cfg := base.Configuration
 	if patch.Configuration != nil {
 		cfg = *patch.Configuration
