@@ -229,8 +229,9 @@ func Project(input Input) (OutputFiles, error) {
 func injectFunctionLogCollection(services map[string]any, input Input) {
 	const collector = "function-log-collector"
 	services[collector] = map[string]any{
-		"image":   input.ProvisionerImageRef,
-		"restart": "unless-stopped",
+		"image":       input.ProvisionerImageRef,
+		"pull_policy": "never",
+		"restart":     "unless-stopped",
 		"environment": map[string]string{
 			"PROVISIONER_MODE":            "function-log-collector",
 			"FUNCTION_LOG_PROJECT_ID":     input.ProjectID,
