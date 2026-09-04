@@ -244,7 +244,7 @@ services:
             api-gw:
                 condition: service_healthy
             function-log-collector:
-                condition: service_healthy
+                condition: service_started
         env_file:
             - ./.manager-runtime/current/.env.functions
         environment:

@@ -190,11 +190,14 @@ func (c *Client) FunctionLogs(ctx context.Context, slug, name string, query cont
 		return contracts.FunctionLogPage{}, fmt.Errorf("query function logs: %w", err)
 	}
 	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	// 200 records can each carry a redacted 10 KiB message plus JSON metadata.
+	// Keep a bounded allowance above that protocol maximum.
+	const maxFunctionLogsResponse = 3 << 20
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxFunctionLogsResponse+1))
 	if err != nil {
 		return contracts.FunctionLogPage{}, errors.New("read function logs response")
 	}
-	if len(payload) > 1<<20 {
+	if len(payload) > maxFunctionLogsResponse {
 		return contracts.FunctionLogPage{}, errors.New("function logs response is too large")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

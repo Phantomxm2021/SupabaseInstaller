@@ -103,6 +103,29 @@ func TestCollectorAcceptsValidAndDuplicateBatches(t *testing.T) {
 	}
 }
 
+func TestCollectorAcceptsIdempotentAdapterHealthReports(t *testing.T) {
+	collector, handler := newCollectorTest(t, &collectorStore{}, &bytes.Buffer{}, time.Hour)
+	for range 2 {
+		req := httptest.NewRequest(http.MethodPost, "/internal/v1/status", strings.NewReader(`{"version":1,"reportId":"session-1-7","status":"dropped","count":7}`))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status=%d", response.Code)
+		}
+	}
+	if health := collector.Health(); health.Status != "dropped" || health.Dropped != 7 {
+		t.Fatalf("health=%+v", health)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/status", strings.NewReader(`{"version":1,"reportId":"session-1-incompatible","status":"incompatible","count":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusNoContent || collector.Health().Status != "incompatible" {
+		t.Fatalf("response/health=%d/%+v", response.Code, collector.Health())
+	}
+}
+
 func TestCollectorRejectsBadRequestsAndCountsEvents(t *testing.T) {
 	tests := []struct {
 		name        string

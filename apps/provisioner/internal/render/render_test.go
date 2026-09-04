@@ -450,8 +450,10 @@ func TestRenderFunctionsWiresPrivateEventCollector(t *testing.T) {
 	if strings.Contains(out.Compose, "FUNCTION_LOG_COLLECTOR") || strings.Contains(out.FunctionsEnv, "FUNCTION_LOG_") {
 		t.Fatal("collector-only configuration leaked into user Functions environment")
 	}
-	if !strings.Contains(toYAML(t, functions["depends_on"]), "function-log-collector") {
-		t.Fatal("functions does not depend on collector")
+	dependencies := functions["depends_on"].(map[string]any)
+	collectorDependency := dependencies["function-log-collector"].(map[string]any)
+	if collectorDependency["condition"] != "service_started" {
+		t.Fatalf("collector dependency = %#v", collectorDependency)
 	}
 	if !containsString(out.EnabledComposeServices, "function-log-collector") {
 		t.Fatal("collector missing from enabled lifecycle services")

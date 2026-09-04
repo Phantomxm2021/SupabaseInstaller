@@ -6,6 +6,8 @@ const MAX_BATCH = 100;
 const FLUSH_INTERVAL_MS = 250;
 const FETCH_TIMEOUT_MS = 500;
 const COLLECTOR_URL = "http://function-log-collector:8081/internal/v1/events";
+const STATUS_URL = "http://function-log-collector:8081/internal/v1/status";
+const UNKNOWN_EVENT_LIMIT = 100;
 
 type RuntimeEvent = {
   timestamp: string;
@@ -51,6 +53,57 @@ const queue: LogEvent[] = [];
 let flushing = false;
 let flushInterval: number | undefined;
 let flushTimerTicks = 0;
+let pendingDropped = 0;
+let droppedReportId = "";
+let droppedReportCount = 0;
+let reportingDropped = false;
+let pendingIncompatible = false;
+let reportingIncompatible = false;
+let nextIncompatibleAttempt = 0;
+const adapterSession = crypto.randomUUID();
+let reportSequence = 0;
+
+async function reportStatus(status: "dropped" | "incompatible", count: number, reportId: string): Promise<boolean> {
+  try {
+    const response = await fetch(STATUS_URL, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version: 1, reportId, status, count }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    return response.ok;
+  } catch { return false; }
+}
+
+async function reportDropped(): Promise<void> {
+  if ((pendingDropped === 0 && !droppedReportId) || reportingDropped) return;
+  reportingDropped = true;
+  if (!droppedReportId) {
+    droppedReportId = `${adapterSession}-${++reportSequence}`;
+    droppedReportCount = pendingDropped;
+    pendingDropped -= droppedReportCount;
+  }
+  try {
+    if (await reportStatus("dropped", droppedReportCount, droppedReportId)) {
+      droppedReportId = "";
+      droppedReportCount = 0;
+    }
+  } finally {
+    reportingDropped = false;
+  }
+}
+
+async function reportIncompatible(): Promise<void> {
+  pendingIncompatible = true;
+  if (reportingIncompatible || Date.now() < nextIncompatibleAttempt) return;
+  reportingIncompatible = true;
+  const reportId = `${adapterSession}-incompatible`;
+  try {
+    if (await reportStatus("incompatible", 1, reportId)) pendingIncompatible = false;
+    else nextIncompatibleAttempt = Date.now() + 5000;
+  } finally {
+    reportingIncompatible = false;
+  }
+}
 
 function hex(bytes: ArrayBuffer): string {
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -137,7 +190,10 @@ async function normalize(data: RuntimeEvent): Promise<LogEvent | undefined> {
 }
 
 function enqueue(event: LogEvent): void {
-  if (queue.length === MAX_QUEUE) queue.shift();
+  if (queue.length === MAX_QUEUE) {
+    queue.shift();
+    pendingDropped++;
+  }
   queue.push(event);
   if (queue.length >= MAX_BATCH) void flush();
 }
@@ -155,8 +211,10 @@ async function flush(): Promise<void> {
       signal,
     });
     if (!response.ok) throw new Error(`collector status ${response.status}`);
+    await reportDropped();
   } catch {
     // Collection is best-effort and must never affect user function execution.
+    pendingDropped += events.length;
   } finally {
     flushing = false;
     if (queue.length >= MAX_BATCH) void flush();
@@ -207,12 +265,37 @@ if (verificationFixtures) {
     flushInterval = setInterval(() => {
       flushTimerTicks++;
       void flush();
+      void reportDropped();
+      if (pendingIncompatible) void reportIncompatible();
     }, FLUSH_INTERVAL_MS);
+    let consecutiveUnknown = 0;
+    let incompatibilityReported = false;
     for await (const data of eventManager) {
       try {
         if (data) {
           const event = await normalize(data);
-          if (event) enqueue(event);
+          if (event) {
+            consecutiveUnknown = 0;
+            enqueue(event);
+          } else {
+            consecutiveUnknown++;
+            if (consecutiveUnknown >= UNKNOWN_EVENT_LIMIT) {
+              if (!incompatibilityReported) {
+                incompatibilityReported = true;
+                await reportIncompatible();
+              }
+              await new Promise<void>((resolve) => setTimeout(resolve, FLUSH_INTERVAL_MS));
+            }
+          }
+        } else {
+          consecutiveUnknown++;
+          if (consecutiveUnknown >= UNKNOWN_EVENT_LIMIT) {
+            if (!incompatibilityReported) {
+              incompatibilityReported = true;
+              await reportIncompatible();
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, FLUSH_INTERVAL_MS));
+          }
         }
       } catch {
         // Malformed callbacks and collector failures never escape into the runtime.
@@ -222,13 +305,18 @@ if (verificationFixtures) {
     await flush();
   } catch {
     stopFlushInterval();
+    await reportIncompatible();
     // Wait longer than two flush periods; a leaked interval would increment
     // flushTimerTicks and fail the pinned-image verifier.
     await new Promise<void>((resolve) => setTimeout(resolve, FLUSH_INTERVAL_MS * 3));
     console.error(`FUNCTION_LOG_EVENT_MANAGER_INERT timers=0 ticks=${flushTimerTicks}`);
     // Compatibility failure disables collection without taking down Functions.
-    // A single maximum-delay timeout keeps Edge Runtime's event loop alive
-    // without retaining the 250ms flush interval or periodically waking it.
+    // Retry health delivery slowly so a collector that is still starting can
+    // expose the incompatibility, without a hot loop or the flush interval.
+    while (pendingIncompatible) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5000));
+      await reportIncompatible();
+    }
     setTimeout(() => {}, 2_147_000_000);
     await new Promise<void>(() => {});
   }

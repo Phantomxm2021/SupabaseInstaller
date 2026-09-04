@@ -493,6 +493,44 @@ func TestReaderCloseIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestOpenReaderFileQueriesPinnedDescriptorWithoutCopyingSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	writer, err := Open(filepath.Join(dir, "function-logs.db"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := writer.InsertBatch(context.Background(), []contracts.FunctionLogRecord{record("pinned", "p", "fn", now, contracts.FunctionLogLevelInfo, "old")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(dir, "function-logs.read.db")
+	file, err := os.Open(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenReaderFile(file, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if reader.readerTemp != "" {
+		t.Fatalf("reader copied snapshot into %q", reader.readerTemp)
+	}
+	if err := os.Rename(snapshot, snapshot+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snapshot, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	page, err := reader.Query(context.Background(), "p", "fn", contracts.FunctionLogQuery{Limit: 10})
+	if err != nil || len(page.Logs) != 1 || page.Logs[0].ID != "pinned" {
+		t.Fatalf("page/error=%#v/%v", page, err)
+	}
+}
+
 func TestStorePersistsAcrossReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "logs.db")

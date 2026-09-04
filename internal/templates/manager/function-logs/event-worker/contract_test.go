@@ -27,6 +27,11 @@ func TestAdapterUsesPinnedAPIAndBoundedDelivery(t *testing.T) {
 		[]byte("FUNCTION_LOG_FIXTURE_RECORDS="),
 		[]byte("clearInterval(flushInterval)"),
 		[]byte("FUNCTION_LOG_EVENT_MANAGER_INERT timers=0 ticks="),
+		[]byte("/internal/v1/status"),
+		[]byte("pendingDropped"),
+		[]byte("droppedReportCount"),
+		[]byte("reportIncompatible"),
+		[]byte("UNKNOWN_EVENT_LIMIT"),
 	} {
 		if !bytes.Contains(source, required) {
 			t.Errorf("adapter missing %q", required)

@@ -282,7 +282,9 @@ func injectFunctionLogCollection(services map[string]any, input Input) {
 	if dependencies == nil {
 		dependencies = map[string]any{}
 	}
-	dependencies[collector] = map[string]any{"condition": "service_healthy"}
+	// Preserve deterministic startup order, but never make user Functions depend
+	// on the best-effort collector becoming healthy.
+	dependencies[collector] = map[string]any{"condition": "service_started"}
 	functions["depends_on"] = dependencies
 }
 

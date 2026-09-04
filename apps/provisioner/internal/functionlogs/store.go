@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -376,8 +375,9 @@ func OpenReader(path string, now func() time.Time) (*Store, error) {
 	return OpenReaderFile(readerFile, now)
 }
 
-// OpenReaderFile consumes a no-follow, regular snapshot descriptor and copies
-// only that immutable standalone SQLite file into a private query location.
+// OpenReaderFile consumes a no-follow, regular snapshot descriptor. SQLite
+// reopens that already-pinned descriptor through /dev/fd in immutable read-only
+// mode, avoiding a per-request copy of the bounded snapshot.
 func OpenReaderFile(readerFile *os.File, now func() time.Time) (*Store, error) {
 	if readerFile == nil {
 		return nil, errors.New("open function log database")
@@ -390,43 +390,20 @@ func OpenReaderFile(readerFile *os.File, now func() time.Time) (*Store, error) {
 	if now == nil {
 		now = time.Now
 	}
-	tempDir, err := os.MkdirTemp("", "function-log-reader-*")
-	if err != nil {
-		_ = readerFile.Close()
-		return nil, err
-	}
-	cleanup := func() { _ = os.RemoveAll(tempDir); _ = readerFile.Close() }
-	snapshotPath := filepath.Join(tempDir, "function-logs.read.db")
-	if err := copyOpenFile(readerFile, snapshotPath); err != nil {
-		cleanup()
-		return nil, err
-	}
-	dsn := (&url.URL{Scheme: "file", Path: snapshotPath, RawQuery: "mode=ro"}).String()
+	fdPath := fmt.Sprintf("/dev/fd/%d", readerFile.Fd())
+	dsn := (&url.URL{Scheme: "file", Path: fdPath, RawQuery: "mode=ro&immutable=1"}).String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		cleanup()
+		_ = readerFile.Close()
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		cleanup()
+		_ = readerFile.Close()
 		return nil, err
 	}
-	return &Store{db: db, path: readerFile.Name(), now: now, readerFile: readerFile, readerTemp: tempDir}, nil
-}
-
-func copyOpenFile(source *os.File, destination string) error {
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	target, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(target, source)
-	closeErr := target.Close()
-	return errors.Join(copyErr, closeErr)
+	return &Store{db: db, path: readerFile.Name(), now: now, readerFile: readerFile}, nil
 }
 
 func (s *Store) Close() error {

@@ -65,6 +65,7 @@ type Collector struct {
 	close                       sync.Once
 	snapshotFailure             bool
 	statusBeforeSnapshotFailure string
+	seenReports                 map[string]struct{}
 }
 
 func NewCollector(options CollectorOptions) (*Collector, error) {
@@ -97,7 +98,7 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 	c := &Collector{
 		projectID: options.ProjectID, store: options.Store, redactor: redactor, configuredRoot: configuredRoot, canonicalRoot: canonicalRoot, rootIdentity: rootIdentity,
 		logger: options.Logger, now: options.Now, healthPath: options.HealthPath, health: contracts.FunctionLogHealth{Status: "healthy"},
-		stop: make(chan struct{}), done: make(chan struct{}),
+		stop: make(chan struct{}), done: make(chan struct{}), seenReports: make(map[string]struct{}),
 	}
 	if options.HealthPath != "" {
 		previous, valid, readErr := readHealthSnapshotForRestart(options.HealthPath, options.Now())
@@ -290,11 +291,71 @@ func (c *Collector) CloseContext(ctx context.Context) error {
 func NewCollectorHandler(collector *Collector) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/v1/events", collector.ingest)
+	mux.HandleFunc("POST /internal/v1/status", collector.reportAdapterStatus)
 	mux.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(map[string]string{"status": "live"})
 	})
 	return mux
+}
+
+type adapterStatusReport struct {
+	Version  int    `json:"version"`
+	ReportID string `json:"reportId"`
+	Status   string `json:"status"`
+	Count    uint64 `json:"count"`
+}
+
+func (c *Collector) reportAdapterStatus(response http.ResponseWriter, request *http.Request) {
+	if mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
+		http.Error(response, "invalid request", http.StatusBadRequest)
+		return
+	}
+	request.Body = http.MaxBytesReader(response, request.Body, 4096)
+	raw, err := io.ReadAll(request.Body)
+	if err != nil || rejectDuplicateJSONKeys(raw) != nil {
+		http.Error(response, "invalid request", http.StatusBadRequest)
+		return
+	}
+	var report adapterStatusReport
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&report) != nil || ensureJSONEOF(decoder) != nil || report.Version != 1 || report.Count == 0 || len(report.ReportID) > 128 || !projectIDPattern.MatchString(report.ReportID) || (report.Status != "dropped" && report.Status != "incompatible") {
+		http.Error(response, "invalid request", http.StatusUnprocessableEntity)
+		return
+	}
+	c.healthMu.Lock()
+	if _, duplicate := c.seenReports[report.ReportID]; duplicate {
+		c.healthMu.Unlock()
+		if c.persistHealth() != nil {
+			http.Error(response, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if len(c.seenReports) >= 2048 {
+		for id := range c.seenReports {
+			delete(c.seenReports, id)
+			break
+		}
+	}
+	c.seenReports[report.ReportID] = struct{}{}
+	if report.Status == "dropped" {
+		c.health.Dropped = saturatingAdd(c.health.Dropped, report.Count)
+		if c.health.Status != "incompatible" && c.health.Status != "storage_error" {
+			c.health.Status = "dropped"
+		}
+	} else {
+		c.health.Status = "incompatible"
+		c.health.Detail = "unsupported event contract version"
+	}
+	c.healthMu.Unlock()
+	if c.persistHealth() != nil {
+		http.Error(response, "unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	response.WriteHeader(http.StatusNoContent)
 }
 
 func (c *Collector) ingest(response http.ResponseWriter, request *http.Request) {

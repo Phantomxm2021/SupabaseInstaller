@@ -63,6 +63,27 @@ func TestClientFunctionLogsRejectsNonCanonicalSuccessJSON(t *testing.T) {
 	}
 }
 
+func TestClientFunctionLogsAcceptsMaximumSizedPage(t *testing.T) {
+	logs := make([]contracts.FunctionLogRecord, 200)
+	for i := range logs {
+		logs[i] = contracts.FunctionLogRecord{ID: strings.Repeat("a", 64), ProjectID: "project", FunctionName: "demo", ExecutionID: "exec", EventType: "Log", Message: strings.Repeat("x", 10<<10), Timestamp: time.Now(), IngestedAt: time.Now(), Level: contracts.FunctionLogLevelInfo}
+	}
+	body, err := json.Marshal(contracts.FunctionLogPage{Logs: logs, Health: contracts.FunctionLogHealth{Status: "healthy"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) <= 1<<20 {
+		t.Fatalf("fixture unexpectedly small: %d", len(body))
+	}
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
+	})}
+	page, err := NewClient("http://provisioner:9090", "token", httpClient).FunctionLogs(context.Background(), "bee", "demo", contracts.FunctionLogQuery{Limit: 200})
+	if err != nil || len(page.Logs) != 200 {
+		t.Fatalf("logs/error=%d/%v", len(page.Logs), err)
+	}
+}
+
 func TestClientDeployFunctionPreservesAllowListedProvisionerDiagnostic(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		body, _ := json.Marshal(contracts.ErrorEnvelope{Error: contracts.APIError{
