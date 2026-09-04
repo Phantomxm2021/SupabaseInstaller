@@ -67,3 +67,16 @@ func TestHealthSnapshotFutureTimestampIsIncompatible(t *testing.T) {
 		t.Fatalf("health/error = %#v/%v", health, err)
 	}
 }
+
+func TestRestartReaderAcceptsLegacySnapshotWithoutReportIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "health.json")
+	now := time.Now().UTC()
+	raw := `{"version":1,"updatedAt":"` + now.Format(time.RFC3339Nano) + `","health":{"status":"healthy","dropped":0,"rejected":0,"detail":""}}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	health, reports, valid, err := readHealthSnapshotStateForRestart(path, now)
+	if err != nil || !valid || health.Status != "healthy" || len(reports) != 0 {
+		t.Fatalf("health/reports/valid/error=%#v/%v/%v/%v", health, reports, valid, err)
+	}
+}

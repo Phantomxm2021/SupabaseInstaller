@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -450,6 +451,82 @@ func TestCollectorRestartPreservesCountersAndDroppedEvidence(t *testing.T) {
 	health := collector.Health()
 	if health.Dropped != 4 || health.Rejected != 7 || health.Status != "dropped" {
 		t.Fatalf("health = %#v", health)
+	}
+}
+
+func TestCollectorRestartDeduplicatesPersistedAdapterReport(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "hello"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	healthPath := filepath.Join(t.TempDir(), "health.json")
+	newOne := func() (*Collector, http.Handler) {
+		collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: &collectorStore{}, Redactor: &Redactor{}, FunctionsRoot: root, HealthPath: healthPath})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return collector, NewCollectorHandler(collector)
+	}
+	report := func(handler http.Handler, id string, count int) {
+		body := fmt.Sprintf(`{"version":1,"reportId":%q,"status":"dropped","count":%d}`, id, count)
+		req := httptest.NewRequest(http.MethodPost, "/internal/v1/status", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("report %s status=%d", id, response.Code)
+		}
+	}
+	first, handler := newOne()
+	report(handler, "same-report", 7)
+	_ = first.Close()
+	second, handler := newOne()
+	defer second.Close()
+	report(handler, "same-report", 7)
+	if got := second.Health().Dropped; got != 7 {
+		t.Fatalf("duplicate after restart counted: %d", got)
+	}
+	report(handler, "different-report", 3)
+	if got := second.Health().Dropped; got != 10 {
+		t.Fatalf("different report not counted: %d", got)
+	}
+}
+
+func TestPersistedAdapterReportDeduplicationIsBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "health.json")
+	ids := make([]string, 2048)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("report-%04d", i)
+	}
+	if err := writeHealthSnapshotState(path, contracts.FunctionLogHealth{Status: "dropped", Dropped: 2048}, ids, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	_, restored, valid, err := readHealthSnapshotStateForRestart(path, time.Now())
+	if err != nil || !valid || len(restored) != 2048 || restored[0] != "report-0000" {
+		t.Fatalf("restored=%d valid=%v err=%v", len(restored), valid, err)
+	}
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "hello"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewCollector(CollectorOptions{ProjectID: "project", Store: &collectorStore{}, Redactor: &Redactor{}, FunctionsRoot: root, HealthPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewCollectorHandler(collector)
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/status", strings.NewReader(`{"version":1,"reportId":"report-2048","status":"dropped","count":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status=%d", response.Code)
+	}
+	if err := collector.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, restored, valid, err = readHealthSnapshotStateForRestart(path, time.Now())
+	if err != nil || !valid || len(restored) != 2048 || restored[0] != "report-0001" || restored[2047] != "report-2048" {
+		t.Fatalf("bounded restored=%v valid=%v err=%v", restored[:min(2, len(restored))], valid, err)
 	}
 }
 

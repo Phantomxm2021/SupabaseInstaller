@@ -59,6 +59,7 @@ type Collector struct {
 	healthPath     string
 
 	healthMu                    sync.RWMutex
+	persistMu                   sync.Mutex
 	health                      contracts.FunctionLogHealth
 	stop                        chan struct{}
 	done                        chan struct{}
@@ -66,6 +67,7 @@ type Collector struct {
 	snapshotFailure             bool
 	statusBeforeSnapshotFailure string
 	seenReports                 map[string]struct{}
+	reportOrder                 []string
 }
 
 func NewCollector(options CollectorOptions) (*Collector, error) {
@@ -101,19 +103,23 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 		stop: make(chan struct{}), done: make(chan struct{}), seenReports: make(map[string]struct{}),
 	}
 	if options.HealthPath != "" {
-		previous, valid, readErr := readHealthSnapshotForRestart(options.HealthPath, options.Now())
+		previous, reportIDs, valid, readErr := readHealthSnapshotStateForRestart(options.HealthPath, options.Now())
 		if readErr != nil {
 			return nil, errors.New("read function log health")
 		}
 		if valid {
 			c.health.Dropped, c.health.Rejected = previous.Dropped, previous.Rejected
+			c.reportOrder = reportIDs
+			for _, id := range reportIDs {
+				c.seenReports[id] = struct{}{}
+			}
 			if previous.Status == "incompatible" {
 				c.health.Status = "incompatible"
 			} else if previous.Dropped > 0 {
 				c.health.Status = "dropped"
 			}
 		}
-		if err := WriteHealthSnapshot(c.healthPath, c.health, c.now()); err != nil {
+		if err := c.persistHealth(); err != nil {
 			return nil, errors.New("write function log health")
 		}
 	}
@@ -122,7 +128,13 @@ func NewCollector(options CollectorOptions) (*Collector, error) {
 }
 
 func (c *Collector) persistHealth() error {
-	err := WriteHealthSnapshot(c.healthPath, c.Health(), c.now())
+	c.persistMu.Lock()
+	defer c.persistMu.Unlock()
+	c.healthMu.RLock()
+	health := c.health
+	reportIDs := append([]string(nil), c.reportOrder...)
+	c.healthMu.RUnlock()
+	err := writeHealthSnapshotState(c.healthPath, health, reportIDs, c.now())
 	if err != nil {
 		c.healthMu.Lock()
 		c.health.Status = "storage_error"
@@ -335,12 +347,11 @@ func (c *Collector) reportAdapterStatus(response http.ResponseWriter, request *h
 		return
 	}
 	if len(c.seenReports) >= 2048 {
-		for id := range c.seenReports {
-			delete(c.seenReports, id)
-			break
-		}
+		delete(c.seenReports, c.reportOrder[0])
+		c.reportOrder = c.reportOrder[1:]
 	}
 	c.seenReports[report.ReportID] = struct{}{}
+	c.reportOrder = append(c.reportOrder, report.ReportID)
 	if report.Status == "dropped" {
 		c.health.Dropped = saturatingAdd(c.health.Dropped, report.Count)
 		if c.health.Status != "incompatible" && c.health.Status != "storage_error" {

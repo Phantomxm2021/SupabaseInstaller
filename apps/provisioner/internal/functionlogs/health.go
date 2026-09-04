@@ -13,14 +13,21 @@ import (
 )
 
 const HealthStaleAfter = 30 * time.Second
+const maxHealthSnapshotBytes = 512 << 10
+const maxPersistedReportIDs = 2048
 
 type healthSnapshot struct {
 	Version   int                         `json:"version"`
 	UpdatedAt time.Time                   `json:"updatedAt"`
 	Health    contracts.FunctionLogHealth `json:"health"`
+	ReportIDs []string                    `json:"reportIds,omitempty"`
 }
 
 func WriteHealthSnapshot(path string, health contracts.FunctionLogHealth, now time.Time) error {
+	return writeHealthSnapshotState(path, health, nil, now)
+}
+
+func writeHealthSnapshotState(path string, health contracts.FunctionLogHealth, reportIDs []string, now time.Time) error {
 	if path == "" {
 		return nil
 	}
@@ -31,7 +38,10 @@ func WriteHealthSnapshot(path string, health contracts.FunctionLogHealth, now ti
 	if !validHealthStatus(health.Status) {
 		return errors.New("invalid health status")
 	}
-	raw, err := json.Marshal(healthSnapshot{Version: 1, UpdatedAt: now.UTC(), Health: health})
+	if !validReportIDs(reportIDs) {
+		return errors.New("invalid adapter report IDs")
+	}
+	raw, err := json.Marshal(healthSnapshot{Version: 1, UpdatedAt: now.UTC(), Health: health, ReportIDs: reportIDs})
 	if err != nil {
 		return err
 	}
@@ -75,14 +85,14 @@ func ReadHealthSnapshotFile(file *os.File, now time.Time) (contracts.FunctionLog
 	if file == nil {
 		return contracts.FunctionLogHealth{Status: "offline"}, nil
 	}
-	raw, err := io.ReadAll(io.LimitReader(file, 4097))
-	if err != nil || len(raw) > 4096 || rejectDuplicateJSONKeys(raw) != nil {
+	raw, err := io.ReadAll(io.LimitReader(file, maxHealthSnapshotBytes+1))
+	if err != nil || len(raw) > maxHealthSnapshotBytes || rejectDuplicateJSONKeys(raw) != nil {
 		return contracts.FunctionLogHealth{Status: "incompatible"}, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	var snapshot healthSnapshot
-	if decoder.Decode(&snapshot) != nil || decoder.Decode(&struct{}{}) != io.EOF || snapshot.Version != 1 || snapshot.UpdatedAt.IsZero() {
+	if decoder.Decode(&snapshot) != nil || decoder.Decode(&struct{}{}) != io.EOF || snapshot.Version != 1 || snapshot.UpdatedAt.IsZero() || !validReportIDs(snapshot.ReportIDs) {
 		return contracts.FunctionLogHealth{Status: "incompatible"}, nil
 	}
 	if !validHealthStatus(snapshot.Health.Status) {
@@ -102,29 +112,51 @@ func ReadHealthSnapshotFile(file *os.File, now time.Time) (contracts.FunctionLog
 }
 
 func readHealthSnapshotForRestart(path string, now time.Time) (contracts.FunctionLogHealth, bool, error) {
+	health, _, valid, err := readHealthSnapshotStateForRestart(path, now)
+	return health, valid, err
+}
+
+func readHealthSnapshotStateForRestart(path string, now time.Time) (contracts.FunctionLogHealth, []string, bool, error) {
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return contracts.FunctionLogHealth{}, false, nil
+		return contracts.FunctionLogHealth{}, nil, false, nil
 	}
 	if err != nil {
-		return contracts.FunctionLogHealth{}, false, err
+		return contracts.FunctionLogHealth{}, nil, false, err
 	}
 	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, 4097))
+	raw, err := io.ReadAll(io.LimitReader(file, maxHealthSnapshotBytes+1))
 	if err != nil {
-		return contracts.FunctionLogHealth{}, false, err
+		return contracts.FunctionLogHealth{}, nil, false, err
 	}
-	if len(raw) > 4096 || rejectDuplicateJSONKeys(raw) != nil {
-		return contracts.FunctionLogHealth{}, false, nil
+	if len(raw) > maxHealthSnapshotBytes || rejectDuplicateJSONKeys(raw) != nil {
+		return contracts.FunctionLogHealth{}, nil, false, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	var snapshot healthSnapshot
-	if decoder.Decode(&snapshot) != nil || decoder.Decode(&struct{}{}) != io.EOF || snapshot.Version != 1 || snapshot.UpdatedAt.IsZero() || !validHealthStatus(snapshot.Health.Status) || snapshot.UpdatedAt.Sub(now) > HealthStaleAfter {
-		return contracts.FunctionLogHealth{}, false, nil
+	if decoder.Decode(&snapshot) != nil || decoder.Decode(&struct{}{}) != io.EOF || snapshot.Version != 1 || snapshot.UpdatedAt.IsZero() || !validHealthStatus(snapshot.Health.Status) || snapshot.UpdatedAt.Sub(now) > HealthStaleAfter || !validReportIDs(snapshot.ReportIDs) {
+		return contracts.FunctionLogHealth{}, nil, false, nil
 	}
 	snapshot.Health.Detail = ""
-	return snapshot.Health, true, nil
+	return snapshot.Health, append([]string(nil), snapshot.ReportIDs...), true, nil
+}
+
+func validReportIDs(ids []string) bool {
+	if len(ids) > maxPersistedReportIDs {
+		return false
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if len(id) > 128 || !projectIDPattern.MatchString(id) {
+			return false
+		}
+		if _, exists := seen[id]; exists {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	return true
 }
 
 func validHealthStatus(status string) bool {
