@@ -433,9 +433,19 @@ func TestDatabasePasswordRotationKeepsOperationRunningWhenRuntimeOutcomeIsUnknow
 
 func TestSameServicesIgnoresRendererHelperServices(t *testing.T) {
 	expected := []string{"db", "api-gw", "auth", "rest", "meta", "studio", "realtime", "storage", "imgproxy", "functions", "supavisor"}
-	actual := append(append([]string(nil), expected...), "auth-templates", "deno-cache", "db-config")
+	actual := append(append([]string(nil), expected...), "auth-templates", "deno-cache", "db-config", "function-log-collector")
 	if !sameServices(actual, expected) {
 		t.Fatalf("renderer helper services must not make runtime verification fail: actual=%v expected=%v", actual, expected)
+	}
+}
+
+func TestRuntimeVerificationAcceptsFunctionLogCollectorHelper(t *testing.T) {
+	cfg := contracts.ProjectConfiguration{Services: contracts.Services{Database: true, Gateway: true, Auth: true, REST: true, PostgresMeta: true, Studio: true, Realtime: true, Storage: true, Functions: true, Supavisor: true}}
+	received := []string{
+		"api-gw", "auth", "db", "function-log-collector", "functions", "meta", "realtime", "rest", "storage", "studio", "supavisor",
+	}
+	if expected := enabledServices(cfg); !sameServices(received, expected) {
+		t.Fatalf("runtime verification rejected function-log-collector helper: received=%v expected=%v", received, expected)
 	}
 }
 
@@ -449,7 +459,7 @@ func TestRuntimeVerificationUsesServerTerminologyForIDMismatch(t *testing.T) {
 func TestEnabledServicesExcludesRendererHelperServices(t *testing.T) {
 	cfg := contracts.ProjectConfiguration{Services: contracts.Services{Database: true, Gateway: true, Auth: true, Functions: true, Supavisor: true, Logs: true}}
 	for _, service := range enabledServices(cfg) {
-		if service == "auth-templates" || service == "deno-cache" || service == "db-config" || service == "logflare" {
+		if service == "auth-templates" || service == "deno-cache" || service == "db-config" || service == "function-log-collector" || service == "logflare" {
 			t.Fatalf("manager verification must not treat renderer helper %q as a configurable service: %v", service, enabledServices(cfg))
 		}
 	}

@@ -1308,7 +1308,7 @@ func canonicalServices(values []string) []string {
 // healthy configuration revision.
 func isRendererHelperService(name string) bool {
 	switch name {
-	case "auth-templates", "deno-cache", "db-config", "logflare":
+	case "auth-templates", "deno-cache", "db-config", "function-log-collector", "logflare":
 		return true
 	default:
 		return false
