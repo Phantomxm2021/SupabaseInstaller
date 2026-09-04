@@ -112,6 +112,13 @@ func (backend *Backend) Reconcile(ctx context.Context, request contracts.Reconci
 			requestedTemplate = "self-hosted/latest"
 		}
 		snapshot, templateErr := backend.templates.Resolve(ctx, requestedTemplate, request.ForceRecreate)
+		if templateErr != nil && request.ForceRecreate && metadata.TemplateRef != "" {
+			cached, cacheErr := backend.templates.Resolve(ctx, metadata.TemplateRef, false)
+			if cacheErr == nil {
+				slog.Warn("official template refresh failed; using verified current cache", "project_id", request.ProjectID, "slug", request.Slug, "operation_id", request.OperationID, "template_ref", cached.Ref, "refresh_error", templateErr)
+				snapshot, templateErr = cached, nil
+			}
+		}
 		if templateErr != nil {
 			return fail(fmt.Errorf("resolve official Supabase template: %w", templateErr))
 		}

@@ -21,6 +21,29 @@ import (
 	"supabase-manager/internal/contracts"
 )
 
+type refreshFallbackTemplateSource struct {
+	snapshot officialtemplate.Snapshot
+	calls    []struct {
+		ref     string
+		refresh bool
+	}
+	fallbackErr error
+}
+
+func (s *refreshFallbackTemplateSource) Resolve(_ context.Context, ref string, refresh bool) (officialtemplate.Snapshot, error) {
+	s.calls = append(s.calls, struct {
+		ref     string
+		refresh bool
+	}{ref: ref, refresh: refresh})
+	if refresh {
+		return officialtemplate.Snapshot{}, &officialtemplate.RateLimitError{Reset: time.Date(2026, 9, 4, 1, 53, 34, 0, time.UTC)}
+	}
+	if s.fallbackErr != nil {
+		return officialtemplate.Snapshot{}, s.fallbackErr
+	}
+	return s.snapshot, nil
+}
+
 func TestReconcileRecreatesOnlyAffectedService(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -98,6 +121,58 @@ func TestOfficialRuntimeSyncPullsImagesAndRecreatesEveryEnabledService(t *testin
 	metadata, err := root.Metadata("bee")
 	if err != nil || metadata.TemplateRef != "self-hosted/v0.8.0" || len(metadata.TemplateSHA256) != 64 {
 		t.Fatalf("applied template metadata = %#v, %v", metadata, err)
+	}
+}
+
+func TestOfficialRuntimeSyncFallsBackToCurrentVerifiedTemplate(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fixtureTemplateSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &refreshFallbackTemplateSource{snapshot: snapshot}
+	backend.templates = source
+	sync := reconcileRequest(baseConfig(), 1, 2)
+	sync.ForceRecreate, sync.PullImages = true, true
+	if _, err := backend.Reconcile(context.Background(), sync); err != nil {
+		t.Fatalf("runtime sync with cached current template: %v", err)
+	}
+	want := []struct {
+		ref     string
+		refresh bool
+	}{{"self-hosted/latest", true}, {"self-hosted/v0.8.0", false}}
+	if !reflect.DeepEqual(source.calls, want) {
+		t.Fatalf("template resolves = %#v, want %#v", source.calls, want)
+	}
+}
+
+func TestOfficialRuntimeSyncFailsWhenCurrentTemplateCacheIsUnavailable(t *testing.T) {
+	root, err := projectfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeReconcileRunner{}
+	backend := NewBackend(root, runner, &sequenceInspector{})
+	if _, err := backend.Reconcile(context.Background(), reconcileRequest(baseConfig(), 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	source := &refreshFallbackTemplateSource{fallbackErr: os.ErrNotExist}
+	backend.templates = source
+	sync := reconcileRequest(baseConfig(), 1, 2)
+	sync.ForceRecreate, sync.PullImages = true, true
+	if _, err := backend.Reconcile(context.Background(), sync); err == nil {
+		t.Fatal("runtime sync unexpectedly succeeded without a verified cached template")
+	}
+	if runner.pulled != 0 || runner.recreatedRuntime != 0 {
+		t.Fatalf("runtime changed before template resolution: pull=%d recreate=%d", runner.pulled, runner.recreatedRuntime)
 	}
 }
 
