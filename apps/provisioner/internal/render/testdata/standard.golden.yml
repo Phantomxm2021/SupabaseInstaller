@@ -199,6 +199,7 @@ services:
                 - http://127.0.0.1:8081/health/live
             timeout: 3s
         image: supabase-provisioner:test
+        pull_policy: never
         restart: unless-stopped
         volumes:
             - ./.manager-runtime/function-logs:/var/lib/function-logs

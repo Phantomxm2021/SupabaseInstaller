@@ -468,6 +468,12 @@ func TestRenderFunctionsWiresPrivateEventCollector(t *testing.T) {
 	if collector["image"] != "registry.example/provisioner:release-42" {
 		t.Fatalf("collector image = %#v", collector["image"])
 	}
+	if collector["pull_policy"] != "never" {
+		t.Fatalf("collector pull_policy = %#v, want never", collector["pull_policy"])
+	}
+	if _, exists := document.Services["db"]["pull_policy"]; exists {
+		t.Fatal("collector pull policy leaked into official services")
+	}
 	if _, exists := collector["ports"]; exists {
 		t.Fatal("collector must not publish a host port")
 	}
