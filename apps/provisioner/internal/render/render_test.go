@@ -366,6 +366,52 @@ func TestRenderFunctionsSecretsStayInFunctionsEnv(t *testing.T) {
 	}
 }
 
+func TestRenderFunctionsAllowsMultilineEnvironmentValues(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Functions = true
+	cfg.Functions.Variables = []contracts.FunctionVariable{
+		{Name: "APNS_PRIVATE_KEY", ValueSet: true},
+		{Name: "CRLF_VALUE", ValueSet: true},
+	}
+	out, err := Project(Input{
+		Slug:          "multiline-functions",
+		APIPort:       18001,
+		Configuration: cfg,
+		RuntimeSecrets: map[string]string{
+			"functions.APNS_PRIVATE_KEY": "-----BEGIN PRIVATE KEY-----\nkey-material\n-----END PRIVATE KEY-----",
+			"functions.CRLF_VALUE":       "first\r\nsecond",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`APNS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nkey-material\n-----END PRIVATE KEY-----"`,
+		`CRLF_VALUE="first\r\nsecond"`,
+	} {
+		if !strings.Contains(out.FunctionsEnv, want) {
+			t.Fatalf("functions env missing safely escaped multiline value %q:\n%s", want, out.FunctionsEnv)
+		}
+	}
+}
+
+func TestRenderFunctionsRejectsUnsafeControlCharacters(t *testing.T) {
+	cfg := testConfiguration()
+	cfg.Services.Functions = true
+	cfg.Functions.Variables = []contracts.FunctionVariable{{Name: "APNS_PRIVATE_KEY", ValueSet: true}}
+	_, err := Project(Input{
+		Slug:          "unsafe-functions",
+		APIPort:       18001,
+		Configuration: cfg,
+		RuntimeSecrets: map[string]string{
+			"functions.APNS_PRIVATE_KEY": "before\x00after",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "environment.APNS_PRIVATE_KEY: contains unsupported control character") {
+		t.Fatalf("expected unsafe control-character rejection, got %v", err)
+	}
+}
+
 func TestRenderFullMergesOfficialLogsOverlay(t *testing.T) {
 	cfg := testConfiguration()
 	cfg.Services.Realtime = true

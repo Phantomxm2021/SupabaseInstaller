@@ -245,7 +245,7 @@ func renderEnvironment(input Input) (string, string, error) {
 			functionValues[variable.Name] = input.RuntimeSecrets["functions."+variable.Name]
 		}
 	}
-	if err := validateDotEnvValues(functionValues); err != nil {
+	if err := validateFunctionDotEnvValues(functionValues); err != nil {
 		return "", "", err
 	}
 	return env, renderDotEnv("", functionValues), nil
@@ -317,8 +317,19 @@ func emailIntOrDefault(value, fallback int) int {
 }
 
 func validateDotEnvValues(values map[string]string) error {
+	return validateDotEnvValuesWithMultiline(values, false)
+}
+
+func validateFunctionDotEnvValues(values map[string]string) error {
+	return validateDotEnvValuesWithMultiline(values, true)
+}
+
+func validateDotEnvValuesWithMultiline(values map[string]string, allowMultiline bool) error {
 	for key, value := range values {
 		for _, r := range value {
+			if allowMultiline && (r == '\t' || r == '\n' || r == '\r') {
+				continue
+			}
 			if unicode.IsControl(r) || (r >= 0x80 && r <= 0x9f) {
 				return fmt.Errorf("environment.%s: contains unsupported control character", key)
 			}
