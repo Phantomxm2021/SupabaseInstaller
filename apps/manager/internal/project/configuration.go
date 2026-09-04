@@ -182,6 +182,9 @@ func NormalizeStoredConfiguration(cfg contracts.ProjectConfiguration) contracts.
 	if cfg.Auth.JWTExpiry == 0 {
 		cfg.Auth.JWTExpiry = 3600
 	}
+	if cfg.Storage.UploadFileSizeLimit == 0 {
+		cfg.Storage.UploadFileSizeLimit = defaultStorageUploadFileSizeLimit
+	}
 	if cfg.Pooler.InternalDBPoolSize == 0 {
 		cfg.Pooler.InternalDBPoolSize = 5
 	}

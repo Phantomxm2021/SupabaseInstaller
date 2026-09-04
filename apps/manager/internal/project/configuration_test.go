@@ -74,6 +74,19 @@ func TestAuthSiteURLValidationAndStoredJWTCompatibility(t *testing.T) {
 	}
 }
 
+func TestNormalizeStoredConfigurationRestoresLegacyUploadLimit(t *testing.T) {
+	cfg := DefaultConfiguration(contracts.PresetLightweight)
+	cfg.Storage.UploadFileSizeLimit = 0
+
+	normalized := NormalizeStoredConfiguration(cfg)
+	if normalized.Storage.UploadFileSizeLimit != 50*1024*1024 {
+		t.Fatalf("normalized upload limit = %d, want 50 MiB", normalized.Storage.UploadFileSizeLimit)
+	}
+	if cfg.Storage.UploadFileSizeLimit != 0 {
+		t.Fatal("NormalizeStoredConfiguration mutated its input")
+	}
+}
+
 func TestFunctionsConfigurationDoesNotExposeDirectory(t *testing.T) {
 	payload, err := json.Marshal(DefaultConfiguration(contracts.PresetLightweight).Functions)
 	if err != nil {

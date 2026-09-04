@@ -118,14 +118,15 @@ func TestOfficialRuntimeSyncAcceptsLegacyStoredJWTExpiry(t *testing.T) {
 	}
 }
 
-func TestFunctionsPatchAcceptsLegacyStoredJWTExpiry(t *testing.T) {
+func TestFunctionsPatchAcceptsLegacyStoredCompatibilityDefaults(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
 	cfg := projectservice.DefaultConfiguration(contracts.PresetStandard)
-	cfg.Auth.JWTExpiry = 0 // Existing projects created before the compatibility default.
+	cfg.Auth.JWTExpiry = 0              // Existing projects created before the compatibility default.
+	cfg.Storage.UploadFileSizeLimit = 0 // Existing projects created before upload limits were persisted.
 	cfg.General = contracts.GeneralConfig{Domain: "bee.example.com", SiteURL: "https://example.com", SupabaseVersion: "self-hosted/v0.8.0"}
 	project := contracts.Project{ID: "bee", Name: "Bee", Slug: "bee", Domain: cfg.General.Domain, SiteURL: cfg.General.SiteURL, SupabaseVersion: cfg.General.SupabaseVersion, Services: cfg.Services, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if err := database.CreateProject(context.Background(), project, cfg); err != nil {
