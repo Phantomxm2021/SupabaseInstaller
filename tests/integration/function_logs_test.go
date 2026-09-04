@@ -5,7 +5,9 @@ package integration
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -14,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -63,8 +66,10 @@ func TestFunctionLogs(t *testing.T) {
 
 	t.Run("collector failure does not fail functions", func(t *testing.T) {
 		compose := runtimeComposeCommand(t, slug)
-		restart := func() error { return runCompose(compose, "up", "-d", "--wait", "function-log-collector") }
-		if err := runCompose(compose, "stop", "function-log-collector"); err != nil {
+		restart := func() error {
+			return runCompose("restart function-log-collector", compose, "up", "-d", "--wait", "function-log-collector")
+		}
+		if err := runCompose("stop function-log-collector", compose, "stop", "function-log-collector"); err != nil {
 			t.Fatalf("stop function-log-collector: %v", err)
 		}
 		restarted := false
@@ -117,6 +122,29 @@ func TestFunctionLogs(t *testing.T) {
 		assertFunctionLogIsolation(t, apiEnabledPage, "api", enabledAPI, enabledPush, exceptionMarker, true)
 		assertFunctionLogIsolation(t, pushEnabledPage, "deliver-push", enabledPush, enabledAPI, exceptionMarker, false)
 	})
+}
+
+func TestRunComposeBoundsOperationsWithoutLeakingOutput(t *testing.T) {
+	t.Parallel()
+	prefix := []string{"compose", "--project-name", "supabase-manager-safe-project"}
+	called := false
+	err := runComposeWith("restart function-log-collector", prefix, []string{"up", "-d", "--wait", "function-log-collector"}, func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		called = true
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > 60*time.Second {
+			t.Fatalf("compose runner deadline=%v ok=%v", deadline, ok)
+		}
+		if name != "docker" || !slices.Contains(args, "--wait-timeout") || !slices.Contains(args, "45") {
+			t.Fatalf("compose command=%s args=%q", name, args)
+		}
+		return []byte("generated-secret-value"), errors.New("exit status 1")
+	})
+	if !called {
+		t.Fatal("compose runner was not called")
+	}
+	if err == nil || !strings.Contains(err.Error(), "restart function-log-collector") || !strings.Contains(err.Error(), "supabase-manager-safe-project") || strings.Contains(err.Error(), "generated-secret-value") {
+		t.Fatalf("safe compose error=%q", err)
+	}
 }
 
 const functionLogSnapshotInterval = 5 * time.Second
@@ -178,7 +206,7 @@ Deno.serve(async (request) => {
   return new Response("ok:" + body, { status: 200 })
 })
 `
-	operation := multipartFunctionRequest(t, baseURL+"/api/projects/"+projectID+"/functions/"+name+"/deploy", name+".zip", zipSource(t, source), cookie, csrf)
+	operation := multipartFunctionRequest(t, client, baseURL+"/api/projects/"+projectID+"/functions/"+name+"/deploy", name+".zip", zipSource(t, source), cookie, csrf)
 	waitOperation(t, client, baseURL, operation, cookie, csrf)
 }
 
@@ -199,7 +227,7 @@ func zipSource(t *testing.T, source string) []byte {
 	return buffer.Bytes()
 }
 
-func multipartFunctionRequest(t *testing.T, rawURL, filename string, archive []byte, cookie, csrf string) string {
+func multipartFunctionRequest(t *testing.T, client *http.Client, rawURL, filename string, archive []byte, cookie, csrf string) string {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -221,7 +249,7 @@ func multipartFunctionRequest(t *testing.T, rawURL, filename string, archive []b
 	request.Header.Set("Cookie", cookie)
 	request.Header.Set("X-CSRF-Token", csrf)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
-	response, err := http.DefaultClient.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,8 +594,8 @@ func assertExactLogSequence(t *testing.T, got, want []any, direction string) {
 
 func cursorForRecord(t *testing.T, record map[string]any) string {
 	t.Helper()
-	// The public cursor encoding is opaque; obtain it from a one-record page
-	// anchored at the same tuple rather than reconstructing its representation.
+	// Construct the opaque public boundary cursor from the known response tuple
+	// so the next request can prove strict before-cursor termination.
 	tuple := logTupleFromRecord(t, record)
 	encoded, err := contracts.EncodeFunctionLogCursor(contracts.FunctionLogCursor{Timestamp: tuple.timestamp, ID: tuple.id})
 	if err != nil {
@@ -629,11 +657,34 @@ func runtimeComposeCommand(t *testing.T, slug string) []string {
 	return []string{"compose", "--file", filepath.Join(dir, "docker-compose.yml"), "--project-directory", dir, "--project-name", "supabase-manager-" + slug}
 }
 
-func runCompose(prefix []string, args ...string) error {
-	command := exec.Command("docker", append(prefix, args...)...)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker compose action failed: %w (%s)", err, strings.TrimSpace(string(output)))
+type composeRunner func(context.Context, string, ...string) ([]byte, error)
+
+func runCompose(action string, prefix []string, args ...string) error {
+	return runComposeWith(action, prefix, args, func(ctx context.Context, name string, commandArgs ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, commandArgs...).CombinedOutput()
+	})
+}
+
+func runComposeWith(action string, prefix, args []string, runner composeRunner) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	args = append([]string(nil), args...)
+	if slices.Contains(args, "up") && slices.Contains(args, "--wait") && !slices.Contains(args, "--wait-timeout") {
+		waitIndex := slices.Index(args, "--wait") + 1
+		args = append(args, "", "")
+		copy(args[waitIndex+2:], args[waitIndex:len(args)-2])
+		args[waitIndex], args[waitIndex+1] = "--wait-timeout", "45"
 	}
-	return nil
+	_, err := runner(ctx, "docker", append(append([]string(nil), prefix...), args...)...)
+	if err == nil {
+		return nil
+	}
+	project := "unknown-project"
+	if index := slices.Index(prefix, "--project-name"); index >= 0 && index+1 < len(prefix) {
+		project = prefix[index+1]
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%s timed out for Compose project %s", action, project)
+	}
+	return fmt.Errorf("%s failed for Compose project %s", action, project)
 }
