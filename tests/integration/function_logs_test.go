@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"supabase-manager/internal/contracts"
 )
 
 func TestFunctionLogs(t *testing.T) {
@@ -429,68 +431,52 @@ func assertFunctionLogIsolation(t *testing.T, page map[string]any, owner, ownMar
 
 func assertNewestFirstAndCursors(t *testing.T, client *http.Client, baseURL, projectID, supabaseURL, anon, name, cookie, csrf string, page map[string]any) {
 	t.Helper()
-	logs := page["logs"].([]any)
-	assertNewestFirst(t, logs)
-	if len(logs) < 2 {
-		t.Fatalf("function-log page has %d records; need at least two for cursor acceptance", len(logs))
-	}
-	first := getFunctionLogPage(t, client, baseURL, projectID, name, cookie, csrf, "limit=1")
-	older, _ := first["olderCursor"].(string)
-	newer, _ := first["newerCursor"].(string)
-	if older == "" || newer == "" {
-		t.Fatal("limited function-log page omitted olderCursor or newerCursor")
-	}
-	boundary := logTupleFromRecord(t, first["logs"].([]any)[0].(map[string]any))
-	second := getFunctionLogPage(t, client, baseURL, projectID, name, cookie, csrf, "limit=1&before="+url.QueryEscape(older))
-	if len(second["logs"].([]any)) == 0 {
-		t.Fatal("olderCursor did not return an older page")
-	}
-	if compareLogTuples(logTupleFromRecord(t, second["logs"].([]any)[0].(map[string]any)), boundary) >= 0 {
-		t.Fatal("before cursor returned a record that was not strictly older than its boundary")
-	}
-
-	marker := fmt.Sprintf("API_AFTER_CURSOR_%d", time.Now().UnixNano())
-	if err := invokeFunction(client, supabaseURL, anon, name, marker); err != nil {
-		t.Fatal(err)
+	referenceBefore := page["logs"].([]any)
+	assertNewestFirst(t, referenceBefore)
+	if len(referenceBefore) < 2 || len(referenceBefore) >= 200 {
+		t.Fatalf("bounded before reference contains %d records, want 2..199", len(referenceBefore))
 	}
 	deadline := time.Now().Add(60 * time.Second)
-	var afterLogs []any
+	drainedBefore := drainBeforePages(t, client, baseURL, projectID, name, cookie, csrf, 2, len(referenceBefore), deadline)
+	assertExactLogSequence(t, drainedBefore, referenceBefore, "before")
+	lastCursor := referenceBefore[len(referenceBefore)-1].(map[string]any)
+	terminal := getFunctionLogPage(t, client, baseURL, projectID, name, cookie, csrf, "limit=2&before="+url.QueryEscape(cursorForRecord(t, lastCursor)))
+	if len(terminal["logs"].([]any)) != 0 || terminal["olderCursor"] != "" || terminal["newerCursor"] != "" {
+		t.Fatalf("before pagination did not terminate canonically: logs=%d older=%v newer=%v", len(terminal["logs"].([]any)), terminal["olderCursor"], terminal["newerCursor"])
+	}
+
+	boundaryCursor, _ := page["newerCursor"].(string)
+	if boundaryCursor == "" {
+		t.Fatal("reference page omitted newerCursor for after boundary")
+	}
+	controlledPrefix := fmt.Sprintf("API_CURSOR_SEQUENCE_%d_", time.Now().UnixNano())
+	completed := time.Time{}
+	for index := 0; index < 5; index++ {
+		if err := invokeFunction(client, supabaseURL, anon, name, fmt.Sprintf("%s%d", controlledPrefix, index)); err != nil {
+			t.Fatal(err)
+		}
+		completed = time.Now()
+	}
+	var referenceAfter []any
 	for time.Now().Before(deadline) {
-		cursor := newer
-		afterLogs = afterLogs[:0]
-		for time.Now().Before(deadline) {
-			page := getFunctionLogPage(t, client, baseURL, projectID, name, cookie, csrf, "limit=200&after="+url.QueryEscape(cursor))
-			pageLogs := page["logs"].([]any)
-			afterLogs = append(append(make([]any, 0, len(pageLogs)+len(afterLogs)), pageLogs...), afterLogs...)
-			if !page["hasMoreNewer"].(bool) {
+		candidate := getFunctionLogPage(t, client, baseURL, projectID, name, cookie, csrf, "limit=200&after="+url.QueryEscape(boundaryCursor))
+		candidateLogs := candidate["logs"].([]any)
+		if countRecordsContaining(candidateLogs, controlledPrefix) == 5 && !candidate["hasMoreNewer"].(bool) {
+			time.Sleep(functionLogSnapshotInterval)
+			stable := getFunctionLogPage(t, client, baseURL, projectID, name, cookie, csrf, "limit=200&after="+url.QueryEscape(boundaryCursor))
+			if pageServerTimeAfter(t, stable, completed.Add(functionLogSnapshotInterval)) && pageSignature(candidate) == pageSignature(stable) {
+				referenceAfter = stable["logs"].([]any)
 				break
 			}
-			cursor, _ = page["newerCursor"].(string)
-			if cursor == "" {
-				t.Fatal("contiguous newer page omitted newerCursor")
-			}
-		}
-		if recordsContain(afterLogs, marker) {
-			break
 		}
 		time.Sleep(time.Second)
 	}
-	if !recordsContain(afterLogs, marker) {
-		t.Fatal("after cursor did not expose the new marker before the deadline")
+	if countRecordsContaining(referenceAfter, controlledPrefix) != 5 {
+		t.Fatal("controlled five-record cursor sequence did not settle before deadline")
 	}
-	assertNewestFirst(t, afterLogs)
-	seen := map[string]bool{}
-	for _, raw := range afterLogs {
-		tuple := logTupleFromRecord(t, raw.(map[string]any))
-		if compareLogTuples(tuple, boundary) <= 0 {
-			t.Fatalf("after cursor returned non-newer tuple %#v at boundary %#v", tuple, boundary)
-		}
-		key := tuple.timestamp.Format(time.RFC3339Nano) + "|" + tuple.id
-		if seen[key] {
-			t.Fatalf("after cursor returned duplicate tuple %s", key)
-		}
-		seen[key] = true
-	}
+	assertNewestFirst(t, referenceAfter)
+	drainedAfter := drainAfterPages(t, client, baseURL, projectID, name, cookie, csrf, boundaryCursor, 2, deadline)
+	assertExactLogSequence(t, drainedAfter, referenceAfter, "after")
 }
 
 func recordsContain(records []any, marker string) bool {
@@ -500,6 +486,94 @@ func recordsContain(records []any, marker string) bool {
 		}
 	}
 	return false
+}
+
+func countRecordsContaining(records []any, marker string) int {
+	count := 0
+	for _, raw := range records {
+		if strings.Contains(raw.(map[string]any)["message"].(string), marker) {
+			count++
+		}
+	}
+	return count
+}
+
+func drainBeforePages(t *testing.T, client *http.Client, baseURL, projectID, name, cookie, csrf string, limit, want int, deadline time.Time) []any {
+	t.Helper()
+	var records []any
+	cursor := ""
+	for len(records) < want && time.Now().Before(deadline) {
+		query := fmt.Sprintf("limit=%d", limit)
+		if cursor != "" {
+			query += "&before=" + url.QueryEscape(cursor)
+		}
+		page := getFunctionLogPage(t, client, baseURL, projectID, name, cookie, csrf, query)
+		pageLogs := page["logs"].([]any)
+		if len(pageLogs) == 0 {
+			t.Fatalf("before pagination ended after %d of %d reference records", len(records), want)
+		}
+		if page["olderCursor"] == "" || page["newerCursor"] == "" {
+			t.Fatal("nonempty before page omitted cursor")
+		}
+		records = append(records, pageLogs...)
+		cursor = page["olderCursor"].(string)
+	}
+	if len(records) != want {
+		t.Fatalf("before pagination returned %d records, want %d", len(records), want)
+	}
+	return records
+}
+
+func drainAfterPages(t *testing.T, client *http.Client, baseURL, projectID, name, cookie, csrf, boundary string, limit int, deadline time.Time) []any {
+	t.Helper()
+	var records []any
+	cursor := boundary
+	for time.Now().Before(deadline) {
+		page := getFunctionLogPage(t, client, baseURL, projectID, name, cookie, csrf, fmt.Sprintf("limit=%d&after=%s", limit, url.QueryEscape(cursor)))
+		pageLogs := page["logs"].([]any)
+		if len(pageLogs) > 0 && (page["olderCursor"] == "" || page["newerCursor"] == "") {
+			t.Fatal("nonempty after page omitted cursor")
+		}
+		records = append(append(make([]any, 0, len(pageLogs)+len(records)), pageLogs...), records...)
+		if !page["hasMoreNewer"].(bool) {
+			return records
+		}
+		cursor = page["newerCursor"].(string)
+	}
+	t.Fatal("after pagination did not drain before deadline")
+	return nil
+}
+
+func assertExactLogSequence(t *testing.T, got, want []any, direction string) {
+	t.Helper()
+	assertNewestFirst(t, got)
+	if len(got) != len(want) {
+		t.Fatalf("%s cursor sequence length=%d, want %d", direction, len(got), len(want))
+	}
+	seen := make(map[string]bool, len(got))
+	for index := range want {
+		gotTuple := logTupleFromRecord(t, got[index].(map[string]any))
+		wantTuple := logTupleFromRecord(t, want[index].(map[string]any))
+		if compareLogTuples(gotTuple, wantTuple) != 0 {
+			t.Fatalf("%s cursor tuple %d=%#v, want %#v", direction, index, gotTuple, wantTuple)
+		}
+		if seen[gotTuple.id] {
+			t.Fatalf("%s cursor sequence duplicated id %q", direction, gotTuple.id)
+		}
+		seen[gotTuple.id] = true
+	}
+}
+
+func cursorForRecord(t *testing.T, record map[string]any) string {
+	t.Helper()
+	// The public cursor encoding is opaque; obtain it from a one-record page
+	// anchored at the same tuple rather than reconstructing its representation.
+	tuple := logTupleFromRecord(t, record)
+	encoded, err := contracts.EncodeFunctionLogCursor(contracts.FunctionLogCursor{Timestamp: tuple.timestamp, ID: tuple.id})
+	if err != nil {
+		t.Fatalf("encode reference cursor: %v", err)
+	}
+	return encoded
 }
 
 type logTuple struct {
