@@ -14,6 +14,7 @@ import (
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
+	"supabase-manager/apps/provisioner/internal/officialtemplate"
 	"supabase-manager/apps/provisioner/internal/projectfs"
 	"supabase-manager/apps/provisioner/internal/proxy"
 	"supabase-manager/apps/provisioner/internal/render"
@@ -616,6 +617,15 @@ func TestRedactedReconcileDiagnosticHidesResolvedOfficialTemplateTag(t *testing.
 	message := redactedReconcileDiagnostic(contracts.ReconcileProjectRequest{}, errors.New("resolve official Supabase template: read official Supabase template self-hosted/v0.8.0: context deadline exceeded"))
 	if message != "Unable to retrieve the official Supabase runtime template. Check the server network connection and retry." {
 		t.Fatalf("redactedReconcileDiagnostic() = %q", message)
+	}
+}
+
+func TestRedactedReconcileDiagnosticReportsGitHubRateLimit(t *testing.T) {
+	cause := fmt.Errorf("resolve official Supabase template: %w", &officialtemplate.RateLimitError{Reset: time.Date(2026, 9, 4, 1, 53, 34, 0, time.UTC)})
+	message := redactedReconcileDiagnostic(contracts.ReconcileProjectRequest{}, cause)
+	want := "GitHub API rate limit exceeded while retrieving the official Supabase runtime template. Retry after 2026-09-04T01:53:34Z."
+	if message != want {
+		t.Fatalf("redactedReconcileDiagnostic() = %q, want %q", message, want)
 	}
 }
 

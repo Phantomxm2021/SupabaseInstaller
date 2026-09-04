@@ -41,6 +41,19 @@ type Snapshot struct {
 	Files     map[string][]byte `json:"-"`
 }
 
+// RateLimitError is a safe, typed GitHub API failure. It contains only the
+// server-provided reset time and never copies the response body.
+type RateLimitError struct {
+	Reset time.Time
+}
+
+func (e *RateLimitError) Error() string {
+	if e.Reset.IsZero() {
+		return "GitHub API rate limit exceeded"
+	}
+	return "GitHub API rate limit exceeded until " + e.Reset.UTC().Format(time.RFC3339)
+}
+
 func (s Snapshot) Compose() []byte    { return append([]byte(nil), s.Files["docker-compose.yml"]...) }
 func (s Snapshot) EnvExample() []byte { return append([]byte(nil), s.Files[".env.example"]...) }
 
@@ -103,7 +116,7 @@ func (s *Source) latestTag(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("query official Supabase template releases: unexpected HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("query official Supabase template releases: %w", githubStatusError(resp))
 	}
 	var refs []githubRef
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&refs); err != nil {
@@ -278,7 +291,7 @@ func (s *Source) getJSON(ctx context.Context, path string, maxBytes int64, targe
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected HTTP %d", resp.StatusCode)
+		return githubStatusError(resp)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
@@ -288,6 +301,18 @@ func (s *Source) getJSON(ctx context.Context, path string, maxBytes int64, targe
 		return errors.New("response exceeds size limit")
 	}
 	return json.Unmarshal(body, target)
+}
+
+func githubStatusError(resp *http.Response) error {
+	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		resetUnix, _ := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64)
+		limited := &RateLimitError{}
+		if resetUnix > 0 {
+			limited.Reset = time.Unix(resetUnix, 0).UTC()
+		}
+		return limited
+	}
+	return fmt.Errorf("unexpected HTTP %d", resp.StatusCode)
 }
 
 func filesDigest(files map[string][]byte) string {

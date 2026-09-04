@@ -17,6 +17,7 @@ import (
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
+	"supabase-manager/apps/provisioner/internal/officialtemplate"
 	"supabase-manager/apps/provisioner/internal/projectfs"
 	"supabase-manager/apps/provisioner/internal/proxy"
 	"supabase-manager/apps/provisioner/internal/render"
@@ -647,6 +648,14 @@ func redactedReconcileDiagnostic(request contracts.ReconcileProjectRequest, caus
 	var failure *contracts.ReconcileFailure
 	if errors.As(cause, &failure) && failure.Cause != nil {
 		cause = failure.Cause
+	}
+	var limited *officialtemplate.RateLimitError
+	if errors.As(cause, &limited) {
+		message := "GitHub API rate limit exceeded while retrieving the official Supabase runtime template."
+		if !limited.Reset.IsZero() {
+			message += " Retry after " + limited.Reset.UTC().Format(time.RFC3339) + "."
+		}
+		return message
 	}
 	if strings.Contains(cause.Error(), "official Supabase template") {
 		return "Unable to retrieve the official Supabase runtime template. Check the server network connection and retry."

@@ -3,6 +3,7 @@ package officialtemplate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -65,6 +66,28 @@ func TestResolveLatestUsesGreatestOfficialSelfHostedTag(t *testing.T) {
 	}
 	if snapshot.Ref != "self-hosted/v0.8.0" {
 		t.Fatalf("ref = %q", snapshot.Ref)
+	}
+}
+
+func TestResolveLatestReportsGitHubRateLimitReset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", "1788486814")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+	source, err := New(t.TempDir(), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.repository = server.URL
+	_, err = source.Resolve(context.Background(), "self-hosted/latest", true)
+	var limited *RateLimitError
+	if !errors.As(err, &limited) {
+		t.Fatalf("Resolve() error = %v, want RateLimitError", err)
+	}
+	if got := limited.Reset.UTC().Format(time.RFC3339); got != "2026-09-04T01:53:34Z" {
+		t.Fatalf("rate limit reset = %s", got)
 	}
 }
 
