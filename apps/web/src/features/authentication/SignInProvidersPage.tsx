@@ -3,9 +3,11 @@ import { useState, type ReactNode } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { ChevronRight, CircleCheck, KeyRound, Mail, Smartphone } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { FieldError } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import type { AuthConfig, OAuthProviderConfig } from '../../api/types'
 import { OAUTH_PROVIDERS } from '../projects/projectSchema'
-import { SectionSaveButton, Toggle } from '../project/configuration/fields'
+import { errorAt, SectionSaveButton, Toggle } from '../project/configuration/fields'
 import { authSchema } from '../project/configuration/schema'
 import { ProviderSheet, providerLabel } from './ProviderSheet'
 import { useAuthenticationWorkspace } from './AuthenticationWorkspace'
@@ -35,6 +37,10 @@ export function SignInProvidersPage() {
             <SettingsToggleRow><Toggle className="auth-setting-toggle" id="manual-linking" label="Allow manual linking" description="Enable manual linking APIs for your project." checked={Boolean(policy.manualLinking)} onChange={(value) => form.setValue('manualLinking', value, { shouldDirty: true, shouldValidate: true })} /></SettingsToggleRow>
             <SettingsToggleRow><Toggle className="auth-setting-toggle" id="anonymous-sign-in" label="Allow anonymous sign-ins" description="Enable anonymous sign-ins for your project." checked={policy.anonymousSignIn} onChange={(value) => form.setValue('anonymousSignIn', value, { shouldDirty: true, shouldValidate: true })} /></SettingsToggleRow>
             <SettingsToggleRow><Toggle className="auth-setting-toggle" id="confirm-email" label="Confirm email" description="Users will need to confirm their email address before signing in for the first time." checked={policy.email.confirmEmail} onChange={(value) => form.setValue('email.confirmEmail', value, { shouldDirty: true, shouldValidate: true })} /></SettingsToggleRow>
+            <div className="auth-settings-row flex items-center justify-between gap-6">
+              <div><label htmlFor="jwt-expiry" className="text-sm font-medium">JWT expiry</label><p className="mt-1 text-xs text-muted-foreground">How long access tokens remain valid, in seconds (1–604800).</p></div>
+              <div className="w-40"><Input id="jwt-expiry" aria-label="JWT expiry (seconds)" type="number" min={1} max={604800} {...form.register('jwtExpiry', { valueAsNumber: true })} aria-invalid={Boolean(errorAt(form.formState.errors, 'jwtExpiry'))} />{errorAt(form.formState.errors, 'jwtExpiry') && <FieldError className="mt-1">{errorAt(form.formState.errors, 'jwtExpiry')}</FieldError>}</div>
+            </div>
             <SectionSaveButton label="changes" disabled={!form.formState.isDirty} />
           </section>
         </form>
