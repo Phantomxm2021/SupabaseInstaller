@@ -14,6 +14,7 @@ type Config struct {
 	NginxProxyMode              string
 	NginxProxySocket            string
 	NginxProxyToken             string
+	ProvisionerImageRef         string
 	AcceptanceInspectorFailOnce bool
 }
 
@@ -34,7 +35,11 @@ func Load() (Config, error) {
 		NginxProxyMode:              nginxProxyMode,
 		NginxProxySocket:            os.Getenv("NGINX_PROXY_SOCKET"),
 		NginxProxyToken:             os.Getenv("NGINX_PROXY_TOKEN"),
+		ProvisionerImageRef:         strings.TrimSpace(os.Getenv("PROVISIONER_IMAGE_REF")),
 		AcceptanceInspectorFailOnce: os.Getenv("ACCEPTANCE_INSPECTOR_FAIL_ONCE") == "1",
+	}
+	if strings.Contains(config.ProvisionerImageRef, "${") {
+		return Config{}, fmt.Errorf("PROVISIONER_IMAGE_REF must be a concrete image reference")
 	}
 	if config.NginxProxyMode == "managed" && (config.NginxProxySocket == "" || config.NginxProxyToken == "") {
 		return Config{}, fmt.Errorf("NGINX_PROXY_SOCKET and NGINX_PROXY_TOKEN are required when NGINX_PROXY_MODE=managed")

@@ -20,17 +20,24 @@ import (
 )
 
 func main() {
+	if os.Getenv("PROVISIONER_MODE") == collectorMode {
+		if err := runCollectorProcess(); err != nil {
+			slog.Error("function log collector failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	cfg, err := provisionerconfig.Load()
 	if err != nil {
 		slog.Error("invalid provisioner configuration", "error", err)
 		os.Exit(1)
 	}
-
 	root, err := projectfs.New(cfg.ProjectRoot)
 	if err != nil {
 		slog.Error("initialize project root", "error", err)
 		os.Exit(1)
 	}
+	defer root.Close()
 	dockerSource, err := health.NewDockerSource(cfg.DockerHost)
 	if err != nil {
 		slog.Error("initialize Docker client", "error", err)
@@ -44,6 +51,7 @@ func main() {
 		certificateStager = managedProxy
 	}
 	backend := provisionerruntime.NewBackend(root, compose.NewRunner(compose.OSExecutor{}), health.NewInspector(dockerSource), proxyClient)
+	backend.SetProvisionerImageRef(cfg.ProvisionerImageRef)
 	if cfg.AcceptanceInspectorFailOnce {
 		backend.EnableAcceptanceInspectorFailure()
 	}
@@ -54,10 +62,13 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	run(server)
+	if err := run(server); err != nil {
+		slog.Error("provisioner server failed", "error", err)
+		os.Exit(1)
+	}
 }
 
-func run(server *http.Server) {
+func run(server *http.Server) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -69,7 +80,7 @@ func run(server *http.Server) {
 		}
 	}()
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		slog.Error("provisioner server failed", "error", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }

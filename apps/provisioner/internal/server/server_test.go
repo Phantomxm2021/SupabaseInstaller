@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"supabase-manager/apps/provisioner/internal/compose"
 	"supabase-manager/apps/provisioner/internal/health"
@@ -60,6 +62,9 @@ func (s *functionDeployStub) DeployFunction(_ context.Context, request contracts
 func (s *functionDeployStub) ListFunctions(context.Context, contracts.FunctionOperationRequest) ([]contracts.FunctionSummary, error) {
 	return []contracts.FunctionSummary{{Name: "demo"}}, s.listErr
 }
+func (s *functionDeployStub) FunctionLogs(_ context.Context, _, _ string, query contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
+	return contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}, Health: contracts.FunctionLogHealth{Status: "offline"}, ServerTime: time.Now(), OlderCursor: strconv.Itoa(query.Limit)}, nil
+}
 func (s *functionDeployStub) RollbackFunction(context.Context, contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {
 	return contracts.FunctionDeploymentResult{}, s.rollbackErr
 }
@@ -93,6 +98,35 @@ func TestReconcileEndpointReturnsTypedRedactedRollbackOutcome(t *testing.T) {
 	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: stub})
 	response := authenticatedJSON(t, handler, "/internal/v1/projects/reconcile", contracts.ReconcileProjectRequest{OperationID: "op", IdempotencyKey: "key", ProjectID: "project", Slug: "bee"})
 	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), `"rolledBack":true`) || strings.Contains(response.Body.String(), "secret") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestFunctionLogsEndpointRequiresAuthAndDefaultsLimit(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: &functionDeployStub{}})
+	unauth := httptest.NewRecorder()
+	handler.ServeHTTP(unauth, httptest.NewRequest(http.MethodGet, "/internal/v1/projects/bee/functions/demo/logs", nil))
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth status = %d", unauth.Code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/projects/bee/functions/demo/logs?search=a%26b", nil)
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"olderCursor":"200"`) {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestFunctionLogsEndpointRejectsMalformedQuery(t *testing.T) {
+	root, _ := projectfs.New(t.TempDir())
+	handler := New(Options{ManagerToken: strings.Repeat("a", 32), ProjectFS: root, Backend: &functionDeployStub{}})
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/projects/bee/functions/demo/logs?limit=nope", nil)
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "INVALID_FUNCTION_LOG_QUERY") {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }

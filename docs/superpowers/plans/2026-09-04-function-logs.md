@@ -6,6 +6,8 @@
 
 **Architecture:** A pinned Edge Runtime event-worker adapter forwards structured events to a private project-local collector mode of the Provisioner image. The collector validates function attribution, redacts and stores records in a project-local SQLite database; authenticated Provisioner and Manager APIs expose cursor-based reads to a React page that polls every five seconds.
 
+**Event identity:** `EventID` is the SHA-256 of the deterministic compact JSON serialization of the EventManager callback object (fixed envelope/event/metadata field order and sorted OpenTelemetry attribute keys), not the original fixture file bytes or `execution_id`.
+
 **Tech Stack:** Go 1.27, `modernc.org/sqlite`, `net/http`, Supabase Edge Runtime v1.74.0, TypeScript/Deno, React 19, React Router, TanStack Query, Vitest, Docker Compose.
 
 ---

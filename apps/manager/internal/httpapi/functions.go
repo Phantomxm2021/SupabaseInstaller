@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	managerfunctions "supabase-manager/apps/manager/internal/functions"
 	"supabase-manager/apps/manager/internal/operation"
 	"supabase-manager/apps/manager/internal/project"
+	"supabase-manager/apps/manager/internal/provisioner"
 	"supabase-manager/apps/manager/internal/store"
 	"supabase-manager/internal/contracts"
 )
@@ -26,10 +28,44 @@ func RegisterFunctionsRoutes(mux *http.ServeMux, options FunctionsOptions) {
 	}
 	h := functionHandlers{service: options.Service, projects: options.Projects}
 	mux.HandleFunc("GET /api/projects/{id}/functions", h.list)
+	mux.HandleFunc("GET /api/projects/{id}/functions/{name}/logs", h.logs)
 	mux.HandleFunc("POST /api/projects/{id}/functions/{name}", h.deploy)
 	mux.HandleFunc("POST /api/projects/{id}/functions/{name}/deploy", h.deploy)
 	mux.HandleFunc("POST /api/projects/{id}/functions/{name}/rollback", h.rollback)
 	mux.HandleFunc("DELETE /api/projects/{id}/functions/{name}", h.delete)
+}
+
+func (h functionHandlers) logs(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.getProject(w, r)
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if contracts.ValidateFunctionName(name) != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_FUNCTION_NAME", "Function name is invalid")
+		return
+	}
+	limit := 200
+	var parseErr error
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, parseErr = strconv.Atoi(raw)
+	}
+	query := contracts.FunctionLogQuery{Limit: limit, Before: r.URL.Query().Get("before"), After: r.URL.Query().Get("after"), Level: r.URL.Query().Get("level"), Search: r.URL.Query().Get("search")}
+	if parseErr != nil || contracts.ValidateFunctionLogQuery(query) != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_FUNCTION_LOG_QUERY", "Function log query is invalid")
+		return
+	}
+	page, err := h.service.FunctionLogs(r.Context(), p, name, query)
+	if err != nil {
+		var clientErr *provisioner.ClientError
+		if errors.As(err, &clientErr) && (clientErr.Status == http.StatusNotFound || clientErr.Code == "FUNCTION_NOT_FOUND") {
+			writeError(w, http.StatusNotFound, "FUNCTION_NOT_FOUND", "Function was not found")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "FUNCTION_LOGS_UNAVAILABLE", "Function logs are unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 type functionHandlers struct {

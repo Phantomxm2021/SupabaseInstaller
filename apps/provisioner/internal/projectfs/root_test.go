@@ -2,12 +2,138 @@ package projectfs
 
 import (
 	"errors"
+	"golang.org/x/sys/unix"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestRootCloseReleasesPinnedDescriptorAndIsIdempotent(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd := root.baseDir.Fd()
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unix.FcntlInt(fd, unix.F_GETFD, 0); err == nil {
+		t.Fatal("pinned descriptor remains open")
+	}
+}
+
+func TestOpenFunctionLogFileRejectsParentSymlinkAndPinsOpenedLeaf(t *testing.T) {
+	base := t.TempDir()
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logsDir := filepath.Join(base, "bee", ".manager-runtime", "function-logs")
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(logsDir, "function-logs.read.db")
+	if err := os.WriteFile(snapshot, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := root.OpenFunctionLogFile("bee", "function-logs.read.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "function-logs.read.db"), []byte("external"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(logsDir, logsDir+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(logsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logsDir, "function-logs.read.db"), []byte("external"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(file)
+	_ = file.Close()
+	if err != nil || string(data) != "original" {
+		t.Fatalf("opened data/error=%q/%v", data, err)
+	}
+	if err := os.RemoveAll(logsDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, logsDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.OpenFunctionLogFile("bee", "function-logs.read.db"); err == nil {
+		t.Fatal("parent symlink accepted")
+	}
+}
+
+func TestStageRuntimeFilesPublishesManagerOwnedEventWorkerAndPersistentLogDirectory(t *testing.T) {
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commit, err := root.StageRuntimeFiles("event-assets", RuntimeFiles{Compose: []byte("compose"), Env: []byte("env"), FunctionsEnv: []byte("functions"), FunctionLogEventWorker: []byte("old-adapter")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := root.ProjectPath("event-assets")
+	worker := filepath.Join(project, ".manager-runtime", "current", "function-logs", "event-worker", "index.ts")
+	data, err := os.ReadFile(worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "old-adapter" {
+		t.Fatalf("current adapter = %q", data)
+	}
+	databaseDir := filepath.Join(project, ".manager-runtime", "function-logs")
+	if info, err := os.Stat(databaseDir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("database directory = %v, %v", info, err)
+	}
+	candidate, restore, commit, err := root.StageRuntimeFilesWithRef("event-assets", RuntimeFiles{Compose: []byte("compose-2"), Env: []byte("env-2"), FunctionsEnv: []byte("functions-2"), FunctionLogEventWorker: []byte("candidate-adapter")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, worker)); got != "old-adapter" {
+		t.Fatalf("staging changed current adapter to %q", got)
+	}
+	candidateWorker := filepath.Join(filepath.Dir(candidate.ComposeFile), "function-logs", "event-worker", "index.ts")
+	if got := string(mustRead(t, candidateWorker)); got != "candidate-adapter" {
+		t.Fatalf("candidate adapter = %q", got)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, worker)); got != "old-adapter" {
+		t.Fatalf("failed stage restore changed adapter to %q", got)
+	}
+	_, restore, commit, err = root.StageRuntimeFilesWithRef("event-assets", RuntimeFiles{Compose: []byte("compose-3"), Env: []byte("env-3"), FunctionsEnv: []byte("functions-3"), FunctionLogEventWorker: []byte("new-adapter")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commit(); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, worker)); got != "new-adapter" {
+		t.Fatalf("successful switch adapter = %q", got)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustRead(t, worker)); got != "old-adapter" {
+		t.Fatalf("rollback adapter = %q", got)
+	}
+}
 
 func init() {
 	testTemplateFiles = map[string][]byte{}

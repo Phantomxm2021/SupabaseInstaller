@@ -37,6 +37,9 @@ type functionDeploymentBackend interface {
 type functionListBackend interface {
 	ListFunctions(context.Context, contracts.FunctionOperationRequest) ([]contracts.FunctionSummary, error)
 }
+type functionLogsBackend interface {
+	FunctionLogs(context.Context, string, string, contracts.FunctionLogQuery) (contracts.FunctionLogPage, error)
+}
 type functionRollbackBackend interface {
 	RollbackFunction(context.Context, contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error)
 }
@@ -83,6 +86,7 @@ func New(options Options) http.Handler {
 	private.HandleFunc("POST /internal/v1/projects/confirm-database-password-rotation", service.confirmDatabasePasswordRotation)
 	private.HandleFunc("POST /internal/v1/projects/{slug}/functions/{name}/deploy", service.deployFunction)
 	private.HandleFunc("GET /internal/v1/projects/{slug}/functions", service.listFunctions)
+	private.HandleFunc("GET /internal/v1/projects/{slug}/functions/{name}/logs", service.functionLogs)
 	private.HandleFunc("POST /internal/v1/projects/{slug}/functions/{name}/rollback", service.rollbackFunction)
 	private.HandleFunc("DELETE /internal/v1/projects/{slug}/functions/{name}", service.deleteFunction)
 	private.HandleFunc("GET /internal/v1/host/resources", service.hostResources)
@@ -91,6 +95,40 @@ func New(options Options) http.Handler {
 	root.Handle("/internal/", provisionerauth.RequireManagerToken(options.ManagerToken, private))
 	root.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) { response.WriteHeader(http.StatusNoContent) })
 	return root
+}
+
+func (s *server) functionLogs(response http.ResponseWriter, request *http.Request) {
+	backend, ok := s.backend.(functionLogsBackend)
+	if !ok {
+		writeError(response, http.StatusServiceUnavailable, "FUNCTION_LOGS_UNAVAILABLE", "Function logs are unavailable")
+		return
+	}
+	name := request.PathValue("name")
+	if _, err := s.projectFS.ProjectPath(request.PathValue("slug")); err != nil || contracts.ValidateFunctionName(name) != nil {
+		writeError(response, http.StatusBadRequest, "INVALID_FUNCTION_LOG_QUERY", "Function log query is invalid")
+		return
+	}
+	limit := 200
+	var err error
+	if raw := request.URL.Query().Get("limit"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+	}
+	query := contracts.FunctionLogQuery{Limit: limit, Before: request.URL.Query().Get("before"), After: request.URL.Query().Get("after"), Level: request.URL.Query().Get("level"), Search: request.URL.Query().Get("search")}
+	if err != nil || contracts.ValidateFunctionLogQuery(query) != nil {
+		writeError(response, http.StatusBadRequest, "INVALID_FUNCTION_LOG_QUERY", "Function log query is invalid")
+		return
+	}
+	page, err := backend.FunctionLogs(request.Context(), request.PathValue("slug"), name, query)
+	if errors.Is(err, contracts.ErrFunctionNotFound) {
+		writeError(response, http.StatusNotFound, "FUNCTION_NOT_FOUND", "Function was not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("function logs query failed", "slug", request.PathValue("slug"), "function", name)
+		writeError(response, http.StatusBadGateway, "FUNCTION_LOGS_UNAVAILABLE", "Function logs are unavailable")
+		return
+	}
+	writeJSON(response, http.StatusOK, page)
 }
 
 func (s *server) deployFunction(response http.ResponseWriter, request *http.Request) {

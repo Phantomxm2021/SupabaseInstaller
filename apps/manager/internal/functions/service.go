@@ -89,6 +89,26 @@ func (s *Service) List(ctx context.Context, p contracts.Project) ([]contracts.Fu
 	return s.provisioner.ListFunctions(ctx, p.Slug)
 }
 
+func (s *Service) FunctionLogs(ctx context.Context, p contracts.Project, name string, query contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
+	if s.provisioner == nil {
+		return contracts.FunctionLogPage{}, errors.New("functions service is unavailable")
+	}
+	if err := contracts.ValidateFunctionName(name); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	if err := contracts.ValidateFunctionLogQuery(query); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	page, err := s.provisioner.FunctionLogs(ctx, p.Slug, name, query)
+	if err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	if !p.Services.Functions {
+		page.Health.Status = "disabled"
+	}
+	return page, nil
+}
+
 func (s *Service) queueAction(ctx context.Context, p contracts.Project, name string, typ contracts.OperationType) (operation.Operation, error) {
 	if err := contracts.ValidateFunctionName(name); err != nil {
 		return operation.Operation{}, err

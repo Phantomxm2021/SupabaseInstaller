@@ -83,7 +83,16 @@ and upload one ZIP per function. The archive must be named
 root-level `index.ts`. Archives are capped at 20 MiB, validated and extracted
 by the private Provisioner, and only the current and previous releases are
 retained. Each deployment restarts only the Functions container; the Actions
-menu provides rollback and exact-name-confirmed deletion.
+menu provides **View logs**, rollback, and exact-name-confirmed deletion.
+
+Managed function logs are collected independently of the optional
+Logflare/Vector Logs service. **View logs** shows recent records for that exact
+managed function, refreshes every 5 seconds, and can be paused. The server
+retains up to 7 days or 512 MiB across managed function logs; the browser keeps
+the latest 2,000 records in its current window. Attribution is exact only for
+functions deployed and managed here. After a function is deleted, its retained
+records are no longer accessible in the UI. Deleting the server's data removes
+its function-log database as well.
 
 ## Inspect and stop
 

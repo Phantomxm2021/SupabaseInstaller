@@ -216,7 +216,8 @@ func requiredDotEnvValue(path, key string) (string, error) {
 var composeServices = map[string]struct{}{
 	"db": {}, "api-gw": {}, "envoy": {}, "kong": {}, "auth": {}, "auth-templates": {}, "rest": {}, "meta": {},
 	"studio": {}, "realtime": {}, "storage": {}, "imgproxy": {}, "functions": {},
-	"supavisor": {}, "db-config": {}, "analytics": {}, "logflare": {}, "vector": {}, "deno-cache": {}, "caddy": {},
+	"function-log-collector": {},
+	"supavisor":              {}, "db-config": {}, "analytics": {}, "logflare": {}, "vector": {}, "deno-cache": {}, "caddy": {},
 }
 
 func NewRunner(executor Executor) *Runner {

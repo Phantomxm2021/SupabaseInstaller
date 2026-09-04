@@ -14,7 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"supabase-manager/internal/contracts"
+	eventworker "supabase-manager/internal/templates/manager/function-logs/event-worker"
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -86,10 +89,11 @@ func (r *Root) DeleteProjectData(slug string) error {
 }
 
 type RuntimeFiles struct {
-	Compose         []byte
-	Env             []byte
-	FunctionsEnv    []byte
-	MailerTemplates map[string][]byte
+	Compose                []byte
+	Env                    []byte
+	FunctionsEnv           []byte
+	MailerTemplates        map[string][]byte
+	FunctionLogEventWorker []byte
 	// TemplateFiles is the verified official docker directory, keyed by a
 	// slash-separated path relative to docker/. It is stored with the project
 	// as an immutable rollback/bootstrap snapshot, never compiled into Manager.
@@ -120,6 +124,25 @@ type RuntimeRef struct {
 // --project-directory so relative volume paths always resolve persistent data.
 func (r *Root) RuntimePath(slug string) (string, error) {
 	return r.ProjectPath(slug)
+}
+
+// FunctionLogDatabasePath derives the private collector database location from
+// a validated managed-project slug. It never accepts a caller-owned path.
+func (r *Root) FunctionLogDatabasePath(slug string) (string, error) {
+	projectPath, err := r.ProjectPath(slug)
+	if err != nil {
+		return "", err
+	}
+	for _, directory := range []string{projectPath, filepath.Join(projectPath, ".manager-runtime"), filepath.Join(projectPath, ".manager-runtime", "function-logs")} {
+		info, statErr := os.Lstat(directory)
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("function log directory is unsafe")
+		}
+	}
+	return filepath.Join(projectPath, ".manager-runtime", "function-logs", "function-logs.db"), nil
 }
 
 // OfficialTemplateFiles returns the immutable official template snapshot that
@@ -351,17 +374,36 @@ func (r *Root) StageRuntimeFilesWithRef(slug string, files RuntimeFiles) (candid
 	if err := os.MkdirAll(filepath.Join(runtimeRoot, "generations"), 0o700); err != nil {
 		return RuntimeRef{}, nil, nil, fmt.Errorf("create runtime generations: %w", err)
 	}
+	functionLogsRoot := filepath.Join(runtimeRoot, "function-logs")
+	if err := os.MkdirAll(functionLogsRoot, 0o700); err != nil {
+		return RuntimeRef{}, nil, nil, fmt.Errorf("create function log runtime directory: %w", err)
+	}
+	if err := os.Chmod(functionLogsRoot, 0o700); err != nil {
+		return RuntimeRef{}, nil, nil, fmt.Errorf("secure function log database directory: %w", err)
+	}
 	current := filepath.Join(runtimeRoot, "current")
 	candidateDir, err := os.MkdirTemp(runtimeRoot, ".candidate-")
 	if err != nil {
 		return RuntimeRef{}, nil, nil, fmt.Errorf("create runtime staging directory: %w", err)
 	}
-	candidateFiles := RuntimeFiles{Compose: append([]byte(nil), files.Compose...), Env: append([]byte(nil), files.Env...), FunctionsEnv: append([]byte(nil), files.FunctionsEnv...)}
+	workerSource := files.FunctionLogEventWorker
+	if len(workerSource) == 0 {
+		workerSource = eventworker.Source()
+	}
+	candidateFiles := RuntimeFiles{Compose: append([]byte(nil), files.Compose...), Env: append([]byte(nil), files.Env...), FunctionsEnv: append([]byte(nil), files.FunctionsEnv...), MailerTemplates: files.MailerTemplates, FunctionLogEventWorker: append([]byte(nil), workerSource...)}
 	for name, data := range map[string][]byte{"docker-compose.yml": candidateFiles.Compose, ".env": candidateFiles.Env, ".env.functions": candidateFiles.FunctionsEnv} {
 		if err := writeAtomic(candidateDir, name, data, 0o600); err != nil {
 			_ = os.RemoveAll(candidateDir)
 			return RuntimeRef{}, nil, nil, err
 		}
+	}
+	if err := os.MkdirAll(filepath.Join(candidateDir, "function-logs", "event-worker"), 0o700); err != nil {
+		_ = os.RemoveAll(candidateDir)
+		return RuntimeRef{}, nil, nil, fmt.Errorf("create candidate event worker directory: %w", err)
+	}
+	if err := writeAtomic(filepath.Join(candidateDir, "function-logs", "event-worker"), "index.ts", candidateFiles.FunctionLogEventWorker, 0o600); err != nil {
+		_ = os.RemoveAll(candidateDir)
+		return RuntimeRef{}, nil, nil, fmt.Errorf("write candidate event worker: %w", err)
 	}
 	if len(candidateFiles.MailerTemplates) > 0 {
 		if err := os.MkdirAll(filepath.Join(candidateDir, "templates"), 0o700); err != nil {
@@ -1047,10 +1089,13 @@ func syncDirectory(directory string) error {
 }
 
 type Root struct {
-	base       string
-	metadataMu sync.Mutex
-	runtimeMu  sync.Mutex
-	hooks      runtimeHooks
+	base          string
+	baseDir       *os.File
+	baseCloseOnce sync.Once
+	baseCloseErr  error
+	metadataMu    sync.Mutex
+	runtimeMu     sync.Mutex
+	hooks         runtimeHooks
 }
 
 // BasePath returns the host-mounted root that stores managed project data.
@@ -1124,14 +1169,79 @@ func New(base string) (*Root, error) {
 	if err := os.MkdirAll(absolute, 0o700); err != nil {
 		return nil, fmt.Errorf("create project root: %w", err)
 	}
-	root := &Root{base: filepath.Clean(absolute)}
+	baseFD, err := unix.Open(absolute, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("pin project root: %w", err)
+	}
+	root := &Root{base: filepath.Clean(absolute), baseDir: os.NewFile(uintptr(baseFD), absolute)}
 	if err := root.cleanupAbandonedRuntimeCandidatesAtStartup(); err != nil {
+		_ = root.Close()
 		return nil, fmt.Errorf("clean abandoned runtime candidates: %w", err)
 	}
 	if err := root.repairLegacyFunctionDirectoriesAtStartup(); err != nil {
+		_ = root.Close()
 		return nil, fmt.Errorf("repair legacy function directories: %w", err)
 	}
 	return root, nil
+}
+
+func (r *Root) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.baseCloseOnce.Do(func() {
+		if r.baseDir != nil {
+			r.baseCloseErr = r.baseDir.Close()
+		}
+	})
+	return r.baseCloseErr
+}
+
+// OpenFunctionLogFile walks only fixed managed components from the pinned
+// project root descriptor. Every directory and leaf rejects symlinks.
+func (r *Root) OpenFunctionLogFile(slug, name string) (*os.File, error) {
+	directory, err := r.OpenFunctionLogDirectory(slug)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	return OpenFunctionLogFileAt(directory, name)
+}
+
+func (r *Root) OpenFunctionLogDirectory(slug string) (*os.File, error) {
+	if !slugPattern.MatchString(slug) {
+		return nil, errors.New("invalid function log file")
+	}
+	fd, err := unix.Dup(int(r.baseDir.Fd()))
+	if err != nil {
+		return nil, err
+	}
+	for _, component := range []string{slug, ".manager-runtime", "function-logs"} {
+		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(fd)
+		if openErr != nil {
+			return nil, openErr
+		}
+		fd = next
+	}
+	return os.NewFile(uintptr(fd), "function-logs"), nil
+}
+
+func OpenFunctionLogFileAt(directory *os.File, name string) (*os.File, error) {
+	if directory == nil || (name != "function-logs.read.db" && name != "health.json") {
+		return nil, errors.New("invalid function log file")
+	}
+	leaf, err := unix.Openat(int(directory.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(leaf), name)
+	info, statErr := file.Stat()
+	if statErr != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, errors.New("function log file is unsafe")
+	}
+	return file, nil
 }
 
 // cleanupAbandonedRuntimeCandidatesAtStartup is called once during

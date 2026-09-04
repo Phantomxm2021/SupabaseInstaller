@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-09-03T20:51:33.326Z",
+  "event_type": "Log",
+  "event": {
+    "msg": "FUNCTION_LOG_FIXTURE_MESSAGE\n",
+    "level": "Info"
+  },
+  "metadata": {
+    "service_path": "./examples/contract-log",
+    "execution_id": "e8a9d201-c618-4051-be3c-721a97fee216",
+    "otel_attributes": {
+      "edge_runtime.worker.kind": "user"
+    }
+  }
+}

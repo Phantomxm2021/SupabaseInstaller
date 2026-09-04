@@ -14,16 +14,17 @@ import (
 
 // Input is the complete desired state plus private values needed to render it.
 type Input struct {
-	ProjectID       string
-	ProjectName     string
-	Slug            string
-	APIPort         int
-	Configuration   contracts.ProjectConfiguration
-	Secrets         provisionersecrets.ProjectSecrets
-	RuntimeSecrets  map[string]string
-	TemplateCompose []byte
-	TemplateEnv     []byte
-	TemplateFiles   map[string][]byte
+	ProjectID           string
+	ProjectName         string
+	Slug                string
+	APIPort             int
+	Configuration       contracts.ProjectConfiguration
+	Secrets             provisionersecrets.ProjectSecrets
+	RuntimeSecrets      map[string]string
+	TemplateCompose     []byte
+	TemplateEnv         []byte
+	TemplateFiles       map[string][]byte
+	ProvisionerImageRef string
 }
 
 type OutputFiles struct {
@@ -42,6 +43,18 @@ var testTemplateEnv []byte
 var testTemplateFiles map[string][]byte
 
 func Project(input Input) (OutputFiles, error) {
+	if input.Configuration.Services.Functions && input.ProvisionerImageRef == "" && testTemplateCompose != nil {
+		input.ProvisionerImageRef = "supabase-provisioner:test"
+		if input.ProjectID == "" {
+			input.ProjectID = "test-" + input.Slug
+		}
+	}
+	if input.Configuration.Services.Functions && (strings.TrimSpace(input.ProvisionerImageRef) == "" || strings.Contains(input.ProvisionerImageRef, "${")) {
+		return OutputFiles{}, fmt.Errorf("concrete provisioner image reference is required when Functions are enabled")
+	}
+	if input.Configuration.Services.Functions && strings.TrimSpace(input.ProjectID) == "" {
+		return OutputFiles{}, fmt.Errorf("project ID is required when Functions are enabled")
+	}
 	if input.APIPort == 0 {
 		input.APIPort = input.Configuration.Network.APIPort
 	}
@@ -194,6 +207,9 @@ func Project(input Input) (OutputFiles, error) {
 	if err := injectServiceConfiguration(filtered, input); err != nil {
 		return OutputFiles{}, err
 	}
+	if input.Configuration.Services.Functions {
+		injectFunctionLogCollection(filtered, input)
+	}
 	encoded, err := yaml.Marshal(compose)
 	if err != nil {
 		return OutputFiles{}, fmt.Errorf("encode Compose: %w", err)
@@ -208,6 +224,68 @@ func Project(input Input) (OutputFiles, error) {
 	}
 	sort.Strings(enabled)
 	return OutputFiles{Env: env, FunctionsEnv: functionsEnv, Compose: string(encoded), MailerTemplates: mailerTemplateFiles(input.Configuration.Auth.Mailer), ComposeProjectName: "supabase-manager-" + input.Slug, EnabledComposeServices: enabled}, nil
+}
+
+func injectFunctionLogCollection(services map[string]any, input Input) {
+	const collector = "function-log-collector"
+	services[collector] = map[string]any{
+		"image":   input.ProvisionerImageRef,
+		"restart": "unless-stopped",
+		"environment": map[string]string{
+			"PROVISIONER_MODE":            "function-log-collector",
+			"FUNCTION_LOG_PROJECT_ID":     input.ProjectID,
+			"FUNCTION_LOG_DATABASE_PATH":  "/var/lib/function-logs/function-logs.db",
+			"FUNCTION_LOG_FUNCTIONS_ROOT": "/srv/functions",
+			"FUNCTION_LOG_PROJECT_ENV":    "/srv/runtime/.env",
+			"FUNCTION_LOG_FUNCTIONS_ENV":  "/srv/runtime/.env.functions",
+			"FUNCTION_LOG_LISTEN_ADDR":    "0.0.0.0:8081",
+		},
+		"volumes": []string{
+			"./.manager-runtime/function-logs:/var/lib/function-logs",
+			"./volumes/functions:/srv/functions:ro",
+			"./.manager-runtime/current:/srv/runtime:ro",
+		},
+		"healthcheck": map[string]any{
+			"test":     []string{"CMD", "wget", "-q", "--spider", "http://127.0.0.1:8081/health/live"},
+			"interval": "5s", "timeout": "3s", "retries": 20, "start_period": "2s",
+		},
+	}
+	functions := services["functions"].(map[string]any)
+	environment, _ := functions["environment"].(map[string]any)
+	if environment == nil {
+		environment = map[string]any{}
+	}
+	environment["FUNCTION_LOG_PROJECT_ID"] = input.ProjectID
+	functions["environment"] = environment
+	command, _ := functions["command"].([]any)
+	if command == nil {
+		if stringsCommand, ok := functions["command"].([]string); ok {
+			command = make([]any, len(stringsCommand))
+			for i := range stringsCommand {
+				command[i] = stringsCommand[i]
+			}
+		}
+	}
+	command = append(command, "--event-worker", "/opt/supabase-manager/event-worker")
+	functions["command"] = command
+	volumes, _ := functions["volumes"].([]any)
+	if volumes == nil {
+		if stringVolumes, ok := functions["volumes"].([]string); ok {
+			volumes = make([]any, len(stringVolumes))
+			for i := range stringVolumes {
+				volumes[i] = stringVolumes[i]
+			}
+		}
+	}
+	functions["volumes"] = append(volumes, "./.manager-runtime/current/function-logs/event-worker:/opt/supabase-manager/event-worker:ro")
+	dependencies, _ := functions["depends_on"].(map[string]any)
+	if dependencies == nil {
+		dependencies = map[string]any{}
+	}
+	// Preserve deterministic startup order, but never make user Functions depend
+	// on the best-effort collector becoming healthy.
+	dependencies[collector] = map[string]any{"condition": "service_started"}
+	functions["depends_on"] = dependencies
 }
 
 func validateAuthConfiguration(auth contracts.AuthConfig) error {

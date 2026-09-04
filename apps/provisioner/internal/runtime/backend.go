@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
 
 	"supabase-manager/apps/provisioner/internal/compose"
+	"supabase-manager/apps/provisioner/internal/functionlogs"
 	"supabase-manager/apps/provisioner/internal/health"
 	"supabase-manager/apps/provisioner/internal/officialtemplate"
 	"supabase-manager/apps/provisioner/internal/projectfs"
@@ -54,6 +56,14 @@ type Backend struct {
 	acceptanceInspectorFailOnce atomic.Bool
 	functions                   *FunctionService
 	templates                   templateSource
+	provisionerImageRef         string
+}
+
+// SetProvisionerImageRef supplies the exact image running this process for
+// project-local collector services. It is deployment configuration, not a
+// user-controlled project value.
+func (backend *Backend) SetProvisionerImageRef(image string) {
+	backend.provisionerImageRef = image
 }
 
 const (
@@ -76,7 +86,11 @@ func NewBackend(projectFS *projectfs.Root, runner LifecycleRunner, inspector Hea
 			panic(err)
 		}
 	}
-	return &Backend{projectFS: projectFS, runner: runner, inspector: inspector, proxy: proxyClient, functions: NewFunctionService(projectFS, runner), templates: templates}
+	backend := &Backend{projectFS: projectFS, runner: runner, inspector: inspector, proxy: proxyClient, functions: NewFunctionService(projectFS, runner), templates: templates}
+	if testTemplateSourceFactory != nil {
+		backend.provisionerImageRef = "supabase-provisioner:test"
+	}
+	return backend
 }
 
 // DeployFunction is the only runtime entry point used by the Provisioner HTTP
@@ -114,6 +128,79 @@ func (backend *Backend) ListFunctions(ctx context.Context, request contracts.Fun
 		return nil, fmt.Errorf("server slug is required")
 	}
 	return backend.projectFS.ListFunctions(request.Slug)
+}
+
+func (backend *Backend) FunctionLogs(ctx context.Context, slug, name string, query contracts.FunctionLogQuery) (contracts.FunctionLogPage, error) {
+	if _, err := backend.projectFS.ProjectPath(slug); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	if err := contracts.ValidateFunctionName(name); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	if err := contracts.ValidateFunctionLogQuery(query); err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	logDirectory, logDirectoryErr := backend.projectFS.OpenFunctionLogDirectory(slug)
+	if logDirectory != nil {
+		defer logDirectory.Close()
+	}
+	items, err := backend.projectFS.ListFunctions(slug)
+	if err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	found := false
+	for _, item := range items {
+		if item.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return contracts.FunctionLogPage{}, contracts.ErrFunctionNotFound
+	}
+	metadata, err := backend.projectFS.Metadata(slug)
+	if err != nil {
+		return contracts.FunctionLogPage{}, err
+	}
+	if metadata.ProjectID == "" {
+		return contracts.FunctionLogPage{}, errors.New("project metadata identity is missing")
+	}
+	if errors.Is(logDirectoryErr, os.ErrNotExist) {
+		return contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}, Health: contracts.FunctionLogHealth{Status: "not_installed"}, ServerTime: time.Now().UTC()}, nil
+	}
+	if logDirectoryErr != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: open database", contracts.ErrFunctionLogsUnavailable)
+	}
+	snapshot, err := projectfs.OpenFunctionLogFileAt(logDirectory, "function-logs.read.db")
+	if errors.Is(err, os.ErrNotExist) {
+		return contracts.FunctionLogPage{Logs: []contracts.FunctionLogRecord{}, Health: contracts.FunctionLogHealth{Status: "not_installed"}, ServerTime: time.Now().UTC()}, nil
+	}
+	if err != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: open database", contracts.ErrFunctionLogsUnavailable)
+	}
+	reader, err := functionlogs.OpenReaderFile(snapshot, time.Now)
+	if err != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: open database", contracts.ErrFunctionLogsUnavailable)
+	}
+	defer reader.Close()
+	page, err := reader.Query(ctx, metadata.ProjectID, name, query)
+	if err != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: query database", contracts.ErrFunctionLogsUnavailable)
+	}
+	healthFile, healthErr := projectfs.OpenFunctionLogFileAt(logDirectory, "health.json")
+	if errors.Is(healthErr, os.ErrNotExist) {
+		page.Health = contracts.FunctionLogHealth{Status: "offline"}
+		return page, nil
+	}
+	if healthErr != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: read health", contracts.ErrFunctionLogsUnavailable)
+	}
+	page.Health, err = functionlogs.ReadHealthSnapshotFile(healthFile, time.Now())
+	_ = healthFile.Close()
+	if err != nil {
+		return contracts.FunctionLogPage{}, fmt.Errorf("%w: read health", contracts.ErrFunctionLogsUnavailable)
+	}
+	return page, nil
 }
 
 func (backend *Backend) RollbackFunction(ctx context.Context, request contracts.FunctionOperationRequest) (contracts.FunctionDeploymentResult, error) {

@@ -1,0 +1,325 @@
+// Edge Runtime v1.74.0 event workers consume an async iterator exposed as
+// globalThis.EventManager. Keep this file dependency-free: the runtime event
+// worker has the built-in Web and Deno APIs but no user import map.
+const MAX_QUEUE = 1000;
+const MAX_BATCH = 100;
+const FLUSH_INTERVAL_MS = 250;
+const FETCH_TIMEOUT_MS = 500;
+const COLLECTOR_URL = "http://function-log-collector:8081/internal/v1/events";
+const STATUS_URL = "http://function-log-collector:8081/internal/v1/status";
+const UNKNOWN_EVENT_LIMIT = 100;
+
+type RuntimeEvent = {
+  timestamp: string;
+  event_type: string;
+  event: Record<string, unknown>;
+  metadata: {
+    service_path?: string;
+    execution_id?: string;
+    otel_attributes?: Record<string, string> | null;
+  };
+};
+
+type CanonicalRuntimeEvent = {
+  timestamp: string;
+  event_type: string;
+  event: Record<string, unknown>;
+  metadata: {
+    service_path?: string;
+    execution_id?: string;
+    otel_attributes: Record<string, string> | null;
+  };
+};
+
+type LogEvent = {
+  version: 1;
+  eventId: string;
+  functionName: string;
+  executionId: string;
+  eventType: string;
+  message: string;
+  timestamp: string;
+  level: "debug" | "info" | "warn" | "error";
+};
+
+declare global {
+  // Supabase installs this constructor only in the dedicated event worker.
+  // deno-lint-ignore no-var
+  var EventManager: new () => AsyncIterable<RuntimeEvent | undefined>;
+}
+
+const projectId = Deno.env.get("FUNCTION_LOG_PROJECT_ID") ?? "";
+const queue: LogEvent[] = [];
+let flushing = false;
+let flushInterval: number | undefined;
+let flushTimerTicks = 0;
+let pendingDropped = 0;
+let droppedReportId = "";
+let droppedReportCount = 0;
+let reportingDropped = false;
+let pendingIncompatible = false;
+let reportingIncompatible = false;
+let nextIncompatibleAttempt = 0;
+const adapterSession = crypto.randomUUID();
+let reportSequence = 0;
+
+async function reportStatus(status: "dropped" | "incompatible", count: number, reportId: string): Promise<boolean> {
+  try {
+    const response = await fetch(STATUS_URL, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version: 1, reportId, status, count }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    return response.ok;
+  } catch { return false; }
+}
+
+async function reportDropped(): Promise<void> {
+  if ((pendingDropped === 0 && !droppedReportId) || reportingDropped) return;
+  reportingDropped = true;
+  if (!droppedReportId) {
+    droppedReportId = `${adapterSession}-${++reportSequence}`;
+    droppedReportCount = pendingDropped;
+    pendingDropped -= droppedReportCount;
+  }
+  try {
+    if (await reportStatus("dropped", droppedReportCount, droppedReportId)) {
+      droppedReportId = "";
+      droppedReportCount = 0;
+    }
+  } finally {
+    reportingDropped = false;
+  }
+}
+
+async function reportIncompatible(): Promise<void> {
+  pendingIncompatible = true;
+  if (reportingIncompatible || Date.now() < nextIncompatibleAttempt) return;
+  reportingIncompatible = true;
+  const reportId = `${adapterSession}-incompatible`;
+  try {
+    if (await reportStatus("incompatible", 1, reportId)) pendingIncompatible = false;
+    else nextIncompatibleAttempt = Date.now() + 5000;
+  } finally {
+    reportingIncompatible = false;
+  }
+}
+
+function hex(bytes: ArrayBuffer): string {
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function canonicalRuntimeEvent(data: RuntimeEvent): CanonicalRuntimeEvent | undefined {
+  let event: Record<string, unknown>;
+  switch (data.event_type) {
+    case "Boot":
+      if (!Number.isSafeInteger(data.event?.boot_time)) return;
+      event = { boot_time: data.event.boot_time };
+      break;
+    case "Log":
+      if (typeof data.event?.msg !== "string" || typeof data.event?.level !== "string") return;
+      event = { msg: data.event.msg, level: data.event.level };
+      break;
+    case "UncaughtException":
+      if (typeof data.event?.exception !== "string" || !Number.isSafeInteger(data.event?.cpu_time_used)) return;
+      event = { exception: data.event.exception, cpu_time_used: data.event.cpu_time_used };
+      break;
+    default:
+      return;
+  }
+  const attributes = data.metadata?.otel_attributes;
+  if (attributes != null && (typeof attributes !== "object" || Array.isArray(attributes))) return;
+  if (attributes != null && Object.keys(attributes).some((key) =>
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(key) || typeof attributes[key] !== "string"
+  )) return;
+  const sortedAttributes = attributes == null
+    ? null
+    : Object.fromEntries(Object.keys(attributes).sort().map((key) => [key, attributes[key]]));
+  return {
+    timestamp: data.timestamp,
+    event_type: data.event_type,
+    event,
+    metadata: {
+      service_path: data.metadata?.service_path,
+      execution_id: data.metadata?.execution_id,
+      otel_attributes: sortedAttributes,
+    },
+  };
+}
+
+function canonicalJSONString(data: CanonicalRuntimeEvent): string {
+  return JSON.stringify(data).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+}
+
+async function normalize(data: RuntimeEvent): Promise<LogEvent | undefined> {
+  const canonical = canonicalRuntimeEvent(data);
+  if (!canonical) return;
+  const prefix = "./examples/";
+  const servicePath = canonical.metadata.service_path ?? "";
+  const functionName = servicePath.startsWith(prefix) ? servicePath.slice(prefix.length) : "";
+  const executionId = canonical.metadata.execution_id ?? "";
+  if (functionName === "main" || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(functionName) || !executionId) return;
+
+  let message = "";
+  let level: LogEvent["level"];
+  switch (canonical.event_type) {
+    case "Boot":
+      level = "info";
+      break;
+    case "Log": {
+      message = String(canonical.event.msg);
+      const levels: Record<string, LogEvent["level"]> = {
+        Debug: "debug", Info: "info", Warn: "warn", Warning: "warn", Error: "error",
+      };
+      level = levels[String(canonical.event.level)];
+      if (!level) return;
+      break;
+    }
+    case "UncaughtException":
+      message = String(canonical.event.exception);
+      level = "error";
+      break;
+    default:
+      return;
+  }
+
+  // Hash the fixed-order callback object shared with the Go canonicalizer.
+  const raw = new TextEncoder().encode(canonicalJSONString(canonical));
+  const eventId = hex(await crypto.subtle.digest("SHA-256", raw));
+  return { version: 1, eventId, functionName, executionId, eventType: canonical.event_type, message, timestamp: canonical.timestamp, level };
+}
+
+function enqueue(event: LogEvent): void {
+  if (queue.length === MAX_QUEUE) {
+    queue.shift();
+    pendingDropped++;
+  }
+  queue.push(event);
+  if (queue.length >= MAX_BATCH) void flush();
+}
+
+async function flush(): Promise<void> {
+  if (flushing || queue.length === 0 || !projectId) return;
+  flushing = true;
+  const events = queue.splice(0, MAX_BATCH);
+  const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(COLLECTOR_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version: 1, projectId, events }),
+      signal,
+    });
+    if (!response.ok) throw new Error(`collector status ${response.status}`);
+    await reportDropped();
+  } catch {
+    // Collection is best-effort and must never affect user function execution.
+    pendingDropped += events.length;
+  } finally {
+    flushing = false;
+    if (queue.length >= MAX_BATCH) void flush();
+  }
+}
+
+function stopFlushInterval(): void {
+  if (flushInterval !== undefined) {
+    clearInterval(flushInterval);
+    flushInterval = undefined;
+  }
+}
+
+const verificationFixtures = Deno.env.get("FUNCTION_LOG_VERIFY_FIXTURES");
+if (verificationFixtures) {
+  const fixtures = await Promise.all(
+    ["boot-event.json", "log-event.json", "uncaught-exception.json"].map(async (name) =>
+      JSON.parse(await Deno.readTextFile(`${verificationFixtures}/${name}`)) as RuntimeEvent
+    ),
+  );
+  const records: LogEvent[] = [];
+  for (const fixture of fixtures) {
+    const record = await normalize(fixture);
+    if (!record) throw new Error("fixture normalization failed");
+    records.push(record);
+  }
+  console.log("FUNCTION_LOG_FIXTURE_RECORDS=" + JSON.stringify(records));
+  const parityPath = `${verificationFixtures}/parity-cases.json`;
+  try {
+    const cases = JSON.parse(await Deno.readTextFile(parityPath)) as Array<{ name: string; event: RuntimeEvent }>;
+    const results = [];
+    for (const testCase of cases) {
+      const record = await normalize(testCase.event);
+      results.push(record ? { name: testCase.name, eventId: record.eventId, level: record.level } : { name: testCase.name, error: "incompatible" });
+    }
+    console.log("FUNCTION_LOG_PARITY_RECORDS=" + JSON.stringify(results));
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  Deno.serve(() => new Response("verification"));
+} else {
+  try {
+    const failureMode = Deno.env.get("FUNCTION_LOG_VERIFY_EVENT_MANAGER_FAILURE");
+    if (failureMode === "constructor") throw new Error("injected constructor failure");
+    const eventManager: AsyncIterable<RuntimeEvent | undefined> = failureMode === "iterator"
+      ? { [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error("injected iterator failure")) }) }
+      : new globalThis.EventManager();
+    flushInterval = setInterval(() => {
+      flushTimerTicks++;
+      void flush();
+      void reportDropped();
+      if (pendingIncompatible) void reportIncompatible();
+    }, FLUSH_INTERVAL_MS);
+    let consecutiveUnknown = 0;
+    let incompatibilityReported = false;
+    for await (const data of eventManager) {
+      try {
+        if (data) {
+          const event = await normalize(data);
+          if (event) {
+            consecutiveUnknown = 0;
+            enqueue(event);
+          } else {
+            consecutiveUnknown++;
+            if (consecutiveUnknown >= UNKNOWN_EVENT_LIMIT) {
+              if (!incompatibilityReported) {
+                incompatibilityReported = true;
+                await reportIncompatible();
+              }
+              await new Promise<void>((resolve) => setTimeout(resolve, FLUSH_INTERVAL_MS));
+            }
+          }
+        } else {
+          consecutiveUnknown++;
+          if (consecutiveUnknown >= UNKNOWN_EVENT_LIMIT) {
+            if (!incompatibilityReported) {
+              incompatibilityReported = true;
+              await reportIncompatible();
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, FLUSH_INTERVAL_MS));
+          }
+        }
+      } catch {
+        // Malformed callbacks and collector failures never escape into the runtime.
+      }
+    }
+    stopFlushInterval();
+    await flush();
+  } catch {
+    stopFlushInterval();
+    await reportIncompatible();
+    // Wait longer than two flush periods; a leaked interval would increment
+    // flushTimerTicks and fail the pinned-image verifier.
+    await new Promise<void>((resolve) => setTimeout(resolve, FLUSH_INTERVAL_MS * 3));
+    console.error(`FUNCTION_LOG_EVENT_MANAGER_INERT timers=0 ticks=${flushTimerTicks}`);
+    // Compatibility failure disables collection without taking down Functions.
+    // Retry health delivery slowly so a collector that is still starting can
+    // expose the incompatibility, without a hot loop or the flush interval.
+    while (pendingIncompatible) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5000));
+      await reportIncompatible();
+    }
+    setTimeout(() => {}, 2_147_000_000);
+    await new Promise<void>(() => {});
+  }
+}
+
+export {};

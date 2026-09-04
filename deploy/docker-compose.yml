@@ -66,6 +66,7 @@ services:
       NGINX_PROXY_MODE: ${NGINX_PROXY_MODE:-disabled}
       NGINX_PROXY_SOCKET: ${NGINX_PROXY_SOCKET:-/run/supabase-manager/nginx-proxy-agent.sock}
       NGINX_PROXY_TOKEN: ${NGINX_PROXY_TOKEN:-}
+      PROVISIONER_IMAGE_REF: supabase-provisioner:${MANAGER_IMAGE_TAG:-local}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PROJECT_ROOT:-/opt/supabase-manager/projects}:${PROJECT_ROOT:-/opt/supabase-manager/projects}

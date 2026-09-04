@@ -112,7 +112,9 @@ EOF
 	export SUPABASE_MANAGER_E2E_RUNTIME_PROJECT_FILE="$runtime_project_file"
 	export SUPABASE_MANAGER_E2E_PROJECT_ROOT="$project_root"
 	export SUPABASE_MANAGER_E2E_INSPECTOR_FAIL_ONCE=1
+	make -C "$repo_root" verify-edge-event-worker
 	go test -tags=integration ./tests/integration -run TestConfigurationReconcile -v -timeout 45m
+	go test -tags=integration ./tests/integration -run '^TestFunctionLogs$' -v -timeout 45m
 	go test ./apps/provisioner/internal/runtime -run TestAcceptanceInspectorFailureRestoresPreviousRuntimeAndRecreatesPriorAuth -count=1 -v
 )
 

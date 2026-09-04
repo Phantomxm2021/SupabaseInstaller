@@ -1733,6 +1733,26 @@ a.auth-template-row:hover {
   margin: 0;
   font-size: 13px;
 }
+.function-logs-page { display: grid; gap: 18px; }
+.function-logs-back { display: inline-flex; width: fit-content; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
+.function-logs-back:hover { color: var(--foreground); }
+.function-logs-back svg { width: 14px; height: 14px; }
+.function-logs-toolbar { display: flex; align-items: end; gap: 10px; }
+.function-logs-toolbar > label { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
+.function-logs-toolbar [data-slot="select-trigger"] { min-width: 132px; }
+.function-logs-search { position: relative; width: min(360px, 100%); }
+.function-logs-search > svg { position: absolute; bottom: 9px; left: 10px; z-index: 1; width: 15px; height: 15px; color: var(--muted-foreground); }
+.function-logs-search input { padding-left: 32px; }
+.function-logs-actions { display: flex; align-items: center; justify-content: space-between; color: var(--muted-foreground); font-size: 12px; }
+.function-logs-card { gap: 0; padding: 0; }
+.function-logs-table-wrap { padding: 0; overflow-x: auto; }
+.function-logs-table-wrap [data-slot="table"] { min-width: 760px; }
+.function-log-timestamp { width: 190px; color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.function-log-message { max-width: 680px; margin: 0; overflow-wrap: anywhere; color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 18px; white-space: pre-wrap; }
+.function-logs-empty, .function-logs-status { min-height: 180px; display: grid; place-items: center; align-content: center; gap: 5px; color: var(--muted-foreground); text-align: center; }
+.function-logs-empty p { margin: 0; color: var(--foreground); font-weight: 550; }
+.function-logs-empty span { font-size: 12px; }
+.function-logs-older { display: flex; justify-content: center; }
 @media (max-width: 560px) {
   .functions-page {
     gap: 18px;
@@ -1754,6 +1774,8 @@ a.auth-template-row:hover {
   .functions-list-content [data-slot="table"] {
     min-width: 680px;
   }
+  .function-logs-toolbar { align-items: stretch; flex-direction: column; }
+  .function-logs-search { width: 100%; }
 }
 .splash {
   min-height: 100vh;

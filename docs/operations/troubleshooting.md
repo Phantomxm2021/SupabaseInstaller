@@ -85,6 +85,57 @@ docker compose --file "$PROJECT_ROOT/PROJECT_SLUG/docker-compose.yml" \
 
 Review runtime logs before sharing them. Supabase services can include URLs or request metadata even though the Manager/Provisioner redactor removes known generated secrets from managed log paths.
 
+## Managed function logs
+
+Function **Actions > View logs** reads the Manager-owned log store, not Docker
+text output and not the optional Logflare/Vector stack. There is no Docker-log
+fallback: this preserves exact attribution to functions deployed through the
+Manager. Existing servers must be reconciled once after upgrading so their
+rendered runtime gains the collector and Edge Runtime event-worker wiring.
+
+The health value shown with function logs has these meanings:
+
+- `healthy`: the collector is accepting and persisting events.
+- `dropped`: one or more events could not be retained; the counters show the
+  observed loss.
+- `offline`: the health snapshot is missing or more than 30 seconds old.
+- `incompatible`: the collector received an unsupported event contract, or its
+  health snapshot is invalid.
+- `storage_error`: the collector cannot safely write or snapshot its database.
+- `not_installed`: this runtime has not yet installed the managed log store.
+- `disabled`: the project's Functions service is disabled.
+
+Snapshots can take up to 5 seconds to expose new records, and health becomes
+`offline` after 30 seconds without a fresh snapshot. Messages have configured
+secrets redacted and are truncated at 10 KiB. The supported Edge Runtime event
+worker is pinned for the `supabase/edge-runtime:v1.74.0` API; after updating it,
+verify its fixture contract with:
+
+```sh
+make verify-edge-event-worker
+```
+
+To inspect or restart only the collector, first substitute a known managed
+project root and slug. These commands intentionally specify the generated
+Compose file, project directory, and Compose project name rather than searching
+for arbitrary containers:
+
+```sh
+PROJECT_DIR="$PROJECT_ROOT/PROJECT_SLUG/.manager-runtime/current"
+docker compose --file "$PROJECT_DIR/docker-compose.yml" \
+  --project-directory "$PROJECT_DIR" \
+  --project-name "supabase-manager-PROJECT_SLUG" ps function-log-collector
+docker compose --file "$PROJECT_DIR/docker-compose.yml" \
+  --project-directory "$PROJECT_DIR" \
+  --project-name "supabase-manager-PROJECT_SLUG" up -d --wait function-log-collector
+```
+
+Do not print the generated environment or unfiltered Docker logs while
+diagnosing collection. Deleting a managed function makes its retained logs
+inaccessible through the UI. Deleting the server's data also removes its
+function-log database; runtime-only deletion retains the Manager-side project
+record according to the selected deletion mode.
+
 ## Safe cleanup
 
 Use the web UI's default “Delete runtime only” action to remove containers and networks while retaining configuration, volumes, encrypted Manager secrets, and the server directory. Data deletion requires typing the exact server name.

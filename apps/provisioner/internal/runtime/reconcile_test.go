@@ -56,11 +56,12 @@ func TestReconcileRecreatesOnlyAffectedService(t *testing.T) {
 			if err != nil {
 				t.Fatalf("update reconcile: %v", err)
 			}
-			if !equalStrings(runner.recreated, tc.want) {
-				t.Fatalf("recreated = %#v, want %#v", runner.recreated, tc.want)
+			want := append(append([]string(nil), tc.want...), "function-log-collector")
+			if !equalStrings(runner.recreated, want) {
+				t.Fatalf("recreated = %#v, want %#v", runner.recreated, want)
 			}
-			if !equalStrings(result.RecreatedServices, tc.want) {
-				t.Fatalf("result recreated = %#v, want %#v", result.RecreatedServices, tc.want)
+			if !equalStrings(result.RecreatedServices, want) {
+				t.Fatalf("result recreated = %#v, want %#v", result.RecreatedServices, want)
 			}
 		})
 	}
@@ -509,7 +510,7 @@ func TestAcceptanceInspectorFailureRestoresPreviousRuntimeAndRecreatesPriorAuth(
 	if target, readErr := os.Readlink(currentPointer); readErr != nil || !strings.HasPrefix(target, "generations/") {
 		t.Fatalf("current runtime pointer = %q, err=%v; want restored generation", target, readErr)
 	}
-	if len(runner.recreated) != 6 {
+	if len(runner.recreated) != 8 {
 		t.Fatalf("recreate calls = %#v, want candidate and rollback service sets", runner.recreated)
 	}
 	metadata, err := root.Metadata("bee")
@@ -818,6 +819,15 @@ func TestAffectedServicesCoversRenderedTopologyAndRuntimeFields(t *testing.T) {
 	}
 }
 
+func TestServicesToRecreateAlwaysRefreshesFunctionLogCollector(t *testing.T) {
+	before, after := baseConfig(), baseConfig()
+	before.Services.Functions, after.Services.Functions = true, true
+	got := servicesToRecreate(before, after, []string{"db", "functions", "function-log-collector"}, false)
+	if !equalStrings(got, []string{"function-log-collector"}) {
+		t.Fatalf("servicesToRecreate() = %v", got)
+	}
+}
+
 func TestReconcileRollbackRemovesServicesAddedByFailedCandidate(t *testing.T) {
 	root, err := projectfs.New(t.TempDir())
 	if err != nil {
@@ -878,7 +888,7 @@ func TestReconcileRemovesDisabledServicesUsingPreviousCurrentModel(t *testing.T)
 	if _, err := backend.Reconcile(context.Background(), reconcileRequest(changed, 1, 2)); err != nil {
 		t.Fatal(err)
 	}
-	if !equalStrings(runner.removed, []string{"functions", "storage"}) {
+	if !equalStrings(runner.removed, []string{"function-log-collector", "functions", "storage"}) {
 		t.Fatalf("removed = %#v", runner.removed)
 	}
 	if strings.Contains(runner.removedCompose, ".candidate-") {
@@ -1304,7 +1314,7 @@ func (s *sequencedContainerSource) Containers(context.Context, string) ([]health
 		state, healthState = "running", "healthy"
 	}
 	containers := make([]health.Container, 0, 8)
-	for _, service := range []string{"api-gw", "auth", "auth-templates", "db", "functions", "meta", "rest", "storage", "studio"} {
+	for _, service := range []string{"api-gw", "auth", "auth-templates", "db", "function-log-collector", "functions", "meta", "rest", "storage", "studio"} {
 		containers = append(containers, health.Container{Service: service, State: state, Health: healthState})
 	}
 	return containers, nil
